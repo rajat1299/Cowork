@@ -1,0 +1,11 @@
+[project]
+name = "cowork-shared"
+version = "0.1.0"
+description = "Shared models for Core API and Orchestrator"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "pydantic>=2.7.0",
+]
+
+[tool.ruff]
+line-length = 120
