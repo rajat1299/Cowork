@@ -31,14 +31,26 @@ class ConfigRecord:
     updated_at: datetime
 
 
+@dataclass
+class StepRecord:
+    id: int
+    task_id: str
+    step: str
+    data: dict
+    timestamp: float | None
+    created_at: datetime
+
+
 _lock = threading.Lock()
 _user_id_seq = 0
 _config_id_seq = 0
+_step_id_seq = 0
 
 _users_by_email: dict[str, UserRecord] = {}
 _users_by_id: dict[int, UserRecord] = {}
 _tokens: dict[str, TokenRecord] = {}
 _configs: dict[int, ConfigRecord] = {}
+_steps: list[StepRecord] = []
 
 
 def create_user(email: str, password_hash: str) -> UserRecord:
@@ -122,3 +134,25 @@ def delete_config(config_id: int, user_id: int) -> None:
         if not record or record.user_id != user_id:
             raise KeyError("config not found")
         del _configs[config_id]
+
+
+def add_step(task_id: str, step: str, data: dict, timestamp: float | None) -> StepRecord:
+    global _step_id_seq
+    with _lock:
+        _step_id_seq += 1
+        record = StepRecord(
+            id=_step_id_seq,
+            task_id=task_id,
+            step=step,
+            data=data,
+            timestamp=timestamp,
+            created_at=datetime.utcnow(),
+        )
+        _steps.append(record)
+        return record
+
+
+def list_steps(task_id: str | None = None) -> list[StepRecord]:
+    if task_id is None:
+        return list(_steps)
+    return [step for step in _steps if step.task_id == task_id]
