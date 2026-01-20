@@ -14,3 +14,11 @@ class StepEvent(BaseModel):
     step: str
     data: Any
     timestamp: float | None = None
+
+
+class ArtifactEvent(BaseModel):
+    task_id: str
+    artifact_type: str
+    name: str
+    content_url: str | None = None
+    created_at: float | None = None

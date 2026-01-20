@@ -2,11 +2,14 @@ import asyncio
 import time
 from typing import AsyncIterator
 
+import app.runtime.toolkits  # register default toolkits
 from app.runtime.actions import ActionType, TaskStatus
-from app.runtime.task_lock import TaskLock
 from app.runtime.events import StepEvent
-from app.runtime.sync import fire_and_forget
-from shared.schemas import StepEvent as StepEventModel
+from app.runtime.sync import fire_and_forget, fire_and_forget_artifact
+from app.runtime.task_lock import TaskLock
+from app.runtime.toolkits.base import ToolkitCall
+from app.runtime.toolkits.registry import get_toolkit
+from shared.schemas import ArtifactEvent, StepEvent as StepEventModel
 
 
 async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
@@ -27,6 +30,39 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             )
             fire_and_forget(confirm_event)
             yield confirm_event
+            toolkit = get_toolkit("demo")
+            if toolkit:
+                activate_event = StepEventModel(
+                    task_id=action.task_id,
+                    step=StepEvent.activate_toolkit,
+                    data={"toolkit": toolkit.name, "input": {"question": action.question}},
+                    timestamp=time.time(),
+                )
+                fire_and_forget(activate_event)
+                yield activate_event
+                result = await toolkit.run(ToolkitCall(name=toolkit.name, input={"question": action.question}))
+                deactivate_event = StepEventModel(
+                    task_id=action.task_id,
+                    step=StepEvent.deactivate_toolkit,
+                    data={"toolkit": toolkit.name, "output": result.output},
+                    timestamp=time.time(),
+                )
+                fire_and_forget(deactivate_event)
+                yield deactivate_event
+                artifact = ArtifactEvent(
+                    task_id=action.task_id,
+                    artifact_type="text",
+                    name="demo-output",
+                    content_url=None,
+                    created_at=time.time(),
+                )
+                fire_and_forget_artifact(artifact)
+                yield StepEventModel(
+                    task_id=action.task_id,
+                    step=StepEvent.artifact,
+                    data=artifact.model_dump(),
+                    timestamp=time.time(),
+                )
             await asyncio.sleep(0.1)
             end_event = StepEventModel(
                 task_id=action.task_id,
