@@ -48,3 +48,12 @@ class Artifact(SQLModel, table=True):
     name: str
     content_url: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Session(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, foreign_key="user.id")
+    project_id: str = Field(index=True, unique=True)
+    title: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -1,4 +1,4 @@
-import { FileText, BarChart3, Layers, FolderOpen, CalendarDays, MessageSquare, ExternalLink } from 'lucide-react'
+import { FileText, BarChart3, Layers, FolderOpen, CalendarDays, MessageSquare } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 interface WelcomeScreenProps {
@@ -64,7 +64,7 @@ export function WelcomeScreen({ onPromptSelect }: WelcomeScreenProps) {
 }
 
 interface ActionCardProps {
-  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>
   label: string
   onClick?: () => void
   delay?: number
