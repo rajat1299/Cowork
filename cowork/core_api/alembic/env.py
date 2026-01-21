@@ -5,8 +5,11 @@ import sys
 from logging.config import fileConfig
 
 from alembic import context
+from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
+
+load_dotenv()
 
 CORE_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(CORE_ROOT) not in sys.path:

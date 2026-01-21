@@ -181,3 +181,80 @@ export const artifacts = {
   create: (data: Omit<Artifact, 'id' | 'created_at'>): Promise<Artifact> =>
     coreApi.post('/chat/artifacts', data),
 }
+
+// ============ History/Sessions Types ============
+
+export interface HistoryTask {
+  id: number | string
+  task_id: string
+  project_id: string
+  question: string
+  language?: string
+  model_platform?: string
+  model_type?: string
+  project_name?: string
+  summary?: string
+  tokens: number
+  status: number // 1 = ongoing, 2 = done
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ProjectGroup {
+  project_id: string
+  project_name?: string
+  total_tokens: number
+  task_count: number
+  latest_task_date: string
+  last_prompt: string
+  tasks: HistoryTask[]
+  total_completed_tasks: number
+  total_ongoing_tasks: number
+}
+
+export interface HistoryListResponse {
+  items: HistoryTask[]
+  total: number
+  page?: number
+  size?: number
+}
+
+export interface GroupedHistoryResponse {
+  projects: ProjectGroup[]
+  total_projects: number
+  total_tasks: number
+  total_tokens: number
+}
+
+// ============ History/Sessions Endpoints ============
+
+export const history = {
+  /**
+   * Get flat list of history tasks
+   */
+  list: (page?: number, size?: number): Promise<HistoryListResponse> => {
+    const params = new URLSearchParams()
+    if (page !== undefined) params.set('page', String(page))
+    if (size !== undefined) params.set('size', String(size))
+    const query = params.toString()
+    return coreApi.get(`/chat/histories${query ? `?${query}` : ''}`)
+  },
+
+  /**
+   * Get history grouped by project
+   */
+  listGrouped: (includeTasks = true): Promise<GroupedHistoryResponse> =>
+    coreApi.get(`/chat/histories/grouped?include_tasks=${includeTasks}`),
+
+  /**
+   * Get single history task by ID
+   */
+  get: (historyId: string): Promise<HistoryTask> =>
+    coreApi.get(`/chat/history/${historyId}`),
+
+  /**
+   * Delete history task
+   */
+  delete: (historyId: string): Promise<void> =>
+    coreApi.delete(`/chat/history/${historyId}`),
+}

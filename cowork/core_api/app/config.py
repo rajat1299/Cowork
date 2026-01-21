@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -25,6 +26,22 @@ class CoreApiSettings(BaseSettings):
     rate_limit_auth_per_minute: int = 20
     rate_limit_proxy_per_minute: int = 30
     rate_limit_oauth_per_minute: int = 20
+
+    @field_validator("auto_create_tables")
+    @classmethod
+    def validate_auto_create_tables(cls, value: bool, info):
+        app_env = info.data.get("app_env")
+        if app_env == "production" and value:
+            raise ValueError("auto_create_tables must be false in production")
+        return value
+
+    @field_validator("internal_api_key")
+    @classmethod
+    def validate_internal_api_key(cls, value: str, info):
+        app_env = info.data.get("app_env")
+        if app_env == "production" and not value:
+            raise ValueError("INTERNAL_API_KEY is required in production")
+        return value
 
 
 settings = CoreApiSettings()

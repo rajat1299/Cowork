@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Plus,
   PanelLeftClose,
@@ -7,8 +8,13 @@ import {
   Clock,
   LogOut,
   User,
+  MessageSquare,
+  Loader2,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { useAuthStore } from '../../stores/authStore'
+import { useSessionStore, formatRelativeTime } from '../../stores/sessionStore'
+import { useChatStore } from '../../stores/chatStore'
 
 interface SidebarProps {
   collapsed?: boolean
@@ -23,8 +29,36 @@ const tabs = [
 ]
 
 export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
+  const navigate = useNavigate()
+  const { user, logout } = useAuthStore()
+  const { sessions, isLoading, fetchSessions } = useSessionStore()
+  const { setActiveTask, activeTaskId } = useChatStore()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [activeTab, setActiveTab] = useState('cowork')
+
+  // Fetch sessions on mount
+  useEffect(() => {
+    fetchSessions()
+  }, [fetchSessions])
+
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
+
+  const handleNewTask = () => {
+    // Clear active task and navigate home to start fresh
+    setActiveTask(null)
+    navigate('/')
+  }
+
+  const handleSessionClick = (sessionId: string) => {
+    setActiveTask(sessionId)
+    navigate('/')
+  }
+
+  const userInitial = user?.email?.charAt(0).toUpperCase() || 'U'
+  const userName = user?.email?.split('@')[0] || 'User'
 
   return (
     <aside
@@ -81,6 +115,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
       {/* New task button */}
       <div className="px-3 mb-4">
         <button
+          onClick={handleNewTask}
           className={cn(
             'flex items-center justify-center gap-2 h-10 w-full',
             'text-ink-muted hover:text-ink',
@@ -102,9 +137,34 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             <h3 className="text-[12px] font-medium text-ink-subtle uppercase tracking-wide px-2 mb-2">
               Recents
             </h3>
-            <p className="text-[13px] text-ink-subtle px-2">
-              No sessions yet
-            </p>
+            {isLoading && sessions.length === 0 ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 size={16} className="animate-spin text-ink-subtle" />
+              </div>
+            ) : sessions.length === 0 ? (
+              <p className="text-[13px] text-ink-subtle px-2">
+                No sessions yet
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {sessions.slice(0, 10).map((session) => (
+                  <SessionItem
+                    key={session.id}
+                    session={session}
+                    isActive={session.id === activeTaskId}
+                    onClick={() => handleSessionClick(session.id)}
+                  />
+                ))}
+                {sessions.length > 10 && (
+                  <button
+                    onClick={() => navigate('/history')}
+                    className="w-full text-center py-2 text-[12px] text-ink-subtle hover:text-ink transition-colors"
+                  >
+                    View all ({sessions.length})
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </nav>
@@ -121,12 +181,12 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           )}
         >
           <div className="w-8 h-8 rounded-full bg-burnt/15 flex items-center justify-center flex-shrink-0">
-            <span className="text-[13px] font-medium text-burnt">R</span>
+            <span className="text-[13px] font-medium text-burnt">{userInitial}</span>
           </div>
           {!collapsed && (
             <div className="flex-1 text-left">
-              <span className="block text-[13px] text-ink">Rajat Tiwari</span>
-              <span className="block text-[11px] text-ink-subtle">Pro plan</span>
+              <span className="block text-[13px] text-ink truncate">{userName}</span>
+              <span className="block text-[11px] text-ink-subtle">Free plan</span>
             </div>
           )}
         </button>
@@ -141,11 +201,11 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
               'py-1 animate-scale-in origin-bottom'
             )}
           >
-            <MenuItem icon={User} label="Profile" />
-            <MenuItem icon={Clock} label="History" />
-            <MenuItem icon={Settings} label="Settings" />
+            <MenuItem icon={User} label="Profile" onClick={() => navigate('/settings')} />
+            <MenuItem icon={Clock} label="History" onClick={() => navigate('/history')} />
+            <MenuItem icon={Settings} label="Settings" onClick={() => navigate('/settings')} />
             <div className="h-px bg-dark-border my-1" />
-            <MenuItem icon={LogOut} label="Sign out" />
+            <MenuItem icon={LogOut} label="Sign out" onClick={handleLogout} />
           </div>
         )}
       </div>
@@ -153,11 +213,64 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   )
 }
 
-function MenuItem({ icon: Icon, label }: { icon: React.ComponentType<{ size?: number; strokeWidth?: number }>; label: string }) {
+interface MenuItemProps {
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>
+  label: string
+  onClick?: () => void
+}
+
+function MenuItem({ icon: Icon, label, onClick }: MenuItemProps) {
   return (
-    <button className="w-full flex items-center gap-3 px-3 py-2 text-ink-muted hover:text-ink hover:bg-dark-elevated transition-colors">
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-3 py-2 text-ink-muted hover:text-ink hover:bg-dark-elevated transition-colors"
+    >
       <Icon size={15} strokeWidth={1.5} />
       <span className="text-[13px]">{label}</span>
+    </button>
+  )
+}
+
+// ============ Session Item Component ============
+
+interface SessionItemProps {
+  session: {
+    id: string
+    title: string
+    preview: string
+    status: 'ongoing' | 'completed'
+    updatedAt: string
+  }
+  isActive: boolean
+  onClick: () => void
+}
+
+function SessionItem({ session, isActive, onClick }: SessionItemProps) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'w-full flex items-start gap-2 px-2 py-2 rounded-lg text-left',
+        'transition-all duration-200',
+        isActive
+          ? 'bg-dark-surface text-ink'
+          : 'text-ink-muted hover:text-ink hover:bg-dark-surface/50'
+      )}
+    >
+      <MessageSquare
+        size={14}
+        strokeWidth={1.5}
+        className={cn(
+          'mt-0.5 flex-shrink-0',
+          session.status === 'ongoing' ? 'text-burnt' : 'text-ink-subtle'
+        )}
+      />
+      <div className="flex-1 min-w-0">
+        <p className="text-[13px] font-medium truncate">{session.title}</p>
+        <p className="text-[11px] text-ink-subtle truncate">
+          {formatRelativeTime(session.updatedAt)}
+        </p>
+      </div>
     </button>
   )
 }

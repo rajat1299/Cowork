@@ -1,13 +1,10 @@
 import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth, useOAuth } from '../hooks'
 import { cn } from '../lib/utils'
 
-interface LoginPageProps {
-  onSwitchToRegister: () => void
-  onSuccess: () => void
-}
-
-export function LoginPage({ onSwitchToRegister, onSuccess }: LoginPageProps) {
+export function LoginPage() {
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const { login, isLoading, error, clearError } = useAuth()
@@ -17,7 +14,7 @@ export function LoginPage({ onSwitchToRegister, onSuccess }: LoginPageProps) {
     e.preventDefault()
     const success = await login(email, password)
     if (success) {
-      onSuccess()
+      navigate('/')
     }
   }
 
@@ -153,12 +150,12 @@ export function LoginPage({ onSwitchToRegister, onSuccess }: LoginPageProps) {
         {/* Footer */}
         <p className="text-center mt-6 text-[13px] text-ink-subtle">
           Don't have an account?{' '}
-          <button
-            onClick={onSwitchToRegister}
+          <Link
+            to="/register"
             className="text-ink hover:text-burnt transition-colors"
           >
             Sign up
-          </button>
+          </Link>
         </p>
       </div>
     </div>
