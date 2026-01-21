@@ -2,13 +2,16 @@
 export { coreApi, orchestratorApi, ApiError, CORE_API_URL, ORCHESTRATOR_URL } from './client'
 
 // Core API endpoints
-export { auth, config, steps, artifacts } from './coreApi'
+export { auth, oauth, config, steps, artifacts } from './coreApi'
 export type {
   RegisterRequest,
   RegisterResponse,
   LoginRequest,
   LoginResponse,
   User,
+  OAuthProvider,
+  OAuthTokenRequest,
+  OAuthTokenResponse,
   ConfigField,
   ConfigGroup,
   ConfigInfo,

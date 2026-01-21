@@ -1,4 +1,4 @@
-import { coreApi } from './client'
+import { coreApi, CORE_API_URL } from './client'
 
 // ============ Types ============
 
@@ -27,6 +27,21 @@ export interface LoginResponse {
 export interface User {
   id: string
   email: string
+}
+
+// OAuth
+export type OAuthProvider = 'google' | 'github'
+
+export interface OAuthTokenRequest {
+  code: string
+  state: string
+  code_verifier?: string
+}
+
+export interface OAuthTokenResponse {
+  access_token: string
+  refresh_token: string
+  token_type: string
 }
 
 // Config
@@ -97,6 +112,35 @@ export const auth = {
 
   me: (): Promise<User> =>
     coreApi.get('/auth/me'),
+}
+
+// ============ OAuth Endpoints ============
+
+export const oauth = {
+  /**
+   * Build the OAuth login URL with PKCE parameters
+   * This URL should be opened in a browser window
+   */
+  getLoginUrl: (
+    provider: OAuthProvider,
+    params: { state: string; codeChallenge: string }
+  ): string => {
+    const url = new URL(`${CORE_API_URL}/oauth/${provider}/login`)
+    url.searchParams.set('state', params.state)
+    url.searchParams.set('code_challenge', params.codeChallenge)
+    url.searchParams.set('code_challenge_method', 'S256')
+    return url.toString()
+  },
+
+  /**
+   * Exchange OAuth code for tokens
+   * Called after the OAuth callback with the authorization code
+   */
+  exchangeToken: (
+    provider: OAuthProvider,
+    data: OAuthTokenRequest
+  ): Promise<OAuthTokenResponse> =>
+    coreApi.post(`/oauth/${provider}/token`, data, false),
 }
 
 // ============ Config Endpoints ============

@@ -3,7 +3,7 @@ import { Sidebar, RightSidebar } from './components/layout'
 import { ChatContainer } from './components/chat'
 import { LoginPage, RegisterPage } from './pages'
 import { useAuthStore } from './stores'
-import { useAuth } from './hooks'
+import { useAuth, useOAuth } from './hooks'
 
 type AuthView = 'login' | 'register'
 
@@ -12,10 +12,24 @@ function App() {
   const [authView, setAuthView] = useState<AuthView>('login')
   const { isAuthenticated, isLoading } = useAuthStore()
   const { checkAuth } = useAuth()
+  const { checkOAuthCallback } = useOAuth()
 
-  // Check auth state on mount
+  // Check for OAuth callback and auth state on mount
   useEffect(() => {
-    checkAuth()
+    const initAuth = async () => {
+      // First check if this is an OAuth callback
+      const oauthResult = await checkOAuthCallback()
+
+      // If OAuth callback was handled (success or error), don't check regular auth
+      if (oauthResult !== null) {
+        return
+      }
+
+      // Otherwise, check existing auth state
+      checkAuth()
+    }
+
+    initAuth()
   }, [])
 
   // Show loading state while checking auth

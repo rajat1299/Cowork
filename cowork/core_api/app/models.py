@@ -57,3 +57,14 @@ class Session(SQLModel, table=True):
     title: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OAuthAccount(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, foreign_key="user.id")
+    provider: str = Field(index=True)
+    provider_user_id: str = Field(index=True)
+    email: str | None = None
+    name: str | None = None
+    avatar_url: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)

@@ -1,11 +1,11 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session, select
 
 from app.auth import get_current_user
-from app.config_catalog import is_valid_env_var, list_catalog
+from app.config_catalog import group_aliases, is_valid_env_var, list_catalog, normalize_group
 from app.db import get_session
 from app.models import Config
 
@@ -13,15 +13,17 @@ router = APIRouter(tags=["config"])
 
 
 class ConfigCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     group: str
-    name: str
+    name: str = Field(alias="key")
     value: str
 
 
 class ConfigOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     id: int
     group: str
-    name: str
+    name: str = Field(alias="key")
     value: str
     created_at: datetime
     updated_at: datetime
@@ -40,7 +42,10 @@ def get_configs(
 ):
     statement = select(Config).where(Config.user_id == user.id)
     if group:
-        statement = statement.where(Config.group == group)
+        aliases = group_aliases(group)
+        if not aliases:
+            raise HTTPException(status_code=400, detail="Invalid config group")
+        statement = statement.where(Config.group.in_(aliases))
     records = session.exec(statement).all()
     return [ConfigOut(**record.__dict__) for record in records]
 
@@ -51,11 +56,12 @@ def create_config_entry(
     user=Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    if not is_valid_env_var(request.group, request.name):
+    normalized_group = normalize_group(request.group)
+    if not normalized_group or not is_valid_env_var(normalized_group, request.name):
         raise HTTPException(status_code=400, detail="Invalid config group or name")
     record = Config(
         user_id=user.id,
-        group=request.group,
+        group=normalized_group,
         name=request.name,
         value=request.value,
     )
@@ -72,14 +78,15 @@ def update_config_entry(
     user=Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    if not is_valid_env_var(request.group, request.name):
+    normalized_group = normalize_group(request.group)
+    if not normalized_group or not is_valid_env_var(normalized_group, request.name):
         raise HTTPException(status_code=400, detail="Invalid config group or name")
     record = session.exec(
         select(Config).where(Config.id == config_id, Config.user_id == user.id)
     ).first()
     if not record:
         raise HTTPException(status_code=404, detail="Config not found")
-    record.group = request.group
+    record.group = normalized_group
     record.name = request.name
     record.value = request.value
     record.updated_at = datetime.utcnow()
