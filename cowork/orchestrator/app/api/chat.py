@@ -1,15 +1,22 @@
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.config import settings
 from app.runtime.actions import ActionImprove, ActionStop, TaskStatus
 from app.runtime.engine import run_task_loop
 from app.runtime.manager import get, get_or_create, remove
 from shared.schemas import StepEvent as StepEventModel
+from shared.ratelimit import SlidingWindowLimiter, ip_key, rate_limit
 
 router = APIRouter(tags=["chat"])
+_chat_limiter = SlidingWindowLimiter(
+    max_requests=settings.rate_limit_chat_per_minute,
+    window_seconds=60,
+)
+_chat_rate_limit = rate_limit(_chat_limiter, ip_key("chat"))
 
 
 class ChatRequest(BaseModel):
@@ -28,7 +35,7 @@ def format_sse(event: StepEventModel) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-@router.post("/chat")
+@router.post("/chat", dependencies=[Depends(_chat_rate_limit)])
 async def start_chat(request: ChatRequest):
     async def event_stream():
         task_lock = get_or_create(request.project_id)
@@ -54,7 +61,7 @@ class ImproveRequest(BaseModel):
     question: str
 
 
-@router.post("/chat/{project_id}/improve")
+@router.post("/chat/{project_id}/improve", dependencies=[Depends(_chat_rate_limit)])
 async def improve_chat(project_id: str, request: ImproveRequest):
     task_lock = get(project_id)
     if not task_lock:
@@ -69,7 +76,7 @@ async def improve_chat(project_id: str, request: ImproveRequest):
     return {"status": "queued"}
 
 
-@router.delete("/chat/{project_id}")
+@router.delete("/chat/{project_id}", dependencies=[Depends(_chat_rate_limit)])
 async def stop_chat(project_id: str):
     task_lock = get(project_id)
     if not task_lock:

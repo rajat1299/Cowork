@@ -68,3 +68,79 @@ class OAuthAccount(SQLModel, table=True):
     name: str | None = None
     avatar_url: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Provider(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, foreign_key="user.id")
+    provider_name: str = Field(index=True)
+    model_type: str
+    api_key: str
+    endpoint_url: str = ""
+    encrypted_config: dict | None = Field(default=None, sa_column=Column(JSONB))
+    prefer: bool = Field(default=False)
+    is_valid: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChatHistory(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, foreign_key="user.id")
+    task_id: str = Field(index=True, unique=True)
+    project_id: str | None = Field(default=None, index=True)
+    question: str
+    language: str
+    model_platform: str
+    model_type: str
+    api_key: str | None = None
+    api_url: str | None = None
+    max_retries: int = Field(default=3)
+    file_save_path: str | None = None
+    installed_mcp: dict | None = Field(default=None, sa_column=Column(JSONB))
+    project_name: str | None = None
+    summary: str | None = None
+    tokens: int = Field(default=0)
+    spend: float = Field(default=0.0)
+    status: int = Field(default=1)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChatSnapshot(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, foreign_key="user.id")
+    task_id: str = Field(index=True)
+    browser_url: str
+    image_path: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class McpServer(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    key: str = Field(index=True, unique=True)
+    description: str = ""
+    home_page: str | None = None
+    mcp_type: str = Field(default="local")
+    status: str = Field(default="online")
+    install_command: dict | None = Field(default=None, sa_column=Column(JSONB))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class McpUser(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    mcp_id: int | None = Field(default=None, foreign_key="mcpserver.id")
+    user_id: int = Field(index=True, foreign_key="user.id")
+    mcp_name: str
+    mcp_key: str
+    mcp_desc: str | None = None
+    command: str | None = None
+    args: list[str] | None = Field(default=None, sa_column=Column(JSONB))
+    env: dict | None = Field(default=None, sa_column=Column(JSONB))
+    mcp_type: str = Field(default="local")
+    status: str = Field(default="enable")
+    server_url: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

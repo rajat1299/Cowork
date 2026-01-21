@@ -8,8 +8,14 @@ from app.oauth_adapter import get_oauth_adapter
 from app.oauth_service import get_or_create_oauth_user, issue_tokens
 from app.oauth_state import consume_state, create_state
 from app.config import settings
+from shared.ratelimit import SlidingWindowLimiter, ip_key, rate_limit
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
+_oauth_limiter = SlidingWindowLimiter(
+    max_requests=settings.rate_limit_oauth_per_minute,
+    window_seconds=60,
+)
+_oauth_rate_limit = rate_limit(_oauth_limiter, ip_key("oauth_token"))
 
 
 class OAuthCallbackPayload(BaseModel):
@@ -61,7 +67,7 @@ def oauth_callback(provider: str, code: str, state: str | None = None):
     return HTMLResponse(content=html_content)
 
 
-@router.post("/{provider}/token")
+@router.post("/{provider}/token", dependencies=[Depends(_oauth_rate_limit)])
 def oauth_token(
     provider: str,
     data: OAuthCallbackPayload,

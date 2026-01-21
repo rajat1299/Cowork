@@ -9,8 +9,14 @@ from app.config import settings
 from app.db import get_session
 from app.models import RefreshToken, User
 from app.security import create_access_token, create_refresh_token, hash_password, verify_password
+from shared.ratelimit import SlidingWindowLimiter, ip_key, rate_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+_auth_limiter = SlidingWindowLimiter(
+    max_requests=settings.rate_limit_auth_per_minute,
+    window_seconds=60,
+)
+_auth_rate_limit = rate_limit(_auth_limiter, ip_key("auth"))
 
 
 class RegisterRequest(BaseModel):
@@ -50,7 +56,7 @@ class UserResponse(BaseModel):
     email: str
 
 
-@router.post("/register", response_model=UserResponse)
+@router.post("/register", response_model=UserResponse, dependencies=[Depends(_auth_rate_limit)])
 def register(request: RegisterRequest, session: Session = Depends(get_session)) -> UserResponse:
     existing = session.exec(select(User).where(User.email == request.email)).first()
     if existing:
@@ -62,7 +68,7 @@ def register(request: RegisterRequest, session: Session = Depends(get_session)) 
     return UserResponse(id=user.id, email=user.email)
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse, dependencies=[Depends(_auth_rate_limit)])
 def login(request: LoginRequest, session: Session = Depends(get_session)) -> TokenResponse:
     user = session.exec(select(User).where(User.email == request.email.strip().lower())).first()
     if not user or not verify_password(request.password, user.password_hash):
@@ -83,7 +89,7 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post("/refresh", response_model=TokenResponse, dependencies=[Depends(_auth_rate_limit)])
 def refresh(request: RefreshRequest, session: Session = Depends(get_session)) -> TokenResponse:
     record = session.exec(select(RefreshToken).where(RefreshToken.token == request.refresh_token)).first()
     if not record or record.revoked or record.expires_at < datetime.utcnow():

@@ -11,6 +11,8 @@ if str(SHARED_ROOT) not in sys.path:
 from fastapi import FastAPI
 
 from app.api import router as api_router
+from shared.observability import attach_request_logging
 
 app = FastAPI(title="Cowork Orchestrator", version="0.1.0")
 app.include_router(api_router)
+attach_request_logging(app, "orchestrator")

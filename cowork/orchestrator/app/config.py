@@ -7,6 +7,8 @@ class OrchestratorSettings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 5001
     core_api_url: str = "http://localhost:3001"
+    core_api_internal_key: str = ""
+    rate_limit_chat_per_minute: int = 30
 
 
 settings = OrchestratorSettings()
