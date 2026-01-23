@@ -4,3 +4,7 @@ cowork/project status
 cowork/backend design
 cowork/frontend coordination
 
+# Environment files
+*.env
+.env
+
