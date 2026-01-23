@@ -142,7 +142,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // Get local sessions first
       const localSessions = getLocalSessions()
 
-      // Try to fetch from backend
+      // Try to fetch from backend (silently fail if not available)
       let remoteSessions: SessionItem[] = []
       try {
         // Try grouped endpoint first for better UX
@@ -158,8 +158,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             remoteSessions = listResponse.items.map(historyTaskToSession)
           }
         } catch {
-          // Backend not available, use local only
-          console.warn('Backend history API not available, using local sessions only')
+          // Backend not available - silently use local only
+          // This is expected when history endpoints aren't implemented yet
         }
       }
 

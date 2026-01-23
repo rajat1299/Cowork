@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 
 from app.auth import get_current_user
 from app.db import get_session
+from app.internal_auth import require_internal_key
 from app.models import Provider
 
 router = APIRouter(tags=["providers"])
@@ -50,6 +51,10 @@ class ProviderPrefer(BaseModel):
     provider_id: int
 
 
+class ProviderInternalOut(ProviderOut):
+    api_key: str
+
+
 def _set_preferred_provider(session: Session, user_id: int, provider_id: int) -> Provider:
     provider = session.exec(
         select(Provider).where(Provider.id == provider_id, Provider.user_id == user_id)
@@ -87,6 +92,11 @@ def _provider_out(record: Provider) -> ProviderOut:
     )
 
 
+def _provider_internal_out(record: Provider) -> ProviderInternalOut:
+    base = _provider_out(record)
+    return ProviderInternalOut(**base.model_dump(), api_key=record.api_key)
+
+
 @router.get("/providers", response_model=list[ProviderOut])
 def list_providers(
     keyword: str | None = Query(default=None),
@@ -98,6 +108,23 @@ def list_providers(
         statement = statement.where(Provider.provider_name.ilike(f"%{keyword}%"))
     records = session.exec(statement).all()
     return [_provider_out(record) for record in records]
+
+
+@router.get(
+    "/providers/internal",
+    response_model=list[ProviderInternalOut],
+    dependencies=[Depends(require_internal_key)],
+)
+def list_providers_internal(
+    keyword: str | None = Query(default=None),
+    user=Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[ProviderInternalOut]:
+    statement = select(Provider).where(Provider.user_id == user.id)
+    if keyword:
+        statement = statement.where(Provider.provider_name.ilike(f"%{keyword}%"))
+    records = session.exec(statement).all()
+    return [_provider_internal_out(record) for record in records]
 
 
 @router.get("/provider", response_model=ProviderOut)
@@ -112,6 +139,24 @@ def get_provider(
     if not record:
         raise HTTPException(status_code=404, detail="Provider not found")
     return _provider_out(record)
+
+
+@router.get(
+    "/provider/internal/{provider_id}",
+    response_model=ProviderInternalOut,
+    dependencies=[Depends(require_internal_key)],
+)
+def get_provider_internal(
+    provider_id: int,
+    user=Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> ProviderInternalOut:
+    record = session.exec(
+        select(Provider).where(Provider.id == provider_id, Provider.user_id == user.id)
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    return _provider_internal_out(record)
 
 
 @router.get("/provider/{provider_id}", response_model=ProviderOut)

@@ -2,14 +2,13 @@ import asyncio
 import time
 from typing import AsyncIterator
 
-import app.runtime.toolkits  # register default toolkits
+from app.clients.core_api import ProviderConfig, create_history, fetch_provider, update_history
 from app.runtime.actions import ActionType, TaskStatus
 from app.runtime.events import StepEvent
-from app.runtime.sync import fire_and_forget, fire_and_forget_artifact
+from app.runtime.llm_client import stream_openai_chat
+from app.runtime.sync import fire_and_forget
 from app.runtime.task_lock import TaskLock
-from app.runtime.toolkits.base import ToolkitCall
-from app.runtime.toolkits.registry import get_toolkit
-from shared.schemas import ArtifactEvent, StepEvent as StepEventModel
+from shared.schemas import StepEvent as StepEventModel
 
 
 async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
@@ -30,44 +29,117 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             )
             fire_and_forget(confirm_event)
             yield confirm_event
-            toolkit = get_toolkit("demo")
-            if toolkit:
-                activate_event = StepEventModel(
+            state_event = StepEventModel(
+                task_id=action.task_id,
+                step=StepEvent.task_state,
+                data={"state": "processing"},
+                timestamp=time.time(),
+            )
+            fire_and_forget(state_event)
+            yield state_event
+
+            provider: ProviderConfig | None = None
+            if action.api_key and action.model_type:
+                provider = ProviderConfig(
+                    id=0,
+                    provider_name=action.model_provider or "custom",
+                    model_type=action.model_type,
+                    api_key=action.api_key,
+                    endpoint_url=action.endpoint_url,
+                    prefer=True,
+                )
+            if not provider:
+                provider = await fetch_provider(
+                    action.auth_token,
+                    action.provider_id,
+                    action.model_provider,
+                    action.model_type,
+                )
+
+            if not provider or not provider.api_key or not provider.model_type:
+                error_event = StepEventModel(
                     task_id=action.task_id,
-                    step=StepEvent.activate_toolkit,
-                    data={"toolkit": toolkit.name, "input": {"question": action.question}},
+                    step=StepEvent.error,
+                    data={"error": "No provider configured"},
                     timestamp=time.time(),
                 )
-                fire_and_forget(activate_event)
-                yield activate_event
-                result = await toolkit.run(ToolkitCall(name=toolkit.name, input={"question": action.question}))
-                deactivate_event = StepEventModel(
+                fire_and_forget(error_event)
+                yield error_event
+                end_event = StepEventModel(
                     task_id=action.task_id,
-                    step=StepEvent.deactivate_toolkit,
-                    data={"toolkit": toolkit.name, "output": result.output},
+                    step=StepEvent.end,
+                    data={"result": "error", "reason": "No provider configured"},
                     timestamp=time.time(),
                 )
-                fire_and_forget(deactivate_event)
-                yield deactivate_event
-                artifact = ArtifactEvent(
+                fire_and_forget(end_event)
+                yield end_event
+                task_lock.status = TaskStatus.done
+                continue
+
+            history_id = None
+            history_payload = {
+                "task_id": action.task_id,
+                "project_id": action.project_id,
+                "question": action.question,
+                "language": "en",
+                "model_platform": provider.provider_name,
+                "model_type": provider.model_type,
+                "status": 1,
+            }
+            history = await create_history(action.auth_token, history_payload)
+            if history:
+                history_id = history.get("id")
+
+            content_parts: list[str] = []
+            usage: dict | None = None
+            try:
+                messages = [{"role": "user", "content": action.question}]
+                async for chunk, usage_update in stream_openai_chat(provider, messages):
+                    if chunk:
+                        content_parts.append(chunk)
+                        stream_event = StepEventModel(
+                            task_id=action.task_id,
+                            step=StepEvent.streaming,
+                            data={"chunk": chunk},
+                            timestamp=time.time(),
+                        )
+                        fire_and_forget(stream_event)
+                        yield stream_event
+                    if usage_update:
+                        usage = usage_update
+            except Exception as exc:
+                error_event = StepEventModel(
                     task_id=action.task_id,
-                    artifact_type="text",
-                    name="demo-output",
-                    content_url=None,
-                    created_at=time.time(),
-                )
-                fire_and_forget_artifact(artifact)
-                yield StepEventModel(
-                    task_id=action.task_id,
-                    step=StepEvent.artifact,
-                    data=artifact.model_dump(),
+                    step=StepEvent.error,
+                    data={"error": str(exc)},
                     timestamp=time.time(),
                 )
-            await asyncio.sleep(0.1)
+                fire_and_forget(error_event)
+                yield error_event
+                end_event = StepEventModel(
+                    task_id=action.task_id,
+                    step=StepEvent.end,
+                    data={"result": "error", "reason": "Model call failed"},
+                    timestamp=time.time(),
+                )
+                fire_and_forget(end_event)
+                yield end_event
+                if history_id is not None:
+                    await update_history(action.auth_token, history_id, {"status": 3})
+                task_lock.status = TaskStatus.done
+                continue
+
+            result_text = "".join(content_parts).strip()
+            total_tokens = 0
+            if usage:
+                total_tokens = int(usage.get("total_tokens") or 0)
+            if history_id is not None:
+                await update_history(action.auth_token, history_id, {"tokens": total_tokens, "status": 2})
+
             end_event = StepEventModel(
                 task_id=action.task_id,
                 step=StepEvent.end,
-                data={"result": "stub response"},
+                data={"result": result_text, "usage": usage or {}},
                 timestamp=time.time(),
             )
             fire_and_forget(end_event)

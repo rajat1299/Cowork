@@ -226,6 +226,101 @@ export interface GroupedHistoryResponse {
   total_tokens: number
 }
 
+// ============ Provider Types ============
+
+export interface Provider {
+  id: number
+  provider_name: string
+  api_key?: string
+  api_key_last4?: string
+  endpoint_url?: string
+  model_type?: string
+  is_valid?: boolean
+  prefer?: boolean
+  encrypted_config?: Record<string, string>
+  created_at?: string
+  updated_at?: string
+}
+
+export interface CreateProviderRequest {
+  provider_name: string
+  api_key: string
+  endpoint_url?: string
+  model_type?: string
+  is_valid?: boolean
+  encrypted_config?: Record<string, string>
+}
+
+export interface UpdateProviderRequest {
+  provider_name?: string
+  api_key?: string
+  endpoint_url?: string
+  model_type?: string
+  is_valid?: boolean
+  encrypted_config?: Record<string, string>
+}
+
+export interface ValidateModelRequest {
+  model_platform: string
+  model_type: string
+  api_key: string
+  url?: string
+  extra_params?: Record<string, string>
+}
+
+export interface ValidateModelResponse {
+  is_valid: boolean
+  is_tool_calls?: boolean
+  message?: string
+  error?: string
+}
+
+// ============ Provider Endpoints ============
+
+export const providers = {
+  /**
+   * Get all providers for the current user
+   */
+  list: (): Promise<Provider[]> =>
+    coreApi.get('/providers'),
+
+  /**
+   * Get a single provider by ID
+   */
+  get: (id: number): Promise<Provider> =>
+    coreApi.get(`/provider/${id}`),
+
+  /**
+   * Create a new provider
+   */
+  create: (data: CreateProviderRequest): Promise<Provider> =>
+    coreApi.post('/provider', data),
+
+  /**
+   * Update an existing provider
+   */
+  update: (id: number, data: UpdateProviderRequest): Promise<Provider> =>
+    coreApi.put(`/provider/${id}`, data),
+
+  /**
+   * Delete a provider
+   */
+  delete: (id: number): Promise<void> =>
+    coreApi.delete(`/provider/${id}`),
+
+  /**
+   * Set a provider as preferred/default
+   */
+  setPreferred: (providerId: number): Promise<void> =>
+    coreApi.post('/provider/prefer', { provider_id: providerId }),
+
+  /**
+   * Validate a model configuration
+   */
+  validate: (data: ValidateModelRequest): Promise<ValidateModelResponse> =>
+    coreApi.post('/model/validate', data, false),
+}
+
 // ============ History/Sessions Endpoints ============
 
 export const history = {

@@ -21,6 +21,12 @@ class ActionImprove(BaseModel):
     project_id: str
     task_id: str
     question: str
+    auth_token: str | None = None
+    provider_id: int | None = None
+    model_provider: str | None = None
+    model_type: str | None = None
+    api_key: str | None = None
+    endpoint_url: str | None = None
 
 
 class ActionStop(BaseModel):

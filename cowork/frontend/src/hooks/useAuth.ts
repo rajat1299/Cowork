@@ -14,6 +14,8 @@ export function useAuth() {
 
     try {
       const tokens = await auth.login({ email, password })
+      // Store tokens FIRST so auth.me() can use them
+      useAuthStore.getState().setTokens(tokens.access_token, tokens.refresh_token)
       const userData = await auth.me()
       setAuthState(tokens.access_token, tokens.refresh_token, userData)
       return true

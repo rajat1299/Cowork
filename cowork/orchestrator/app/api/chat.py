@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -23,6 +23,11 @@ class ChatRequest(BaseModel):
     project_id: str
     task_id: str
     question: str
+    provider_id: int | None = None
+    model_provider: str | None = None
+    model_type: str | None = None
+    api_key: str | None = None
+    endpoint_url: str | None = None
 
 
 def format_sse(event: StepEventModel) -> str:
@@ -36,7 +41,10 @@ def format_sse(event: StepEventModel) -> str:
 
 
 @router.post("/chat", dependencies=[Depends(_chat_rate_limit)])
-async def start_chat(request: ChatRequest):
+async def start_chat(
+    request: ChatRequest,
+    authorization: str | None = Header(None),
+):
     async def event_stream():
         task_lock = get_or_create(request.project_id)
         await task_lock.put(
@@ -44,6 +52,12 @@ async def start_chat(request: ChatRequest):
                 project_id=request.project_id,
                 task_id=request.task_id,
                 question=request.question,
+                auth_token=authorization,
+                provider_id=request.provider_id,
+                model_provider=request.model_provider,
+                model_type=request.model_type,
+                api_key=request.api_key,
+                endpoint_url=request.endpoint_url,
             )
         )
         try:
@@ -59,10 +73,19 @@ async def start_chat(request: ChatRequest):
 class ImproveRequest(BaseModel):
     task_id: str
     question: str
+    provider_id: int | None = None
+    model_provider: str | None = None
+    model_type: str | None = None
+    api_key: str | None = None
+    endpoint_url: str | None = None
 
 
 @router.post("/chat/{project_id}/improve", dependencies=[Depends(_chat_rate_limit)])
-async def improve_chat(project_id: str, request: ImproveRequest):
+async def improve_chat(
+    project_id: str,
+    request: ImproveRequest,
+    authorization: str | None = Header(None),
+):
     task_lock = get(project_id)
     if not task_lock:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -71,6 +94,12 @@ async def improve_chat(project_id: str, request: ImproveRequest):
             project_id=project_id,
             task_id=request.task_id,
             question=request.question,
+            auth_token=authorization,
+            provider_id=request.provider_id,
+            model_provider=request.model_provider,
+            model_type=request.model_type,
+            api_key=request.api_key,
+            endpoint_url=request.endpoint_url,
         )
     )
     return {"status": "queued"}
