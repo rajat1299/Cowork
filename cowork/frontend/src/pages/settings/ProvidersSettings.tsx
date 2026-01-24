@@ -13,7 +13,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import { useProviders, PROVIDER_TEMPLATES } from '../../hooks/useProviders'
+import { useProviders, PROVIDER_TEMPLATES, CLOUD_PROVIDERS, LOCAL_PROVIDERS } from '../../hooks/useProviders'
 import type { Provider } from '../../api/coreApi'
 
 /**
@@ -142,10 +142,21 @@ export default function ProvidersSettings() {
       {/* Supported providers info */}
       <div className="mt-8 p-4 bg-dark-surface rounded-xl">
         <h4 className="text-[13px] font-medium text-ink mb-3">Supported Providers</h4>
-        <div className="grid grid-cols-3 gap-3 text-[12px] text-ink-muted">
-          {PROVIDER_TEMPLATES.map((template) => (
-            <div key={template.id}>{template.name}</div>
-          ))}
+        <div className="mb-3">
+          <p className="text-[11px] text-ink-subtle uppercase tracking-wide mb-2">Cloud</p>
+          <div className="grid grid-cols-3 gap-2 text-[12px] text-ink-muted">
+            {CLOUD_PROVIDERS.map((template) => (
+              <div key={template.id}>{template.name}</div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="text-[11px] text-ink-subtle uppercase tracking-wide mb-2">Local</p>
+          <div className="grid grid-cols-3 gap-2 text-[12px] text-ink-muted">
+            {LOCAL_PROVIDERS.map((template) => (
+              <div key={template.id}>{template.name}</div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -367,7 +378,8 @@ function ProviderCard({
         </div>
         <div className="text-[12px] text-ink-subtle">
           {provider.model_type || 'No model configured'}
-          {provider.api_key_last4 && ` • ****${provider.api_key_last4}`}
+          {provider.api_key_set && provider.api_key_last4 && ` • ****${provider.api_key_last4}`}
+          {provider.api_key_set && !provider.api_key_last4 && ' • Key saved'}
         </div>
       </div>
 
@@ -446,7 +458,9 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
   const alreadyConfigured = existingProviders.map((p) => p.provider_name)
 
   const handleSubmit = async () => {
-    if (!selectedTemplate || !apiKey) return
+    if (!selectedTemplate) return
+    // Require API key only for providers that need it
+    if (template?.requiresApiKey && !apiKey) return
 
     setIsValidating(true)
     setValidationError(null)
@@ -455,7 +469,7 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
     const result = await validateProvider({
       model_platform: selectedTemplate,
       model_type: modelType || template?.supportedModels[0] || '',
-      api_key: apiKey,
+      api_key: apiKey || 'not-required',  // Local models don't need API key
       url: endpoint || template?.defaultEndpoint,
     })
 
@@ -465,12 +479,12 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
       return
     }
 
-    // Submit
+    // Submit - only include endpoint if provided (backend has defaults)
     await onSubmit({
       provider_name: selectedTemplate,
-      api_key: apiKey,
-      endpoint_url: endpoint || template?.defaultEndpoint,
-      model_type: modelType || template?.supportedModels[0],
+      api_key: apiKey || 'not-required',
+      ...(endpoint && { endpoint_url: endpoint }),
+      ...(modelType && { model_type: modelType }),
     })
 
     setIsValidating(false)
@@ -487,30 +501,65 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
 
       {!selectedTemplate ? (
         // Template selection
-        <div className="grid grid-cols-2 gap-2">
-          {PROVIDER_TEMPLATES.map((tmpl) => {
-            const isConfigured = alreadyConfigured.includes(tmpl.id)
-            return (
-              <button
-                key={tmpl.id}
-                onClick={() => !isConfigured && setSelectedTemplate(tmpl.id)}
-                disabled={isConfigured}
-                className={cn(
-                  'p-3 rounded-lg text-left',
-                  'border border-dark-border',
-                  'transition-colors',
-                  isConfigured
-                    ? 'opacity-50 cursor-not-allowed'
-                    : 'hover:border-burnt/50 hover:bg-dark-elevated'
-                )}
-              >
-                <div className="text-[13px] font-medium text-ink">{tmpl.name}</div>
-                <div className="text-[11px] text-ink-subtle mt-1">
-                  {isConfigured ? 'Already configured' : tmpl.description}
-                </div>
-              </button>
-            )
-          })}
+        <div className="space-y-4">
+          {/* Cloud Providers */}
+          <div>
+            <p className="text-[11px] text-ink-subtle uppercase tracking-wide mb-2">Cloud Providers</p>
+            <div className="grid grid-cols-2 gap-2">
+              {CLOUD_PROVIDERS.map((tmpl) => {
+                const isConfigured = alreadyConfigured.includes(tmpl.id)
+                return (
+                  <button
+                    key={tmpl.id}
+                    onClick={() => !isConfigured && setSelectedTemplate(tmpl.id)}
+                    disabled={isConfigured}
+                    className={cn(
+                      'p-3 rounded-lg text-left',
+                      'border border-dark-border',
+                      'transition-colors',
+                      isConfigured
+                        ? 'opacity-50 cursor-not-allowed'
+                        : 'hover:border-burnt/50 hover:bg-dark-elevated'
+                    )}
+                  >
+                    <div className="text-[13px] font-medium text-ink">{tmpl.name}</div>
+                    <div className="text-[11px] text-ink-subtle mt-1">
+                      {isConfigured ? 'Already configured' : tmpl.description}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          {/* Local Providers */}
+          <div>
+            <p className="text-[11px] text-ink-subtle uppercase tracking-wide mb-2">Local Models</p>
+            <div className="grid grid-cols-2 gap-2">
+              {LOCAL_PROVIDERS.map((tmpl) => {
+                const isConfigured = alreadyConfigured.includes(tmpl.id)
+                return (
+                  <button
+                    key={tmpl.id}
+                    onClick={() => !isConfigured && setSelectedTemplate(tmpl.id)}
+                    disabled={isConfigured}
+                    className={cn(
+                      'p-3 rounded-lg text-left',
+                      'border border-dark-border',
+                      'transition-colors',
+                      isConfigured
+                        ? 'opacity-50 cursor-not-allowed'
+                        : 'hover:border-burnt/50 hover:bg-dark-elevated'
+                    )}
+                  >
+                    <div className="text-[13px] font-medium text-ink">{tmpl.name}</div>
+                    <div className="text-[11px] text-ink-subtle mt-1">
+                      {isConfigured ? 'Already configured' : tmpl.description}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
         </div>
       ) : (
         // Configuration form

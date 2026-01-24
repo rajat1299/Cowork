@@ -228,35 +228,50 @@ export interface GroupedHistoryResponse {
 
 // ============ Provider Types ============
 
+/**
+ * Provider response from backend
+ * Note: api_key is NEVER returned - use api_key_last4 and api_key_set instead
+ */
 export interface Provider {
   id: number
   provider_name: string
-  api_key?: string
-  api_key_last4?: string
-  endpoint_url?: string
   model_type?: string
+  endpoint_url?: string
   is_valid?: boolean
   prefer?: boolean
   encrypted_config?: Record<string, string>
+  // Security: raw api_key is never returned
+  api_key_last4?: string  // Last 4 chars of key for display
+  api_key_set?: boolean   // Whether a key has been saved
   created_at?: string
   updated_at?: string
 }
 
+/**
+ * Create provider request
+ * Backend handles default endpoints based on provider_name
+ */
 export interface CreateProviderRequest {
   provider_name: string
   api_key: string
-  endpoint_url?: string
   model_type?: string
+  endpoint_url?: string  // Optional - backend has defaults per provider
   is_valid?: boolean
+  prefer?: boolean
   encrypted_config?: Record<string, string>
 }
 
+/**
+ * Update provider request
+ * Omit api_key if you don't want to rotate it
+ */
 export interface UpdateProviderRequest {
   provider_name?: string
-  api_key?: string
-  endpoint_url?: string
+  api_key?: string  // Only include if rotating key
   model_type?: string
+  endpoint_url?: string
   is_valid?: boolean
+  prefer?: boolean
   encrypted_config?: Record<string, string>
 }
 
@@ -327,10 +342,11 @@ export const history = {
   /**
    * Get flat list of history tasks
    */
-  list: (page?: number, size?: number): Promise<HistoryListResponse> => {
+  list: (limit?: number, offset?: number, projectId?: string): Promise<HistoryTask[]> => {
     const params = new URLSearchParams()
-    if (page !== undefined) params.set('page', String(page))
-    if (size !== undefined) params.set('size', String(size))
+    if (limit !== undefined) params.set('limit', String(limit))
+    if (offset !== undefined) params.set('offset', String(offset))
+    if (projectId) params.set('project_id', projectId)
     const query = params.toString()
     return coreApi.get(`/chat/histories${query ? `?${query}` : ''}`)
   },
@@ -342,14 +358,57 @@ export const history = {
     coreApi.get(`/chat/histories/grouped?include_tasks=${includeTasks}`),
 
   /**
+   * Get single history task by task_id
+   */
+  getByTaskId: (taskId: string): Promise<HistoryTask> =>
+    coreApi.get(`/chat/history?task_id=${taskId}`),
+
+  /**
    * Get single history task by ID
    */
-  get: (historyId: string): Promise<HistoryTask> =>
+  get: (historyId: number): Promise<HistoryTask> =>
     coreApi.get(`/chat/history/${historyId}`),
 
   /**
    * Delete history task
    */
-  delete: (historyId: string): Promise<void> =>
+  delete: (historyId: number): Promise<void> =>
     coreApi.delete(`/chat/history/${historyId}`),
+}
+
+// ============ Share Types ============
+
+export interface ShareCreateRequest {
+  task_id: string
+}
+
+export interface ShareTokenResponse {
+  token: string
+  expires_at: string
+}
+
+export interface ShareInfo {
+  question: string
+  language: string
+  model_platform: string
+  model_type: string
+  max_retries: number
+  project_name?: string
+  summary?: string
+}
+
+// ============ Share Endpoints ============
+
+export const share = {
+  /**
+   * Create a share link for a task (requires auth)
+   */
+  create: (taskId: string): Promise<ShareTokenResponse> =>
+    coreApi.post('/chat/share', { task_id: taskId }),
+
+  /**
+   * Get share info by token (public, no auth required)
+   */
+  getInfo: (token: string): Promise<ShareInfo> =>
+    coreApi.get(`/chat/share/info/${token}`, false),
 }

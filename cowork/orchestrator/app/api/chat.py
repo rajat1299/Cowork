@@ -110,5 +110,6 @@ async def stop_chat(project_id: str):
     task_lock = get(project_id)
     if not task_lock:
         raise HTTPException(status_code=404, detail="Project not found")
+    task_lock.request_stop()
     await task_lock.put(ActionStop(project_id=project_id, reason="user_stop"))
     return {"status": "stopping"}

@@ -3,21 +3,24 @@ import { providers as providersApi } from '../api/coreApi'
 import type { Provider, CreateProviderRequest, UpdateProviderRequest, ValidateModelRequest } from '../api/coreApi'
 
 // ============ Predefined Provider Templates ============
+// Based on backend provider-specific defaults in llm_client.py
 
 export interface ProviderTemplate {
   id: string
   name: string
   description: string
-  defaultEndpoint: string
+  defaultEndpoint: string  // Backend handles defaults, but shown as placeholder
   requiresApiKey: boolean
   supportedModels: string[]
+  isLocal?: boolean
 }
 
 export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
+  // Cloud Providers
   {
     id: 'openai',
     name: 'OpenAI',
-    description: 'GPT-4, GPT-3.5, and other OpenAI models',
+    description: 'GPT-4o, GPT-4, and other OpenAI models',
     defaultEndpoint: 'https://api.openai.com/v1',
     requiresApiKey: true,
     supportedModels: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'],
@@ -25,36 +28,101 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
     id: 'anthropic',
     name: 'Anthropic',
-    description: 'Claude 3.5, Claude 3, and other Anthropic models',
-    defaultEndpoint: 'https://api.anthropic.com',
+    description: 'Claude 3.5 Sonnet, Claude 3 Opus, and more',
+    defaultEndpoint: 'https://api.anthropic.com/v1/messages',
     requiresApiKey: true,
     supportedModels: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307'],
   },
   {
-    id: 'google',
-    name: 'Google AI',
-    description: 'Gemini Pro and other Google AI models',
-    defaultEndpoint: 'https://generativelanguage.googleapis.com/v1beta',
+    id: 'gemini',
+    name: 'Google Gemini',
+    description: 'Gemini Pro, Gemini Flash (OpenAI-compatible)',
+    defaultEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     requiresApiKey: true,
     supportedModels: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro'],
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    description: 'Access multiple providers via OpenRouter',
+    defaultEndpoint: 'https://openrouter.ai/api/v1',
+    requiresApiKey: true,
+    supportedModels: ['openai/gpt-4o', 'anthropic/claude-3.5-sonnet', 'meta-llama/llama-3.1-70b'],
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    description: 'DeepSeek Coder and Chat models',
+    defaultEndpoint: 'https://api.deepseek.com/v1',
+    requiresApiKey: true,
+    supportedModels: ['deepseek-chat', 'deepseek-coder'],
+  },
+  {
+    id: 'qwen',
+    name: 'Qwen (DashScope)',
+    description: 'Alibaba Qwen models via DashScope',
+    defaultEndpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    requiresApiKey: true,
+    supportedModels: ['qwen-max', 'qwen-plus', 'qwen-turbo'],
   },
   {
     id: 'azure',
     name: 'Azure OpenAI',
     description: 'OpenAI models hosted on Azure',
-    defaultEndpoint: '',
+    defaultEndpoint: '',  // User must provide Azure endpoint
     requiresApiKey: true,
     supportedModels: ['gpt-4o', 'gpt-4', 'gpt-35-turbo'],
   },
   {
+    id: 'custom',
+    name: 'OpenAI-compatible (Custom)',
+    description: 'Any OpenAI-compatible API endpoint',
+    defaultEndpoint: '',  // User must provide endpoint
+    requiresApiKey: true,
+    supportedModels: [],
+  },
+  // Local Providers
+  {
     id: 'ollama',
-    name: 'Ollama (Local)',
+    name: 'Ollama',
     description: 'Run models locally with Ollama',
     defaultEndpoint: 'http://localhost:11434/v1',
     requiresApiKey: false,
     supportedModels: ['llama3.2', 'llama3.1', 'mistral', 'codellama', 'phi3'],
+    isLocal: true,
+  },
+  {
+    id: 'vllm',
+    name: 'vLLM',
+    description: 'High-throughput local inference with vLLM',
+    defaultEndpoint: 'http://localhost:8000/v1',
+    requiresApiKey: false,
+    supportedModels: ['llama-3.1-8b', 'mistral-7b'],
+    isLocal: true,
+  },
+  {
+    id: 'sglang',
+    name: 'SGLang',
+    description: 'Fast serving with SGLang',
+    defaultEndpoint: 'http://localhost:30000/v1',
+    requiresApiKey: false,
+    supportedModels: ['llama-3.1-8b', 'mistral-7b'],
+    isLocal: true,
+  },
+  {
+    id: 'lmstudio',
+    name: 'LM Studio',
+    description: 'Run models locally with LM Studio',
+    defaultEndpoint: 'http://localhost:1234/v1',
+    requiresApiKey: false,
+    supportedModels: ['llama-3.1', 'mistral', 'phi-3'],
+    isLocal: true,
   },
 ]
+
+// Separate cloud and local providers for UI organization
+export const CLOUD_PROVIDERS = PROVIDER_TEMPLATES.filter(p => !p.isLocal)
+export const LOCAL_PROVIDERS = PROVIDER_TEMPLATES.filter(p => p.isLocal)
 
 // ============ Hook State ============
 

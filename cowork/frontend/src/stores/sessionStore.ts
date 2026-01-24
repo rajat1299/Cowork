@@ -15,6 +15,7 @@ export interface SessionItem {
   updatedAt: string
   taskCount: number
   isLocal?: boolean // True if from local chatStore, not from backend
+  historyId?: number // Backend numeric ID for delete operations
 }
 
 // ============ Store State ============
@@ -56,6 +57,7 @@ function historyTaskToSession(task: HistoryTask): SessionItem {
     updatedAt: task.updated_at || task.created_at || new Date().toISOString(),
     taskCount: 1,
     isLocal: false,
+    historyId: typeof task.id === 'number' ? task.id : undefined,
   }
 }
 
@@ -153,9 +155,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       } catch {
         // Fall back to flat list
         try {
-          const listResponse = await history.list(1, 20)
-          if (listResponse.items) {
-            remoteSessions = listResponse.items.map(historyTaskToSession)
+          const listResponse = await history.list(20, 0)
+          if (Array.isArray(listResponse)) {
+            remoteSessions = listResponse.map(historyTaskToSession)
           }
         } catch {
           // Backend not available - silently use local only
@@ -192,17 +194,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     try {
       const nextPage = page + 1
-      const listResponse = await history.list(nextPage, 20)
+      const offset = nextPage * 20
+      const listResponse = await history.list(20, offset)
 
-      if (listResponse.items && listResponse.items.length > 0) {
-        const newSessions = listResponse.items.map(historyTaskToSession)
+      if (Array.isArray(listResponse) && listResponse.length > 0) {
+        const newSessions = listResponse.map(historyTaskToSession)
         const localSessions = getLocalSessions()
         const mergedSessions = mergeSessions(localSessions, [...sessions, ...newSessions])
 
         set({
           sessions: mergedSessions,
           page: nextPage,
-          hasMore: listResponse.items.length >= 20,
+          hasMore: listResponse.length >= 20,
           isLoading: false,
         })
       } else {
@@ -223,12 +226,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   deleteSession: async (sessionId) => {
-    try {
-      // Try to delete from backend
-      await history.delete(sessionId)
-    } catch {
-      // Backend might not have this session, that's OK
-      console.warn('Could not delete session from backend:', sessionId)
+    // Find the session to get its backend historyId
+    const session = get().sessions.find((s) => s.id === sessionId)
+
+    if (session?.historyId) {
+      try {
+        // Delete from backend using numeric historyId
+        await history.delete(session.historyId)
+      } catch {
+        // Backend might not have this session, that's OK
+        console.warn('Could not delete session from backend:', sessionId)
+      }
     }
 
     // Remove from local state
