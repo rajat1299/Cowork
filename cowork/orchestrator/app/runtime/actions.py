@@ -16,6 +16,13 @@ class TaskStatus(StrEnum):
     stopped = "stopped"
 
 
+class AgentSpec(BaseModel):
+    name: str
+    description: str = ""
+    system_prompt: str = ""
+    tools: list[str] = []
+
+
 class ActionImprove(BaseModel):
     type: ActionType = ActionType.improve
     project_id: str
@@ -27,6 +34,7 @@ class ActionImprove(BaseModel):
     model_type: str | None = None
     api_key: str | None = None
     endpoint_url: str | None = None
+    agents: list[AgentSpec] | None = None
 
 
 class ActionStop(BaseModel):

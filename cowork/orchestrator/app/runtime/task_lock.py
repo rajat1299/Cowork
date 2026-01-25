@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from app.runtime.actions import Action, TaskStatus
 
@@ -20,6 +21,7 @@ class TaskLock:
     last_task_summary: str = ""
     background_tasks: set[asyncio.Task] = field(default_factory=set)
     human_input: dict[str, asyncio.Queue[str]] = field(default_factory=dict)
+    workforce: Any | None = None
 
     async def put(self, item: Action) -> None:
         self.last_accessed = datetime.utcnow()

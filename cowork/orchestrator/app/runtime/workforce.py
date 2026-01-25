@@ -155,7 +155,13 @@ def parse_subtasks(raw_text: str, fallback_id_prefix: str) -> list[TaskNode]:
 
 
 def _extract_json_array(raw_text: str) -> list[dict] | None:
-    matches = re.search(r"\[[\\s\\S]*\]", raw_text)
+    cleaned = raw_text.strip()
+    fence_match = re.search(r"```(?:json)?\s*(\[[\s\S]*?\])\s*```", cleaned, re.IGNORECASE)
+    if fence_match:
+        cleaned = fence_match.group(1)
+    elif "```" in cleaned:
+        cleaned = cleaned.replace("```json", "").replace("```", "")
+    matches = re.search(r"\[[\s\S]*\]", cleaned)
     if not matches:
         return None
     try:

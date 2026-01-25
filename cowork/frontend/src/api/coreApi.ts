@@ -412,3 +412,139 @@ export const share = {
   getInfo: (token: string): Promise<ShareInfo> =>
     coreApi.get(`/chat/share/info/${token}`, false),
 }
+
+// ============ MCP Types ============
+
+export type McpType = 'local' | 'remote'
+export type McpStatus = 'online' | 'offline'
+export type McpUserStatus = 'enable' | 'disable'
+
+/**
+ * MCP Server from registry/marketplace
+ */
+export interface McpServer {
+  id: number
+  name: string
+  key: string
+  description: string
+  home_page?: string
+  mcp_type: McpType
+  status: McpStatus
+  install_command?: {
+    command?: string
+    args?: string[]
+    env?: Record<string, string>
+  }
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * User's installed MCP
+ */
+export interface McpUser {
+  id: number
+  mcp_id?: number
+  mcp_name: string
+  mcp_key: string
+  mcp_desc?: string
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  mcp_type: McpType
+  status: McpUserStatus
+  server_url?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface McpUserUpdate {
+  mcp_name?: string
+  mcp_desc?: string
+  status?: McpUserStatus
+  mcp_type?: McpType
+  env?: Record<string, string>
+  server_url?: string
+  command?: string
+  args?: string[]
+  mcp_key?: string
+}
+
+export interface McpImportLocal {
+  mcpServers: Record<string, {
+    command: string
+    args?: string[]
+    env?: Record<string, string>
+    description?: string
+  }>
+}
+
+export interface McpImportRemote {
+  server_name: string
+  server_url: string
+}
+
+// ============ MCP Endpoints ============
+
+export const mcp = {
+  /**
+   * List available MCP servers from registry
+   */
+  listServers: (keyword?: string, mine?: boolean): Promise<McpServer[]> => {
+    const params = new URLSearchParams()
+    if (keyword) params.set('keyword', keyword)
+    if (mine) params.set('mine', 'true')
+    const query = params.toString()
+    return coreApi.get(`/mcps${query ? `?${query}` : ''}`)
+  },
+
+  /**
+   * Get MCP server details
+   */
+  getServer: (id: number): Promise<McpServer> =>
+    coreApi.get(`/mcp/${id}`),
+
+  /**
+   * Install MCP from registry
+   */
+  install: (mcpId: number): Promise<McpUser> =>
+    coreApi.post('/mcp/install', { mcp_id: mcpId }),
+
+  /**
+   * Import local MCP configuration
+   */
+  importLocal: (data: McpImportLocal): Promise<{ message: string; count: number }> =>
+    coreApi.post('/mcp/import/local', data),
+
+  /**
+   * Import remote MCP server
+   */
+  importRemote: (data: McpImportRemote): Promise<McpUser> =>
+    coreApi.post('/mcp/import/remote', data),
+
+  /**
+   * List user's installed MCPs
+   */
+  listUserMcps: (mcpId?: number): Promise<McpUser[]> => {
+    const query = mcpId !== undefined ? `?mcp_id=${mcpId}` : ''
+    return coreApi.get(`/mcp/users${query}`)
+  },
+
+  /**
+   * Get user's MCP by ID
+   */
+  getUserMcp: (id: number): Promise<McpUser> =>
+    coreApi.get(`/mcp/users/${id}`),
+
+  /**
+   * Update user's MCP configuration
+   */
+  updateUserMcp: (id: number, data: McpUserUpdate): Promise<McpUser> =>
+    coreApi.put(`/mcp/users/${id}`, data),
+
+  /**
+   * Delete/uninstall user's MCP
+   */
+  deleteUserMcp: (id: number): Promise<void> =>
+    coreApi.delete(`/mcp/users/${id}`),
+}

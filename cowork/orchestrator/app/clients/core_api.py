@@ -78,6 +78,26 @@ async def create_history(auth_header: str | None, payload: dict[str, Any]) -> di
         return None
 
 
+async def fetch_configs(
+    auth_header: str | None,
+    group: str | None = None,
+) -> list[dict[str, Any]]:
+    if not auth_header:
+        return []
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return []
+    headers = _build_headers(auth_header)
+    params = {"group": group} if group else None
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{base_url}/configs", headers=headers, params=params)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPError:
+        return []
+
+
 async def update_history(
     auth_header: str | None,
     history_id: int,

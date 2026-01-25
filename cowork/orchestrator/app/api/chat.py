@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.config import settings
-from app.runtime.actions import ActionImprove, ActionStop, TaskStatus
+from app.runtime.actions import ActionImprove, ActionStop, AgentSpec, TaskStatus
 from app.runtime.engine import run_task_loop
 from app.runtime.manager import get, get_or_create, remove
 from shared.schemas import StepEvent as StepEventModel
@@ -28,6 +28,7 @@ class ChatRequest(BaseModel):
     model_type: str | None = None
     api_key: str | None = None
     endpoint_url: str | None = None
+    agents: list[AgentSpec] | None = None
 
 
 def format_sse(event: StepEventModel) -> str:
@@ -58,6 +59,7 @@ async def start_chat(
                 model_type=request.model_type,
                 api_key=request.api_key,
                 endpoint_url=request.endpoint_url,
+                agents=request.agents,
             )
         )
         try:
@@ -78,6 +80,7 @@ class ImproveRequest(BaseModel):
     model_type: str | None = None
     api_key: str | None = None
     endpoint_url: str | None = None
+    agents: list[AgentSpec] | None = None
 
 
 @router.post("/chat/{project_id}/improve", dependencies=[Depends(_chat_rate_limit)])
@@ -100,6 +103,7 @@ async def improve_chat(
             model_type=request.model_type,
             api_key=request.api_key,
             endpoint_url=request.endpoint_url,
+            agents=request.agents,
         )
     )
     return {"status": "queued"}

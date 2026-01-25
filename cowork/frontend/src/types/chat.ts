@@ -138,9 +138,10 @@ export interface Message {
 
 export interface ArtifactInfo {
   id: string
-  type: 'file' | 'code' | 'image'
+  type: 'file' | 'code' | 'image' | 'viewed' | 'created'
   name: string
   contentUrl?: string
+  action?: 'created' | 'viewed' | 'modified'
 }
 
 // ============ Task Types ============

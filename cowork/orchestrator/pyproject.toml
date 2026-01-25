@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Orchestrator service for multi-agent runtime and SSE streaming"
 requires-python = ">=3.10,<3.13"
 dependencies = [
+    "camel-ai[eigent]==0.2.83a9",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "pydantic>=2.7.0",
@@ -14,3 +15,13 @@ dependencies = [
 
 [tool.ruff]
 line-length = 120
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["..", "../shared"]
