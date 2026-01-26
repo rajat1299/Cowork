@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import router as api_router
 from shared.observability import attach_request_logging
+from app.runtime.deps import maybe_start_auto_install
 
 app = FastAPI(title="Cowork Orchestrator", version="0.1.0")
 
@@ -32,3 +33,8 @@ app.add_middleware(
 
 app.include_router(api_router)
 attach_request_logging(app, "orchestrator")
+
+
+@app.on_event("startup")
+def _maybe_install_deps() -> None:
+    maybe_start_auto_install()
