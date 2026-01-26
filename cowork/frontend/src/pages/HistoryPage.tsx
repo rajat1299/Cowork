@@ -17,7 +17,9 @@ import {
 import { cn } from '../lib/utils'
 import { history } from '../api/coreApi'
 import type { HistoryTask } from '../api/coreApi'
-import { useChatStore } from '../stores/chatStore'
+import { useChat } from '../hooks'
+import { showSuccess, showError, getErrorMessage } from '../lib/toast'
+import { HistoryItemSkeleton } from '../components/ui/skeletons'
 
 type StatusFilter = 'all' | 'ongoing' | 'completed'
 
@@ -27,7 +29,7 @@ type StatusFilter = 'all' | 'ongoing' | 'completed'
  */
 export default function HistoryPage() {
   const navigate = useNavigate()
-  const { setActiveTask } = useChatStore()
+  const { switchTask } = useChat()
 
   // State
   const [histories, setHistories] = useState<HistoryTask[]>([])
@@ -37,6 +39,7 @@ export default function HistoryPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null)
+  const [_loadingTaskId, setLoadingTaskId] = useState<string | null>(null)
 
   // Fetch histories on mount
   useEffect(() => {
@@ -96,9 +99,14 @@ export default function HistoryPage() {
     })
   }, [filteredHistories])
 
-  const handleHistoryClick = (item: HistoryTask) => {
-    setActiveTask(item.task_id)
-    navigate('/')
+  const handleHistoryClick = async (item: HistoryTask) => {
+    setLoadingTaskId(item.task_id)
+    try {
+      await switchTask(item.task_id)
+      navigate('/')
+    } finally {
+      setLoadingTaskId(null)
+    }
   }
 
   const handleDelete = async (id: number) => {
@@ -106,8 +114,9 @@ export default function HistoryPage() {
       setDeletingId(id)
       await history.delete(id)
       setHistories((prev) => prev.filter((h) => h.id !== id))
+      showSuccess('Conversation deleted')
     } catch (err) {
-      console.error('Failed to delete history:', err)
+      showError('Failed to delete', getErrorMessage(err))
     } finally {
       setDeletingId(null)
       setMenuOpenId(null)
@@ -117,11 +126,11 @@ export default function HistoryPage() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <header className="flex-shrink-0 px-6 py-4 border-b border-dark-border">
+      <header className="flex-shrink-0 px-6 py-4 border-b border-border">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-xl font-medium text-ink">History</h1>
-            <p className="text-[13px] text-ink-subtle mt-0.5">
+            <h1 className="text-xl font-medium text-foreground">History</h1>
+            <p className="text-[13px] text-muted-foreground mt-0.5">
               {filteredHistories.length} conversation{filteredHistories.length !== 1 ? 's' : ''}
             </p>
           </div>
@@ -130,9 +139,9 @@ export default function HistoryPage() {
             disabled={isLoading}
             className={cn(
               'flex items-center gap-2 px-3 py-2 rounded-xl',
-              'bg-dark-surface border border-dark-border',
-              'text-ink-muted text-[13px]',
-              'hover:text-ink hover:border-ink-faint transition-colors',
+              'bg-secondary border border-border',
+              'text-muted-foreground text-[13px]',
+              'hover:text-foreground hover:border-foreground/30 transition-colors',
               'disabled:opacity-50'
             )}
           >
@@ -145,7 +154,7 @@ export default function HistoryPage() {
         <div className="flex items-center gap-3">
           {/* Search input */}
           <div className="flex-1 relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-subtle" />
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
               value={searchQuery}
@@ -153,15 +162,15 @@ export default function HistoryPage() {
               placeholder="Search conversations..."
               className={cn(
                 'w-full pl-10 pr-4 py-2.5 rounded-xl',
-                'bg-dark-surface border border-dark-border',
-                'text-ink text-[14px] placeholder:text-ink-subtle',
+                'bg-secondary border border-border',
+                'text-foreground text-[14px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50'
               )}
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-muted hover:text-ink"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 <X size={14} />
               </button>
@@ -169,7 +178,7 @@ export default function HistoryPage() {
           </div>
 
           {/* Status filter */}
-          <div className="flex items-center gap-1 p-1 bg-dark-surface border border-dark-border rounded-xl">
+          <div className="flex items-center gap-1 p-1 bg-secondary border border-border rounded-xl">
             <FilterButton
               active={statusFilter === 'all'}
               onClick={() => setStatusFilter('all')}
@@ -198,9 +207,12 @@ export default function HistoryPage() {
       <main className="flex-1 overflow-y-auto px-6 py-4">
         {/* Loading state */}
         {isLoading && histories.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16">
-            <Loader2 size={32} className="animate-spin text-burnt mb-4" />
-            <p className="text-ink-subtle text-[14px]">Loading history...</p>
+          <div className="space-y-3">
+            <HistoryItemSkeleton />
+            <HistoryItemSkeleton />
+            <HistoryItemSkeleton />
+            <HistoryItemSkeleton />
+            <HistoryItemSkeleton />
           </div>
         )}
 
@@ -210,8 +222,8 @@ export default function HistoryPage() {
             <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
               <AlertCircle size={24} className="text-red-400" />
             </div>
-            <h2 className="text-lg font-medium text-ink mb-2">Failed to load history</h2>
-            <p className="text-ink-subtle text-[14px] mb-4">{error}</p>
+            <h2 className="text-lg font-medium text-foreground mb-2">Failed to load history</h2>
+            <p className="text-muted-foreground text-[14px] mb-4">{error}</p>
             <button
               onClick={fetchHistories}
               className={cn(
@@ -228,11 +240,11 @@ export default function HistoryPage() {
         {/* Empty state */}
         {!isLoading && !error && histories.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-12 h-12 rounded-full bg-dark-surface flex items-center justify-center mb-4">
-              <Clock size={24} className="text-ink-muted" />
+            <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center mb-4">
+              <Clock size={24} className="text-muted-foreground" />
             </div>
-            <h2 className="text-lg font-medium text-ink mb-2">No history yet</h2>
-            <p className="text-ink-subtle text-[14px]">
+            <h2 className="text-lg font-medium text-foreground mb-2">No history yet</h2>
+            <p className="text-muted-foreground text-[14px]">
               Your conversation history will appear here.
             </p>
           </div>
@@ -241,11 +253,11 @@ export default function HistoryPage() {
         {/* No results from search */}
         {!isLoading && !error && histories.length > 0 && filteredHistories.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-12 h-12 rounded-full bg-dark-surface flex items-center justify-center mb-4">
-              <Filter size={24} className="text-ink-muted" />
+            <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center mb-4">
+              <Filter size={24} className="text-muted-foreground" />
             </div>
-            <h2 className="text-lg font-medium text-ink mb-2">No matches found</h2>
-            <p className="text-ink-subtle text-[14px] mb-4">
+            <h2 className="text-lg font-medium text-foreground mb-2">No matches found</h2>
+            <p className="text-muted-foreground text-[14px] mb-4">
               Try adjusting your search or filters.
             </p>
             <button
@@ -265,7 +277,7 @@ export default function HistoryPage() {
           <div className="space-y-6">
             {groupedHistories.map(([groupKey, items]) => (
               <div key={groupKey}>
-                <h3 className="text-[12px] font-medium text-ink-subtle uppercase tracking-wide mb-3">
+                <h3 className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide mb-3">
                   {groupKey}
                 </h3>
                 <div className="space-y-2">
@@ -306,8 +318,8 @@ function FilterButton({ active, onClick, children }: FilterButtonProps) {
         'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px]',
         'transition-colors',
         active
-          ? 'bg-dark-elevated text-ink'
-          : 'text-ink-muted hover:text-ink'
+          ? 'bg-accent text-foreground'
+          : 'text-muted-foreground hover:text-foreground'
       )}
     >
       {children}
@@ -339,8 +351,8 @@ function HistoryCard({
     <div
       className={cn(
         'group flex items-start gap-3 p-4 rounded-xl',
-        'bg-dark-surface border border-dark-border',
-        'hover:border-ink-faint transition-colors cursor-pointer'
+        'bg-secondary border border-border',
+        'hover:border-foreground/30 transition-colors cursor-pointer'
       )}
       onClick={onClick}
     >
@@ -348,19 +360,19 @@ function HistoryCard({
       <div
         className={cn(
           'w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0',
-          isOngoing ? 'bg-burnt/15' : 'bg-dark-elevated'
+          isOngoing ? 'bg-burnt/15' : 'bg-accent'
         )}
       >
         <MessageSquare
           size={16}
-          className={isOngoing ? 'text-burnt' : 'text-ink-muted'}
+          className={isOngoing ? 'text-burnt' : 'text-muted-foreground'}
         />
       </div>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <h4 className="text-[14px] font-medium text-ink truncate">
+          <h4 className="text-[14px] font-medium text-foreground truncate">
             {item.project_name || truncateText(item.question, 60)}
           </h4>
           {isOngoing ? (
@@ -375,10 +387,10 @@ function HistoryCard({
             </span>
           )}
         </div>
-        <p className="text-[13px] text-ink-subtle truncate mb-2">
+        <p className="text-[13px] text-muted-foreground truncate mb-2">
           {item.summary || truncateText(item.question, 100)}
         </p>
-        <div className="flex items-center gap-3 text-[11px] text-ink-muted">
+        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span>{formatTime(date)}</span>
           {item.model_type && (
             <>
@@ -405,13 +417,13 @@ function HistoryCard({
           className={cn(
             'p-2 rounded-lg transition-colors',
             'opacity-0 group-hover:opacity-100',
-            'hover:bg-dark-elevated'
+            'hover:bg-accent'
           )}
         >
           {isDeleting ? (
-            <Loader2 size={16} className="animate-spin text-ink-muted" />
+            <Loader2 size={16} className="animate-spin text-muted-foreground" />
           ) : (
-            <MoreVertical size={16} className="text-ink-muted" />
+            <MoreVertical size={16} className="text-muted-foreground" />
           )}
         </button>
 
@@ -424,13 +436,13 @@ function HistoryCard({
                 onMenuToggle()
               }}
             />
-            <div className="absolute right-0 top-full mt-1 z-20 w-36 py-1 bg-dark-surface border border-dark-border rounded-lg shadow-lg">
+            <div className="absolute right-0 top-full mt-1 z-20 w-36 py-1 bg-card border border-border rounded-lg shadow-lg">
               <button
                 onClick={(e) => {
                   e.stopPropagation()
                   onDelete()
                 }}
-                className="w-full px-3 py-2 text-left text-[13px] text-red-400 hover:bg-dark-elevated flex items-center gap-2"
+                className="w-full px-3 py-2 text-left text-[13px] text-red-400 hover:bg-accent flex items-center gap-2"
               >
                 <Trash2 size={14} />
                 Delete

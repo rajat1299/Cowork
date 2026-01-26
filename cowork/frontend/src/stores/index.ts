@@ -7,3 +7,4 @@ export {
   updateStreamingTextThrottled,
   addProgressStepFromEvent,
 } from './chatStore'
+export { useThemeStore } from './themeStore'

@@ -39,7 +39,7 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
     return (
       <div className="space-y-3">
         {/* Main input */}
-        <div className="relative bg-dark-surface rounded-2xl border border-dark-border overflow-hidden">
+        <div className="relative bg-secondary rounded-2xl border border-border overflow-hidden">
           <textarea
             ref={textareaRef}
             value={value}
@@ -50,8 +50,8 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
             rows={1}
             className={cn(
               'w-full resize-none bg-transparent px-5 py-4',
-              'text-[15px] text-ink leading-relaxed',
-              'placeholder:text-ink-subtle',
+              'text-[15px] text-foreground leading-relaxed',
+              'placeholder:text-muted-foreground',
               'focus:outline-none',
               'disabled:opacity-50'
             )}
@@ -64,10 +64,10 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
             {/* Work in a folder button */}
             <button className={cn(
               'flex items-center gap-2 px-3 py-2 rounded-lg',
-              'text-[13px] text-ink-muted',
-              'hover:bg-dark-surface hover:text-ink',
+              'text-[13px] text-muted-foreground',
+              'hover:bg-secondary hover:text-foreground',
               'transition-all duration-200',
-              'border border-transparent hover:border-dark-border'
+              'border border-transparent hover:border-border'
             )}>
               <FolderOpen size={16} strokeWidth={1.5} />
               <span>Work in a folder</span>
@@ -76,7 +76,7 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
             {/* Add attachment */}
             <button className={cn(
               'w-8 h-8 rounded-lg flex items-center justify-center',
-              'text-ink-subtle hover:text-ink hover:bg-dark-surface',
+              'text-muted-foreground hover:text-foreground hover:bg-secondary',
               'transition-all duration-200'
             )}>
               <Plus size={18} strokeWidth={1.5} />
@@ -87,8 +87,8 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
             {/* Model selector */}
             <button className={cn(
               'flex items-center gap-1.5 px-3 py-2 rounded-lg',
-              'text-[13px] text-ink-muted',
-              'hover:bg-dark-surface',
+              'text-[13px] text-muted-foreground',
+              'hover:bg-secondary',
               'transition-all duration-200'
             )}>
               <span>Opus 4.5</span>
@@ -101,9 +101,9 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
               disabled={disabled}
               className={cn(
                 'flex items-center gap-2 px-4 py-2.5 rounded-xl',
-                'bg-warm-beige text-dark-bg',
+                'bg-foreground text-background',
                 'text-[14px] font-medium',
-                'hover:bg-warm-beige/90',
+                'hover:bg-foreground/90',
                 'transition-all duration-200',
                 'disabled:opacity-50 disabled:cursor-not-allowed'
               )}
@@ -119,7 +119,7 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
 
   // Standard chat input (non-welcome state)
   return (
-    <div className="relative flex items-end gap-3 p-4 bg-dark-surface rounded-2xl border border-dark-border">
+    <div className="relative flex items-end gap-3 p-4 bg-secondary rounded-2xl border border-border">
       <textarea
         ref={textareaRef}
         value={value}
@@ -130,8 +130,8 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
         rows={1}
         className={cn(
           'flex-1 resize-none bg-transparent py-1.5 px-1',
-          'text-[14px] text-ink leading-relaxed',
-          'placeholder:text-ink-subtle',
+          'text-[14px] text-foreground leading-relaxed',
+          'placeholder:text-muted-foreground',
           'focus:outline-none',
           'disabled:opacity-50'
         )}
@@ -146,7 +146,7 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
           'transition-all duration-200',
           value.trim() && !disabled
             ? 'bg-burnt text-white'
-            : 'bg-dark-elevated text-ink-subtle'
+            : 'bg-accent text-muted-foreground'
         )}
       >
         <ArrowRight size={16} strokeWidth={2} />

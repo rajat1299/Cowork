@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { RouterProvider } from 'react-router-dom'
 import { router } from './router'
 import { useAuth, useOAuth } from './hooks'
+import { Toaster } from './components/ui/sonner'
 
 function App() {
   const { checkAuth } = useAuth()
@@ -25,7 +26,12 @@ function App() {
     initAuth()
   }, [])
 
-  return <RouterProvider router={router} />
+  return (
+    <>
+      <RouterProvider router={router} />
+      <Toaster position="bottom-right" />
+    </>
+  )
 }
 
 export default App

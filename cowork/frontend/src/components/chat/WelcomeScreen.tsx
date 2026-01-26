@@ -24,24 +24,24 @@ export function WelcomeScreen({ onPromptSelect }: WelcomeScreenProps) {
         </div>
 
         {/* Greeting */}
-        <h1 className="text-[32px] font-medium text-ink tracking-tight mb-6">
+        <h1 className="text-[32px] font-medium text-foreground tracking-tight mb-6">
           Let's knock something off your list
         </h1>
 
         {/* Research Preview Banner */}
-        <div className="mb-8 p-4 bg-dark-surface rounded-xl border border-dark-border">
+        <div className="mb-8 p-4 bg-secondary rounded-xl border border-border">
           <div className="flex items-start gap-3">
             <div className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-ink-muted">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
                 <rect x="3" y="3" width="18" height="18" rx="2" />
                 <path d="M9 12h6M9 8h6M9 16h3" />
               </svg>
             </div>
-            <p className="text-[14px] text-ink-muted leading-relaxed">
+            <p className="text-[14px] text-muted-foreground leading-relaxed">
               Cowork is an early research preview. New improvements ship frequently.{' '}
-              <a href="#" className="text-ink hover:text-burnt transition-colors">Learn more</a>
+              <a href="#" className="text-foreground hover:text-burnt transition-colors">Learn more</a>
               {' '}or{' '}
-              <a href="#" className="text-ink hover:text-burnt transition-colors">give us feedback</a>.
+              <a href="#" className="text-foreground hover:text-burnt transition-colors">give us feedback</a>.
             </p>
           </div>
         </div>
@@ -77,17 +77,17 @@ function ActionCard({ icon: Icon, label, onClick, delay = 0 }: ActionCardProps) 
       style={{ animationDelay: `${delay}ms` }}
       className={cn(
         'flex items-center gap-3 p-4 rounded-xl text-left',
-        'bg-dark-surface border border-dark-border',
-        'hover:bg-dark-elevated hover:border-ink-faint',
+        'bg-secondary border border-border',
+        'hover:bg-accent hover:border-foreground/30',
         'transition-all duration-200',
         'animate-slide-up opacity-0',
         'group'
       )}
     >
-      <div className="w-9 h-9 rounded-lg bg-dark-elevated flex items-center justify-center group-hover:bg-burnt/10 transition-colors">
-        <Icon size={18} strokeWidth={1.5} className="text-ink-muted group-hover:text-burnt transition-colors" />
+      <div className="w-9 h-9 rounded-lg bg-accent flex items-center justify-center group-hover:bg-burnt/10 transition-colors">
+        <Icon size={18} strokeWidth={1.5} className="text-muted-foreground group-hover:text-burnt transition-colors" />
       </div>
-      <span className="text-[14px] text-ink-muted group-hover:text-ink transition-colors">
+      <span className="text-[14px] text-muted-foreground group-hover:text-foreground transition-colors">
         {label}
       </span>
     </button>

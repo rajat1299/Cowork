@@ -34,12 +34,12 @@ export function RegisterPage() {
   const displayError = localError || error
 
   return (
-    <div className="min-h-screen bg-dark-bg flex items-center justify-center p-6">
+    <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-sm">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-medium text-ink mb-2">Create account</h1>
-          <p className="text-ink-subtle text-[14px]">Get started with Cowork</p>
+          <h1 className="text-2xl font-medium text-foreground mb-2">Create account</h1>
+          <p className="text-muted-foreground text-[14px]">Get started with Cowork</p>
         </div>
 
         {/* Form */}
@@ -51,7 +51,7 @@ export function RegisterPage() {
           )}
 
           <div>
-            <label className="block text-[13px] text-ink-muted mb-2">Email</label>
+            <label className="block text-[13px] text-muted-foreground mb-2">Email</label>
             <input
               type="email"
               value={email}
@@ -64,8 +64,8 @@ export function RegisterPage() {
               required
               className={cn(
                 'w-full px-4 py-3 rounded-xl',
-                'bg-dark-surface border border-dark-border',
-                'text-ink text-[14px] placeholder:text-ink-subtle',
+                'bg-secondary border border-border',
+                'text-foreground text-[14px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50',
                 'transition-colors'
               )}
@@ -73,7 +73,7 @@ export function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-[13px] text-ink-muted mb-2">Password</label>
+            <label className="block text-[13px] text-muted-foreground mb-2">Password</label>
             <input
               type="password"
               value={password}
@@ -86,8 +86,8 @@ export function RegisterPage() {
               required
               className={cn(
                 'w-full px-4 py-3 rounded-xl',
-                'bg-dark-surface border border-dark-border',
-                'text-ink text-[14px] placeholder:text-ink-subtle',
+                'bg-secondary border border-border',
+                'text-foreground text-[14px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50',
                 'transition-colors'
               )}
@@ -95,7 +95,7 @@ export function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-[13px] text-ink-muted mb-2">Confirm password</label>
+            <label className="block text-[13px] text-muted-foreground mb-2">Confirm password</label>
             <input
               type="password"
               value={confirmPassword}
@@ -107,8 +107,8 @@ export function RegisterPage() {
               required
               className={cn(
                 'w-full px-4 py-3 rounded-xl',
-                'bg-dark-surface border border-dark-border',
-                'text-ink text-[14px] placeholder:text-ink-subtle',
+                'bg-secondary border border-border',
+                'text-foreground text-[14px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50',
                 'transition-colors'
               )}
@@ -130,11 +130,11 @@ export function RegisterPage() {
         </form>
 
         {/* Footer */}
-        <p className="text-center mt-6 text-[13px] text-ink-subtle">
+        <p className="text-center mt-6 text-[13px] text-muted-foreground">
           Already have an account?{' '}
           <Link
             to="/login"
-            className="text-ink hover:text-burnt transition-colors"
+            className="text-foreground hover:text-burnt transition-colors"
           >
             Sign in
           </Link>

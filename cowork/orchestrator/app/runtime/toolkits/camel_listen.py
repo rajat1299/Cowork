@@ -1,12 +1,43 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
+import logging
+import threading
 from functools import wraps
 from inspect import iscoroutinefunction, signature
 from typing import Any, Callable, TypeVar
 
 from app.runtime.events import StepEvent
 from app.runtime.tool_context import current_agent_name, current_process_task_id
+
+logger = logging.getLogger(__name__)
+
+# Thread-local storage for event loops
+_thread_local = threading.local()
+
+
+def _run_async_in_sync(coro):
+    """Run an async coroutine from a synchronous context."""
+    try:
+        loop = asyncio.get_running_loop()
+        # There's a running loop but we're in a sync function
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result(timeout=60)
+    except RuntimeError:
+        # No running event loop
+        if not hasattr(_thread_local, "loop") or _thread_local.loop.is_closed():
+            _thread_local.loop = asyncio.new_event_loop()
+        loop = _thread_local.loop
+        try:
+            return loop.run_until_complete(coro)
+        except Exception:
+            loop = asyncio.new_event_loop()
+            _thread_local.loop = loop
+            return loop.run_until_complete(coro)
 
 
 EXCLUDED_METHODS = {
@@ -105,6 +136,10 @@ def listen_toolkit(base_method: Callable[..., Any]) -> Callable[[Callable[..., A
             result = None
             try:
                 result = func(*args, **kwargs)
+                # Handle async functions called from sync context
+                if inspect.iscoroutine(result):
+                    logger.debug(f"Running async method {func.__name__} in sync context")
+                    result = _run_async_in_sync(result)
             except Exception as exc:
                 error = exc
             _emit_tool_event(toolkit, StepEvent.deactivate_toolkit, _safe_result_message(result, error))
@@ -134,21 +169,32 @@ def auto_listen_toolkit(base_toolkit_class: type[T]) -> Callable[[type[T]], type
 
             base_sig = signature(base_method)
 
-            if iscoroutinefunction(base_method):
-                async def async_method_wrapper(self, *args, **kwargs):
-                    return await getattr(super(cls, self), method_name)(*args, **kwargs)
+            def _unwrap_method(method: Callable[..., Any]) -> Callable[..., Any]:
+                while hasattr(method, "__wrapped__"):
+                    method = method.__wrapped__  # type: ignore[attr-defined]
+                return method
 
-                async_method_wrapper.__name__ = method_name
-                async_method_wrapper.__signature__ = base_sig
-                wrapper = async_method_wrapper
-            else:
+            def _create_wrapper(method_name: str, base_method: Callable[..., Any]) -> Callable[..., Any]:
+                unwrapped_method = _unwrap_method(base_method)
+                if iscoroutinefunction(unwrapped_method):
+                    async def async_method_wrapper(self, *args, **kwargs):
+                        return await getattr(super(cls, self), method_name)(*args, **kwargs)
+
+                    async_method_wrapper.__name__ = method_name
+                    async_method_wrapper.__signature__ = base_sig
+                    return async_method_wrapper
+
                 def sync_method_wrapper(self, *args, **kwargs):
-                    return getattr(super(cls, self), method_name)(*args, **kwargs)
+                    result = getattr(super(cls, self), method_name)(*args, **kwargs)
+                    if inspect.iscoroutine(result):
+                        result = _run_async_in_sync(result)
+                    return result
 
                 sync_method_wrapper.__name__ = method_name
                 sync_method_wrapper.__signature__ = base_sig
-                wrapper = sync_method_wrapper
+                return sync_method_wrapper
 
+            wrapper = _create_wrapper(method_name, base_method)
             decorated = listen_toolkit(base_method)(wrapper)
             setattr(cls, method_name, decorated)
 

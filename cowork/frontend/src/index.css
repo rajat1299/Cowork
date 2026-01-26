@@ -1,24 +1,132 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@300;400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  /* ========== DARK THEME (default) ========== */
+  :root {
+    --background: 12 6% 7%;
+    --foreground: 35 38% 90%;
+    --card: 12 6% 10%;
+    --card-foreground: 35 38% 90%;
+    --popover: 12 6% 10%;
+    --popover-foreground: 35 38% 90%;
+    --primary: 16 100% 50%;
+    --primary-foreground: 35 38% 90%;
+    --secondary: 12 6% 15%;
+    --secondary-foreground: 35 38% 90%;
+    --muted: 12 6% 15%;
+    --muted-foreground: 35 20% 60%;
+    --accent: 12 6% 15%;
+    --accent-foreground: 35 38% 90%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 35 38% 90%;
+    --border: 12 6% 18%;
+    --input: 12 6% 18%;
+    --ring: 16 100% 50%;
+    --radius: 0.75rem;
+    
+    /* Workflow-specific tokens */
+    --workflow-bg: 12 6% 11%;
+    --workflow-surface: 12 6% 14%;
+    --glass-bg: rgba(45, 45, 45, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    
+    /* Agent colors - dark theme */
+    --agent-developer: 142 76% 36%;
+    --agent-search: 217 91% 60%;
+    --agent-document: 45 93% 47%;
+    --agent-multimodal: 280 87% 65%;
+    --agent-custom: 16 100% 50%;
+    
+    /* Status colors */
+    --status-active: 142 76% 46%;
+    --status-waiting: 45 93% 47%;
+    --status-done: 217 91% 60%;
+    --status-failed: 0 84% 60%;
+  }
+
+  /* ========== LIGHT THEME ========== */
+  .light {
+    --background: 30 33% 91%;
+    --foreground: 20 14% 20%;
+    --card: 30 25% 95%;
+    --card-foreground: 20 14% 20%;
+    --popover: 30 25% 98%;
+    --popover-foreground: 20 14% 20%;
+    --primary: 16 100% 45%;
+    --primary-foreground: 30 33% 96%;
+    --secondary: 30 20% 88%;
+    --secondary-foreground: 20 14% 30%;
+    --muted: 30 20% 88%;
+    --muted-foreground: 20 10% 50%;
+    --accent: 30 20% 92%;
+    --accent-foreground: 20 14% 20%;
+    --destructive: 0 84.2% 50%;
+    --destructive-foreground: 30 33% 96%;
+    --border: 30 15% 80%;
+    --input: 30 15% 85%;
+    --ring: 16 100% 45%;
+    
+    /* Workflow-specific tokens - light */
+    --workflow-bg: 30 33% 91%;
+    --workflow-surface: 30 25% 95%;
+    --glass-bg: rgba(255, 255, 255, 0.75);
+    --glass-border: rgba(0, 0, 0, 0.06);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+    
+    /* Agent colors - light theme (slightly deeper) */
+    --agent-developer: 142 70% 32%;
+    --agent-search: 217 85% 50%;
+    --agent-document: 40 90% 42%;
+    --agent-multimodal: 280 80% 55%;
+    --agent-custom: 16 95% 45%;
+    
+    /* Status colors - light */
+    --status-active: 142 70% 40%;
+    --status-waiting: 40 90% 45%;
+    --status-done: 217 85% 55%;
+    --status-failed: 0 80% 50%;
+  }
+
   * {
     box-sizing: border-box;
+    @apply border-border;
   }
 
   body {
-    @apply bg-dark-bg text-ink antialiased;
+    @apply text-ink antialiased;
     font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     font-feature-settings: 'cv11', 'ss01';
     -webkit-font-smoothing: antialiased;
     letter-spacing: -0.01em;
+    
+    /* Gradient background from image - dark theme */
+    background-image: url('/85562f4a-46ac-451d-bdd6-d4a525206afc.jpg');
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+  }
+
+  /* Light theme uses different gradient bg */
+  .light body,
+  body.light {
+    background-image: url('/fe89bc59-d058-4463-b645-ecb7153af3b9.jpg');
   }
 
   #root {
     min-height: 100vh;
+    /* Subtle overlay to ensure content readability */
+    background: rgba(0, 0, 0, 0.3);
+  }
+  
+  .light #root {
+    background: rgba(255, 255, 255, 0.15);
   }
 
   ::selection {
@@ -44,6 +152,169 @@
   }
 }
 
+@layer components {
+  /* ========== GLASSMORPHISM ========== */
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+  }
+
+  .glass-subtle {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+  }
+
+  /* ========== WORKFLOW CARD ========== */
+  .workflow-card {
+    @apply rounded-2xl transition-all duration-500 ease-smooth overflow-hidden;
+    /* Gradient background from image */
+    background-image: url('/85562f4a-46ac-451d-bdd6-d4a525206afc.jpg');
+    background-size: cover;
+    background-position: center;
+    transform-origin: center center;
+  }
+
+  /* Light theme uses different gradient */
+  .light .workflow-card {
+    background-image: url('/fe89bc59-d058-4463-b645-ecb7153af3b9.jpg');
+  }
+
+  .workflow-card-active {
+    transform: scale(1.02);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  }
+
+  .workflow-card-muted {
+    opacity: 0.5;
+    filter: saturate(0.5) brightness(0.9);
+  }
+
+  /* ========== WORKFLOW PANEL (unified with chat) ========== */
+  .workflow-panel {
+    /* Seamless surface - same as chat area */
+    background: transparent;
+    border-bottom: 1px solid hsl(var(--border) / 0.3);
+  }
+
+  .workflow-panel-content {
+    /* Subtle inner surface for cards */
+    background: hsl(var(--muted) / 0.15);
+    border-radius: var(--radius);
+  }
+
+  /* ========== BREATHING ANIMATION ========== */
+  @keyframes breathe {
+    0%, 100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(1.02);
+      opacity: 0.95;
+    }
+  }
+
+  @keyframes pulse-ring {
+    0% {
+      transform: scale(0.95);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1.5);
+      opacity: 0;
+    }
+  }
+
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0px);
+    }
+    50% {
+      transform: translateY(-4px);
+    }
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  .animate-breathe {
+    animation: breathe 3s ease-in-out infinite;
+  }
+
+  .animate-pulse-ring {
+    animation: pulse-ring 1.5s ease-out infinite;
+  }
+
+  .animate-float {
+    animation: float 4s ease-in-out infinite;
+  }
+
+  .animate-shimmer {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.1) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s ease-in-out infinite;
+  }
+
+  /* ========== STATUS INDICATORS ========== */
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .status-dot-active {
+    @apply bg-[hsl(var(--status-active))];
+    box-shadow: 0 0 8px hsl(var(--status-active) / 0.5);
+  }
+
+  .status-dot-waiting {
+    @apply bg-[hsl(var(--status-waiting))];
+  }
+
+  .status-dot-done {
+    @apply bg-[hsl(var(--status-done))];
+  }
+
+  .status-dot-failed {
+    @apply bg-[hsl(var(--status-failed))];
+  }
+
+  /* ========== AGENT ACCENT COLORS ========== */
+  .agent-accent-developer {
+    --agent-color: hsl(var(--agent-developer));
+  }
+
+  .agent-accent-search {
+    --agent-color: hsl(var(--agent-search));
+  }
+
+  .agent-accent-document {
+    --agent-color: hsl(var(--agent-document));
+  }
+
+  .agent-accent-multimodal {
+    --agent-color: hsl(var(--agent-multimodal));
+  }
+
+  .agent-accent-custom {
+    --agent-color: hsl(var(--agent-custom));
+  }
+}
+
 @layer utilities {
   .scrollbar-hide {
     -ms-overflow-style: none;
@@ -52,4 +323,21 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+
+  /* Spring-like transition timing */
+  .ease-spring {
+    transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  /* Smooth Apple-like timing */
+  .ease-smooth {
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* Staggered animation delays */
+  .delay-0 { animation-delay: 0ms; }
+  .delay-75 { animation-delay: 75ms; }
+  .delay-150 { animation-delay: 150ms; }
+  .delay-225 { animation-delay: 225ms; }
+  .delay-300 { animation-delay: 300ms; }
 }

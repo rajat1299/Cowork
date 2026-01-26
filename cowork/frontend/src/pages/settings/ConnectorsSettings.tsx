@@ -99,7 +99,7 @@ export default function ConnectorsSettings() {
       <div className="p-6 flex items-center justify-center h-full">
         <div className="text-center">
           <Loader2 size={32} className="text-burnt animate-spin mx-auto mb-3" />
-          <p className="text-[14px] text-ink-subtle">Loading connectors...</p>
+          <p className="text-[14px] text-muted-foreground">Loading connectors...</p>
         </div>
       </div>
     )
@@ -119,20 +119,20 @@ export default function ConnectorsSettings() {
   return (
     <div className="p-6 max-w-4xl">
       <div className="mb-6">
-        <h2 className="text-lg font-medium text-ink">Connectors</h2>
-        <p className="text-[13px] text-ink-subtle mt-1">
+        <h2 className="text-lg font-medium text-foreground">Connectors</h2>
+        <p className="text-[13px] text-muted-foreground mt-1">
           Configure integrations with external services. Click a connector to set up its credentials.
         </p>
       </div>
 
       {/* Connector grid */}
       {groups.length === 0 ? (
-        <div className="border border-dark-border border-dashed rounded-xl p-8 text-center">
-          <div className="w-12 h-12 rounded-full bg-dark-surface flex items-center justify-center mx-auto mb-4">
-            <Plug size={24} className="text-ink-muted" />
+        <div className="border border-border border-dashed rounded-xl p-8 text-center">
+          <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center mx-auto mb-4">
+            <Plug size={24} className="text-muted-foreground" />
           </div>
-          <h3 className="text-[15px] font-medium text-ink mb-2">No connectors available</h3>
-          <p className="text-[13px] text-ink-subtle">
+          <h3 className="text-[15px] font-medium text-foreground mb-2">No connectors available</h3>
+          <p className="text-[13px] text-muted-foreground">
             Check backend configuration for available integrations.
           </p>
         </div>
@@ -151,17 +151,17 @@ export default function ConnectorsSettings() {
       )}
 
       {/* Config summary */}
-      <div className="mt-8 p-4 bg-dark-surface rounded-xl border border-dark-border">
+      <div className="mt-8 p-4 bg-secondary rounded-xl border border-border">
         <div className="flex items-center justify-between">
           <div>
-            <h4 className="text-[14px] font-medium text-ink">
+            <h4 className="text-[14px] font-medium text-foreground">
               {groups.length} connectors available
             </h4>
-            <p className="text-[12px] text-ink-subtle mt-0.5">
+            <p className="text-[12px] text-muted-foreground mt-0.5">
               {groups.filter((g) => isGroupConfigured(g.id)).length} configured
             </p>
           </div>
-          <div className="text-[12px] text-ink-subtle">
+          <div className="text-[12px] text-muted-foreground">
             Click a connector to configure its settings
           </div>
         </div>
@@ -195,8 +195,8 @@ function ConnectorCard({ group, isConfigured, configuredCount, onClick }: Connec
       onClick={onClick}
       className={cn(
         'w-full p-4 rounded-xl text-left',
-        'bg-dark-surface border border-dark-border',
-        'hover:border-ink-faint hover:bg-dark-elevated',
+        'bg-secondary border border-border',
+        'hover:border-foreground/30 hover:bg-accent',
         'transition-all duration-200',
         'group'
       )}
@@ -206,30 +206,30 @@ function ConnectorCard({ group, isConfigured, configuredCount, onClick }: Connec
           className={cn(
             'w-10 h-10 rounded-lg flex items-center justify-center',
             'transition-colors',
-            isConfigured ? 'bg-burnt/15' : 'bg-dark-elevated group-hover:bg-dark-surface'
+            isConfigured ? 'bg-burnt/15' : 'bg-accent group-hover:bg-secondary'
           )}
         >
           <Icon
             size={20}
             className={cn(
               'transition-colors',
-              isConfigured ? 'text-burnt' : 'text-ink-muted group-hover:text-ink'
+              isConfigured ? 'text-burnt' : 'text-muted-foreground group-hover:text-foreground'
             )}
           />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between">
-            <span className="text-[14px] font-medium text-ink">{group.name}</span>
+            <span className="text-[14px] font-medium text-foreground">{group.name}</span>
             {isConfigured ? (
               <div className="flex items-center gap-1 text-green-500">
                 <Check size={14} />
                 <span className="text-[11px]">Configured</span>
               </div>
             ) : (
-              <AlertCircle size={14} className="text-ink-subtle" />
+              <AlertCircle size={14} className="text-muted-foreground" />
             )}
           </div>
-          <div className="text-[12px] text-ink-subtle mt-1">
+          <div className="text-[12px] text-muted-foreground mt-1">
             {configuredCount}/{group.fields?.length || 0} fields set
           </div>
         </div>
@@ -306,21 +306,21 @@ function ConnectorConfigModal({
       />
 
       {/* Modal */}
-      <div className="relative w-full max-w-lg mx-4 bg-dark-bg border border-dark-border rounded-2xl shadow-2xl animate-scale-in">
+      <div className="relative w-full max-w-lg mx-4 bg-background border border-border rounded-2xl shadow-2xl animate-scale-in">
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-dark-border">
+        <div className="flex items-center justify-between p-5 border-b border-border">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-burnt/15 flex items-center justify-center">
               <Icon size={20} className="text-burnt" />
             </div>
             <div>
-              <h3 className="text-[16px] font-medium text-ink">{group.name}</h3>
-              <p className="text-[12px] text-ink-subtle">Configure connector settings</p>
+              <h3 className="text-[16px] font-medium text-foreground">{group.name}</h3>
+              <p className="text-[12px] text-muted-foreground">Configure connector settings</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg text-ink-subtle hover:text-ink hover:bg-dark-surface transition-colors"
+            className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
           >
             <X size={18} />
           </button>
@@ -334,7 +334,7 @@ function ConnectorConfigModal({
 
             return (
               <div key={field.key}>
-                <label className="block text-[13px] font-medium text-ink mb-1.5">
+                <label className="block text-[13px] font-medium text-foreground mb-1.5">
                   {field.label || field.key}
                   {field.required && <span className="text-burnt ml-1">*</span>}
                 </label>
@@ -346,8 +346,8 @@ function ConnectorConfigModal({
                     placeholder={`Enter ${field.label || field.key}`}
                     className={cn(
                       'w-full px-4 py-2.5 rounded-xl',
-                      'bg-dark-surface border border-dark-border',
-                      'text-[14px] text-ink placeholder:text-ink-subtle',
+                      'bg-secondary border border-border',
+                      'text-[14px] text-foreground placeholder:text-muted-foreground',
                       'focus:outline-none focus:border-burnt/50',
                       'transition-colors',
                       isSecret && 'pr-10'
@@ -357,14 +357,14 @@ function ConnectorConfigModal({
                     <button
                       type="button"
                       onClick={() => toggleShowSecret(field.key)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-subtle hover:text-ink transition-colors"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                     >
                       {showValue ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   )}
                 </div>
                 {field.type && (
-                  <p className="text-[11px] text-ink-subtle mt-1">Type: {field.type}</p>
+                  <p className="text-[11px] text-muted-foreground mt-1">Type: {field.type}</p>
                 )}
               </div>
             )
@@ -372,7 +372,7 @@ function ConnectorConfigModal({
 
           {(!group.fields || group.fields.length === 0) && (
             <div className="text-center py-4">
-              <p className="text-[13px] text-ink-subtle">
+              <p className="text-[13px] text-muted-foreground">
                 No configuration fields for this connector.
               </p>
             </div>
@@ -386,13 +386,13 @@ function ConnectorConfigModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 p-5 border-t border-dark-border">
+        <div className="flex items-center justify-end gap-3 p-5 border-t border-border">
           <button
             onClick={onClose}
             className={cn(
               'px-4 py-2 rounded-xl',
-              'text-[13px] text-ink-muted',
-              'hover:text-ink hover:bg-dark-surface',
+              'text-[13px] text-muted-foreground',
+              'hover:text-foreground hover:bg-secondary',
               'transition-colors'
             )}
           >

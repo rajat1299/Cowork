@@ -28,12 +28,12 @@ export function LoginPage() {
   const isAnyLoading = isLoading || oauthLoading
 
   return (
-    <div className="min-h-screen bg-dark-bg flex items-center justify-center p-6">
+    <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-sm">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-medium text-ink mb-2">Welcome back</h1>
-          <p className="text-ink-subtle text-[14px]">Sign in to continue to Cowork</p>
+          <h1 className="text-2xl font-medium text-foreground mb-2">Welcome back</h1>
+          <p className="text-muted-foreground text-[14px]">Sign in to continue to Cowork</p>
         </div>
 
         {/* OAuth Buttons */}
@@ -44,9 +44,9 @@ export function LoginPage() {
             disabled={isAnyLoading}
             className={cn(
               'w-full py-3 px-4 rounded-xl flex items-center justify-center gap-3',
-              'bg-dark-surface border border-dark-border',
-              'text-ink text-[14px] font-medium',
-              'hover:bg-dark-elevated hover:border-ink-faint transition-colors',
+              'bg-secondary border border-border',
+              'text-foreground text-[14px] font-medium',
+              'hover:bg-accent hover:border-foreground/30 transition-colors',
               'disabled:opacity-50 disabled:cursor-not-allowed'
             )}
           >
@@ -60,9 +60,9 @@ export function LoginPage() {
             disabled={isAnyLoading}
             className={cn(
               'w-full py-3 px-4 rounded-xl flex items-center justify-center gap-3',
-              'bg-dark-surface border border-dark-border',
-              'text-ink text-[14px] font-medium',
-              'hover:bg-dark-elevated hover:border-ink-faint transition-colors',
+              'bg-secondary border border-border',
+              'text-foreground text-[14px] font-medium',
+              'hover:bg-accent hover:border-foreground/30 transition-colors',
               'disabled:opacity-50 disabled:cursor-not-allowed'
             )}
           >
@@ -74,10 +74,10 @@ export function LoginPage() {
         {/* Divider */}
         <div className="relative mb-6">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-dark-border" />
+            <div className="w-full border-t border-border" />
           </div>
           <div className="relative flex justify-center text-[13px]">
-            <span className="px-3 bg-dark-bg text-ink-subtle">or continue with email</span>
+            <span className="px-3 bg-background text-muted-foreground">or continue with email</span>
           </div>
         </div>
 
@@ -90,7 +90,7 @@ export function LoginPage() {
           )}
 
           <div>
-            <label className="block text-[13px] text-ink-muted mb-2">Email</label>
+            <label className="block text-[13px] text-muted-foreground mb-2">Email</label>
             <input
               type="email"
               value={email}
@@ -103,8 +103,8 @@ export function LoginPage() {
               required
               className={cn(
                 'w-full px-4 py-3 rounded-xl',
-                'bg-dark-surface border border-dark-border',
-                'text-ink text-[14px] placeholder:text-ink-subtle',
+                'bg-secondary border border-border',
+                'text-foreground text-[14px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50',
                 'transition-colors'
               )}
@@ -112,7 +112,7 @@ export function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-[13px] text-ink-muted mb-2">Password</label>
+            <label className="block text-[13px] text-muted-foreground mb-2">Password</label>
             <input
               type="password"
               value={password}
@@ -125,8 +125,8 @@ export function LoginPage() {
               required
               className={cn(
                 'w-full px-4 py-3 rounded-xl',
-                'bg-dark-surface border border-dark-border',
-                'text-ink text-[14px] placeholder:text-ink-subtle',
+                'bg-secondary border border-border',
+                'text-foreground text-[14px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50',
                 'transition-colors'
               )}
@@ -148,11 +148,11 @@ export function LoginPage() {
         </form>
 
         {/* Footer */}
-        <p className="text-center mt-6 text-[13px] text-ink-subtle">
+        <p className="text-center mt-6 text-[13px] text-muted-foreground">
           Don't have an account?{' '}
           <Link
             to="/register"
-            className="text-ink hover:text-burnt transition-colors"
+            className="text-foreground hover:text-burnt transition-colors"
           >
             Sign up
           </Link>

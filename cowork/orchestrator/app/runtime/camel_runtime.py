@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 import re
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator, Iterable
+from typing import Any, AsyncIterator, Iterable
 
 from camel.agents import ChatAgent
 from camel.agents.chat_agent import AsyncStreamingChatAgentResponse
 from camel.models import ModelFactory
+from camel.toolkits.mcp_toolkit import MCPToolkit
 from camel.societies.workforce.prompts import PROCESS_TASK_PROMPT
 from camel.societies.workforce.single_agent_worker import SingleAgentWorker as BaseSingleAgentWorker
 from camel.societies.workforce.task_channel import TaskChannel
@@ -23,7 +26,16 @@ from camel.societies.workforce.workforce import (
 )
 from camel.tasks.task import Task, TaskState
 
-from app.clients.core_api import ProviderConfig, create_history, fetch_configs, fetch_provider, update_history
+from app.clients.core_api import (
+    ProviderConfig,
+    create_history,
+    create_message,
+    fetch_configs,
+    fetch_messages,
+    fetch_mcp_users,
+    fetch_provider,
+    update_history,
+)
 from app.runtime.actions import ActionType, AgentSpec, TaskStatus
 from app.runtime.events import StepEvent
 from app.runtime.llm_client import (
@@ -37,6 +49,7 @@ from app.runtime.sync import fire_and_forget
 from app.runtime.task_lock import TaskLock
 from app.runtime.tool_context import current_agent_name, current_process_task_id
 from app.runtime.toolkits.camel_tools import build_agent_tools
+from app.runtime.camel_agent import CoworkChatAgent
 from app.runtime.workforce import (
     AgentProfile,
     build_complexity_prompt,
@@ -47,6 +60,9 @@ from app.runtime.workforce import (
     parse_subtasks,
 )
 from shared.schemas import StepEvent as StepEventModel
+
+
+logger = logging.getLogger(__name__)
 
 
 def _emit(task_id: str, step: StepEvent, data: dict) -> StepEventModel:
@@ -78,6 +94,50 @@ def _build_context(task_lock: TaskLock) -> str:
         else:
             lines.append(f"{role}: {content}")
     return "\n".join(lines) + "\n"
+
+
+async def _hydrate_conversation_history(
+    task_lock: TaskLock,
+    auth_token: str | None,
+    project_id: str,
+) -> None:
+    if task_lock.conversation_history:
+        return
+    messages = await fetch_messages(auth_token, project_id=project_id)
+    if not messages:
+        return
+    task_lock.conversation_history = [
+        {
+            "role": message.role,
+            "content": message.content,
+            "timestamp": message.created_at.isoformat(),
+        }
+        for message in messages
+    ]
+    for message in reversed(messages):
+        if message.role == "assistant":
+            task_lock.last_task_result = message.content
+            break
+
+
+async def _persist_message(
+    auth_token: str | None,
+    project_id: str,
+    task_id: str,
+    role: str,
+    content: str,
+    message_type: str,
+    metadata: dict | None = None,
+) -> None:
+    payload = {
+        "project_id": project_id,
+        "task_id": task_id,
+        "role": role,
+        "content": content,
+        "message_type": message_type,
+        "metadata": metadata,
+    }
+    await create_message(auth_token, payload)
 
 
 def _parse_summary(summary_text: str) -> tuple[str | None, str | None]:
@@ -178,6 +238,71 @@ def _merge_agent_specs(
         if not replaced:
             merged.append(profile)
     return merged
+
+
+def _normalize_mcp_args(value) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+    return None
+
+
+def _build_mcp_config(mcp_users: list[dict[str, object]]) -> dict[str, dict]:
+    servers: dict[str, dict] = {}
+    for item in mcp_users:
+        status = item.get("status")
+        if status and str(status).lower() != "enable":
+            continue
+        name = item.get("mcp_key") or item.get("mcp_name") or ""
+        name = _sanitize_identifier(str(name), "mcp_server")
+        mcp_type = str(item.get("mcp_type") or "local").lower()
+        env = item.get("env") if isinstance(item.get("env"), dict) else {}
+        if "MCP_REMOTE_CONFIG_DIR" not in env:
+            env["MCP_REMOTE_CONFIG_DIR"] = str(Path.home() / ".cowork" / "mcp-auth")
+
+        if mcp_type == "remote":
+            server_url = item.get("server_url")
+            if not server_url:
+                continue
+            servers[name] = {"url": server_url, "env": env}
+            continue
+
+        command = item.get("command")
+        if not command:
+            continue
+        config: dict[str, object] = {"command": command}
+        args = _normalize_mcp_args(item.get("args"))
+        if args:
+            config["args"] = args
+        if env:
+            config["env"] = env
+        servers[name] = config
+
+    return {"mcpServers": servers}
+
+
+async def _load_mcp_tools(
+    auth_token: str | None,
+) -> tuple[MCPToolkit | None, list]:
+    mcp_users = await fetch_mcp_users(auth_token)
+    config = _build_mcp_config(mcp_users)
+    if not config.get("mcpServers"):
+        return None, []
+    try:
+        toolkit = MCPToolkit(config_dict=config, timeout=180)
+        await toolkit.connect()
+        return toolkit, toolkit.get_tools()
+    except Exception as exc:
+        logger.warning("MCP toolkit unavailable: %s", exc)
+        return None, []
 
 
 def _resolve_model_url(provider: ProviderConfig) -> str | None:
@@ -527,7 +652,18 @@ def _build_agent(
     stream: bool = False,
     tools: list | None = None,
 ) -> ChatAgent:
-    model_config = {"stream": True} if stream else None
+    model_config: dict[str, Any] = {}
+    if stream:
+        model_config["stream"] = True
+    encrypted_config = provider.encrypted_config if isinstance(provider.encrypted_config, dict) else {}
+    if encrypted_config:
+        extra_params = encrypted_config.get("extra_params")
+        if isinstance(extra_params, dict):
+            model_config.update(extra_params)
+        else:
+            model_config.update(encrypted_config)
+    if not model_config:
+        model_config = None
     model = ModelFactory.create(
         model_platform=provider.provider_name,
         model_type=provider.model_type,
@@ -536,7 +672,7 @@ def _build_agent(
         timeout=60,
         model_config_dict=model_config,
     )
-    agent = ChatAgent(system_message=system_prompt, model=model, agent_id=agent_id, tools=tools)
+    agent = CoworkChatAgent(system_message=system_prompt, model=model, agent_id=agent_id, tools=tools)
     return agent
 
 
@@ -550,6 +686,7 @@ async def _run_camel_complex(
     context: str,
 ) -> None:
     env_snapshot: dict[str, str | None] | None = None
+    mcp_toolkit: MCPToolkit | None = None
     try:
         decompose_parts: list[str] = []
         decompose_usage: dict | None = None
@@ -626,6 +763,7 @@ async def _run_camel_complex(
         tool_env = await _load_tool_env(action.auth_token)
         tool_env["CAMEL_WORKDIR"] = str(workdir)
         env_snapshot = _apply_env_overrides(tool_env)
+        mcp_toolkit, mcp_tools = await _load_mcp_tools(action.auth_token)
 
         coordinator_agent = _build_agent(
             provider,
@@ -653,7 +791,13 @@ async def _run_camel_complex(
 
         agent_specs = _merge_agent_specs(build_default_agents(), action.agents)
         for spec in agent_specs:
-            tools = build_agent_tools(spec.tools or [], event_stream, spec.name, str(workdir))
+            tools = build_agent_tools(
+                spec.tools or [],
+                event_stream,
+                spec.name,
+                str(workdir),
+                mcp_tools=mcp_tools,
+            )
             agent = _build_agent(provider, spec.system_prompt, spec.agent_id, tools=tools)
             agent.agent_name = spec.name
             workforce.add_single_agent_worker(spec.description, agent, spec.tools)
@@ -725,7 +869,15 @@ async def _run_camel_complex(
             )
 
         event_stream.emit(StepEvent.end, {"result": final_result})
-        task_lock.add_conversation("task_result", final_result)
+        task_lock.add_conversation("assistant", final_result)
+        await _persist_message(
+            action.auth_token,
+            action.project_id,
+            action.task_id,
+            "assistant",
+            final_result,
+            "task_result",
+        )
         task_lock.status = TaskStatus.done
     except Exception as exc:
         event_stream.emit(StepEvent.error, {"error": str(exc)})
@@ -737,6 +889,11 @@ async def _run_camel_complex(
             await update_history(action.auth_token, history_id, {"status": 3})
         task_lock.status = TaskStatus.done
     finally:
+        if mcp_toolkit is not None:
+            try:
+                await mcp_toolkit.disconnect()
+            except Exception:
+                pass
         if env_snapshot is not None:
             _restore_env(env_snapshot)
         task_lock.workforce = None
@@ -754,6 +911,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             task_lock.stop_requested = False
             task_lock.status = TaskStatus.processing
             task_lock.current_task_id = action.task_id
+            await _hydrate_conversation_history(task_lock, action.auth_token, action.project_id)
 
             yield _emit(action.task_id, StepEvent.confirmed, {"question": action.question})
             yield _emit(action.task_id, StepEvent.task_state, {"state": "processing"})
@@ -802,6 +960,15 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
 
             total_tokens = 0
             context = _build_context(task_lock)
+            await _persist_message(
+                action.auth_token,
+                action.project_id,
+                action.task_id,
+                "user",
+                action.question,
+                "user",
+            )
+            task_lock.add_conversation("user", action.question)
             is_complex, complexity_tokens = await _is_complex_task(provider, action.question, context)
             total_tokens += complexity_tokens
 
@@ -848,6 +1015,14 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
 
                 yield _emit(action.task_id, StepEvent.end, {"result": result_text, "usage": usage or {}})
                 task_lock.add_conversation("assistant", result_text)
+                await _persist_message(
+                    action.auth_token,
+                    action.project_id,
+                    action.task_id,
+                    "assistant",
+                    result_text,
+                    "assistant",
+                )
                 task_lock.status = TaskStatus.done
                 continue
 

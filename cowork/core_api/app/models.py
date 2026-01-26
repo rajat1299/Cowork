@@ -107,6 +107,18 @@ class ChatHistory(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ChatMessage(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, foreign_key="user.id")
+    project_id: str = Field(index=True)
+    task_id: str = Field(index=True)
+    role: str = Field(index=True)
+    content: str
+    message_type: str = Field(default="message")
+    meta: dict | None = Field(default=None, sa_column=Column("metadata", JSONB))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ChatSnapshot(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(index=True, foreign_key="user.id")

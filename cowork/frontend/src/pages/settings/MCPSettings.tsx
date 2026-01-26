@@ -19,6 +19,8 @@ import {
 import { cn } from '../../lib/utils'
 import { useMCP, validateMcpJson, DEFAULT_MCP_JSON } from '../../hooks/useMCP'
 import type { McpUser, McpUserUpdate, McpImportLocal } from '../../api/coreApi'
+import { showSuccess, showError } from '../../lib/toast'
+import { MCPItemSkeleton } from '../../components/ui/skeletons'
 
 type AddType = 'local' | 'remote'
 
@@ -54,7 +56,12 @@ export default function MCPSettings() {
 
   const handleToggle = async (id: number, enabled: boolean) => {
     setTogglingIds((s) => new Set(s).add(id))
-    await toggleMcp(id, enabled)
+    const success = await toggleMcp(id, enabled)
+    if (success) {
+      showSuccess(enabled ? 'MCP enabled' : 'MCP disabled')
+    } else {
+      showError('Failed to update MCP')
+    }
     setTogglingIds((s) => {
       const next = new Set(s)
       next.delete(id)
@@ -67,7 +74,10 @@ export default function MCPSettings() {
     setDeletingId(showDeleteDialog.id)
     const success = await deleteMcp(showDeleteDialog.id)
     if (success) {
+      showSuccess('MCP deleted')
       setShowDeleteDialog(null)
+    } else {
+      showError('Failed to delete MCP')
     }
     setDeletingId(null)
   }
@@ -77,8 +87,8 @@ export default function MCPSettings() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-lg font-medium text-ink">MCP Servers</h2>
-          <p className="text-[13px] text-ink-subtle mt-1">
+          <h2 className="text-lg font-medium text-foreground">MCP Servers</h2>
+          <p className="text-[13px] text-muted-foreground mt-1">
             Manage Model Context Protocol servers for extended capabilities
           </p>
         </div>
@@ -88,9 +98,9 @@ export default function MCPSettings() {
             disabled={isLoading}
             className={cn(
               'flex items-center gap-2 px-3 py-2 rounded-xl',
-              'bg-dark-surface border border-dark-border',
-              'text-ink-muted text-[13px]',
-              'hover:text-ink hover:border-ink-faint transition-colors',
+              'bg-secondary border border-border',
+              'text-muted-foreground text-[13px]',
+              'hover:text-foreground hover:border-foreground/30 transition-colors',
               'disabled:opacity-50'
             )}
           >
@@ -126,12 +136,12 @@ export default function MCPSettings() {
       {/* MCP List Section */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[13px] font-medium text-ink-muted uppercase tracking-wide">
+          <h3 className="text-[13px] font-medium text-muted-foreground uppercase tracking-wide">
             Your MCP Servers ({userMcps.length})
           </h3>
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="p-1 text-ink-muted hover:text-ink transition-colors"
+            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
           >
             {collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
           </button>
@@ -141,19 +151,21 @@ export default function MCPSettings() {
           <>
             {/* Loading state */}
             {isLoading && userMcps.length === 0 && (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 size={24} className="animate-spin text-burnt" />
+              <div className="space-y-3">
+                <MCPItemSkeleton />
+                <MCPItemSkeleton />
+                <MCPItemSkeleton />
               </div>
             )}
 
             {/* Empty state */}
             {!isLoading && userMcps.length === 0 && (
-              <div className="border border-dark-border border-dashed rounded-xl p-8 text-center">
-                <div className="w-12 h-12 rounded-full bg-dark-surface flex items-center justify-center mx-auto mb-4">
-                  <Box size={24} className="text-ink-muted" />
+              <div className="border border-border border-dashed rounded-xl p-8 text-center">
+                <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center mx-auto mb-4">
+                  <Box size={24} className="text-muted-foreground" />
                 </div>
-                <h4 className="text-[15px] font-medium text-ink mb-2">No MCP servers installed</h4>
-                <p className="text-[13px] text-ink-subtle mb-4">
+                <h4 className="text-[15px] font-medium text-foreground mb-2">No MCP servers installed</h4>
+                <p className="text-[13px] text-muted-foreground mb-4">
                   Add MCP servers to extend your AI's capabilities with external tools.
                 </p>
                 <button
@@ -190,9 +202,9 @@ export default function MCPSettings() {
       </div>
 
       {/* Help section */}
-      <div className="p-4 bg-dark-surface rounded-xl">
-        <h4 className="text-[13px] font-medium text-ink mb-2">About MCP</h4>
-        <p className="text-[12px] text-ink-subtle leading-relaxed mb-3">
+      <div className="p-4 bg-secondary rounded-xl">
+        <h4 className="text-[13px] font-medium text-foreground mb-2">About MCP</h4>
+        <p className="text-[12px] text-muted-foreground leading-relaxed mb-3">
           Model Context Protocol (MCP) servers extend AI capabilities by providing access to
           external tools, APIs, and data sources. You can add local MCP servers via JSON
           configuration or connect to remote servers via URL.
@@ -264,8 +276,8 @@ function MCPCard({ mcp, isToggling, onToggle, onConfigure, onDelete }: MCPCardPr
     <div
       className={cn(
         'flex items-center gap-4 p-4 rounded-xl',
-        'bg-dark-surface border border-dark-border',
-        'hover:border-ink-faint transition-colors'
+        'bg-secondary border border-border',
+        'hover:border-foreground/30 transition-colors'
       )}
     >
       {/* Status indicator and icon */}
@@ -273,19 +285,19 @@ function MCPCard({ mcp, isToggling, onToggle, onConfigure, onDelete }: MCPCardPr
         <div
           className={cn(
             'w-10 h-10 rounded-lg flex items-center justify-center',
-            isEnabled ? 'bg-green-500/15' : 'bg-dark-elevated'
+            isEnabled ? 'bg-green-500/15' : 'bg-accent'
           )}
         >
           {isLocal ? (
-            <Terminal size={18} className={isEnabled ? 'text-green-500' : 'text-ink-muted'} />
+            <Terminal size={18} className={isEnabled ? 'text-green-500' : 'text-muted-foreground'} />
           ) : (
-            <Globe size={18} className={isEnabled ? 'text-green-500' : 'text-ink-muted'} />
+            <Globe size={18} className={isEnabled ? 'text-green-500' : 'text-muted-foreground'} />
           )}
         </div>
         <div
           className={cn(
-            'absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-dark-surface',
-            isEnabled ? 'bg-green-500' : 'bg-ink-muted'
+            'absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-secondary',
+            isEnabled ? 'bg-green-500' : 'bg-muted-foreground'
           )}
         />
       </div>
@@ -293,7 +305,7 @@ function MCPCard({ mcp, isToggling, onToggle, onConfigure, onDelete }: MCPCardPr
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
-          <h4 className="text-[14px] font-medium text-ink truncate">{mcp.mcp_name}</h4>
+          <h4 className="text-[14px] font-medium text-foreground truncate">{mcp.mcp_name}</h4>
           <span
             className={cn(
               'px-1.5 py-0.5 rounded text-[10px] font-medium uppercase',
@@ -306,15 +318,15 @@ function MCPCard({ mcp, isToggling, onToggle, onConfigure, onDelete }: MCPCardPr
           </span>
         </div>
         {mcp.mcp_desc && (
-          <p className="text-[12px] text-ink-subtle truncate">{mcp.mcp_desc}</p>
+          <p className="text-[12px] text-muted-foreground truncate">{mcp.mcp_desc}</p>
         )}
         {isLocal && mcp.command && (
-          <p className="text-[11px] text-ink-muted font-mono mt-1 truncate">
+          <p className="text-[11px] text-muted-foreground font-mono mt-1 truncate">
             {mcp.command} {mcp.args?.join(' ')}
           </p>
         )}
         {!isLocal && mcp.server_url && (
-          <p className="text-[11px] text-ink-muted truncate mt-1">{mcp.server_url}</p>
+          <p className="text-[11px] text-muted-foreground truncate mt-1">{mcp.server_url}</p>
         )}
       </div>
 
@@ -326,7 +338,7 @@ function MCPCard({ mcp, isToggling, onToggle, onConfigure, onDelete }: MCPCardPr
           disabled={isToggling}
           className={cn(
             'relative w-10 h-6 rounded-full transition-colors',
-            isEnabled ? 'bg-green-500' : 'bg-dark-elevated',
+            isEnabled ? 'bg-green-500' : 'bg-accent',
             isToggling && 'opacity-50 cursor-not-allowed'
           )}
         >
@@ -343,7 +355,7 @@ function MCPCard({ mcp, isToggling, onToggle, onConfigure, onDelete }: MCPCardPr
           onClick={onConfigure}
           className={cn(
             'p-2 rounded-lg transition-colors',
-            'text-ink-muted hover:text-ink hover:bg-dark-elevated'
+            'text-muted-foreground hover:text-foreground hover:bg-accent'
           )}
         >
           <Settings size={16} />
@@ -354,7 +366,7 @@ function MCPCard({ mcp, isToggling, onToggle, onConfigure, onDelete }: MCPCardPr
           onClick={onDelete}
           className={cn(
             'p-2 rounded-lg transition-colors',
-            'text-ink-muted hover:text-red-400 hover:bg-red-500/10'
+            'text-muted-foreground hover:text-red-400 hover:bg-red-500/10'
           )}
         >
           <Trash2 size={16} />
@@ -433,13 +445,13 @@ function AddMCPDialog({ open, onClose, onImportLocal, onImportRemote }: AddMCPDi
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
       {/* Dialog */}
-      <div className="relative w-full max-w-lg mx-4 bg-dark-bg border border-dark-border rounded-2xl shadow-xl">
+      <div className="relative w-full max-w-lg mx-4 bg-background border border-border rounded-2xl shadow-xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-dark-border">
-          <h3 className="text-[16px] font-medium text-ink">Add MCP Server</h3>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h3 className="text-[16px] font-medium text-foreground">Add MCP Server</h3>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-ink-muted hover:text-ink hover:bg-dark-surface"
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary"
           >
             <X size={18} />
           </button>
@@ -447,14 +459,14 @@ function AddMCPDialog({ open, onClose, onImportLocal, onImportRemote }: AddMCPDi
 
         {/* Type tabs */}
         <div className="px-6 pt-4">
-          <div className="flex gap-1 p-1 bg-dark-surface rounded-xl">
+          <div className="flex gap-1 p-1 bg-secondary rounded-xl">
             <button
               onClick={() => setAddType('local')}
               className={cn(
                 'flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-[13px] transition-colors',
                 addType === 'local'
-                  ? 'bg-dark-elevated text-ink'
-                  : 'text-ink-muted hover:text-ink'
+                  ? 'bg-accent text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
             >
               <Terminal size={14} />
@@ -465,8 +477,8 @@ function AddMCPDialog({ open, onClose, onImportLocal, onImportRemote }: AddMCPDi
               className={cn(
                 'flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-[13px] transition-colors',
                 addType === 'remote'
-                  ? 'bg-dark-elevated text-ink'
-                  : 'text-ink-muted hover:text-ink'
+                  ? 'bg-accent text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
             >
               <Globe size={14} />
@@ -485,7 +497,7 @@ function AddMCPDialog({ open, onClose, onImportLocal, onImportRemote }: AddMCPDi
 
           {addType === 'local' ? (
             <div>
-              <p className="text-[13px] text-ink-subtle mb-3">
+              <p className="text-[13px] text-muted-foreground mb-3">
                 Add local MCP servers by providing a valid JSON configuration.{' '}
                 <a
                   href="https://modelcontextprotocol.io/docs/getting-started/intro"
@@ -502,8 +514,8 @@ function AddMCPDialog({ open, onClose, onImportLocal, onImportRemote }: AddMCPDi
                 disabled={installing}
                 className={cn(
                   'w-full h-64 p-3 rounded-xl font-mono text-[12px]',
-                  'bg-dark-surface border border-dark-border',
-                  'text-ink placeholder:text-ink-subtle',
+                  'bg-secondary border border-border',
+                  'text-foreground placeholder:text-muted-foreground',
                   'focus:outline-none focus:border-burnt/50',
                   'resize-none'
                 )}
@@ -512,11 +524,11 @@ function AddMCPDialog({ open, onClose, onImportLocal, onImportRemote }: AddMCPDi
             </div>
           ) : (
             <div className="space-y-4">
-              <p className="text-[13px] text-ink-subtle">
+              <p className="text-[13px] text-muted-foreground">
                 Connect to a remote MCP server by providing its name and URL.
               </p>
               <div>
-                <label className="block text-[12px] text-ink-muted mb-1.5">Server Name</label>
+                <label className="block text-[12px] text-muted-foreground mb-1.5">Server Name</label>
                 <input
                   type="text"
                   value={remoteName}
@@ -525,14 +537,14 @@ function AddMCPDialog({ open, onClose, onImportLocal, onImportRemote }: AddMCPDi
                   placeholder="my-remote-mcp"
                   className={cn(
                     'w-full px-3 py-2.5 rounded-xl',
-                    'bg-dark-surface border border-dark-border',
-                    'text-ink text-[14px] placeholder:text-ink-subtle',
+                    'bg-secondary border border-border',
+                    'text-foreground text-[14px] placeholder:text-muted-foreground',
                     'focus:outline-none focus:border-burnt/50'
                   )}
                 />
               </div>
               <div>
-                <label className="block text-[12px] text-ink-muted mb-1.5">Server URL</label>
+                <label className="block text-[12px] text-muted-foreground mb-1.5">Server URL</label>
                 <input
                   type="url"
                   value={remoteUrl}
@@ -541,8 +553,8 @@ function AddMCPDialog({ open, onClose, onImportLocal, onImportRemote }: AddMCPDi
                   placeholder="https://mcp.example.com"
                   className={cn(
                     'w-full px-3 py-2.5 rounded-xl',
-                    'bg-dark-surface border border-dark-border',
-                    'text-ink text-[14px] placeholder:text-ink-subtle',
+                    'bg-secondary border border-border',
+                    'text-foreground text-[14px] placeholder:text-muted-foreground',
                     'focus:outline-none focus:border-burnt/50'
                   )}
                 />
@@ -552,13 +564,13 @@ function AddMCPDialog({ open, onClose, onImportLocal, onImportRemote }: AddMCPDi
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-dark-border">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
           <button
             onClick={onClose}
             disabled={installing}
             className={cn(
               'px-4 py-2 rounded-xl text-[14px]',
-              'text-ink-muted hover:text-ink transition-colors'
+              'text-muted-foreground hover:text-foreground transition-colors'
             )}
           >
             Cancel
@@ -664,13 +676,13 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
-      <div className="relative w-full max-w-lg mx-4 bg-dark-bg border border-dark-border rounded-2xl shadow-xl max-h-[80vh] overflow-hidden flex flex-col">
+      <div className="relative w-full max-w-lg mx-4 bg-background border border-border rounded-2xl shadow-xl max-h-[80vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-dark-border flex-shrink-0">
-          <h3 className="text-[16px] font-medium text-ink">Configure MCP</h3>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
+          <h3 className="text-[16px] font-medium text-foreground">Configure MCP</h3>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-ink-muted hover:text-ink hover:bg-dark-surface"
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary"
           >
             <X size={18} />
           </button>
@@ -680,7 +692,7 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
         <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1">
           {/* Name */}
           <div>
-            <label className="block text-[12px] text-ink-muted mb-1.5">Name</label>
+            <label className="block text-[12px] text-muted-foreground mb-1.5">Name</label>
             <input
               type="text"
               value={name}
@@ -688,8 +700,8 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
               disabled={saving}
               className={cn(
                 'w-full px-3 py-2.5 rounded-xl',
-                'bg-dark-surface border border-dark-border',
-                'text-ink text-[14px]',
+                'bg-secondary border border-border',
+                'text-foreground text-[14px]',
                 'focus:outline-none focus:border-burnt/50'
               )}
             />
@@ -697,7 +709,7 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
 
           {/* Description */}
           <div>
-            <label className="block text-[12px] text-ink-muted mb-1.5">Description</label>
+            <label className="block text-[12px] text-muted-foreground mb-1.5">Description</label>
             <input
               type="text"
               value={description}
@@ -706,8 +718,8 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
               placeholder="Optional description"
               className={cn(
                 'w-full px-3 py-2.5 rounded-xl',
-                'bg-dark-surface border border-dark-border',
-                'text-ink text-[14px] placeholder:text-ink-subtle',
+                'bg-secondary border border-border',
+                'text-foreground text-[14px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50'
               )}
             />
@@ -717,7 +729,7 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
           {mcp.mcp_type === 'local' && (
             <>
               <div>
-                <label className="block text-[12px] text-ink-muted mb-1.5">Command</label>
+                <label className="block text-[12px] text-muted-foreground mb-1.5">Command</label>
                 <input
                   type="text"
                   value={command}
@@ -726,15 +738,15 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
                   placeholder="npx"
                   className={cn(
                     'w-full px-3 py-2.5 rounded-xl font-mono',
-                    'bg-dark-surface border border-dark-border',
-                    'text-ink text-[14px] placeholder:text-ink-subtle',
+                    'bg-secondary border border-border',
+                    'text-foreground text-[14px] placeholder:text-muted-foreground',
                     'focus:outline-none focus:border-burnt/50'
                   )}
                 />
               </div>
 
               <div>
-                <label className="block text-[12px] text-ink-muted mb-1.5">Arguments</label>
+                <label className="block text-[12px] text-muted-foreground mb-1.5">Arguments</label>
                 <input
                   type="text"
                   value={args}
@@ -743,8 +755,8 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
                   placeholder="-y @package/name"
                   className={cn(
                     'w-full px-3 py-2.5 rounded-xl font-mono',
-                    'bg-dark-surface border border-dark-border',
-                    'text-ink text-[14px] placeholder:text-ink-subtle',
+                    'bg-secondary border border-border',
+                    'text-foreground text-[14px] placeholder:text-muted-foreground',
                     'focus:outline-none focus:border-burnt/50'
                   )}
                 />
@@ -753,7 +765,7 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
               {/* Environment variables */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[12px] text-ink-muted">Environment Variables</label>
+                  <label className="text-[12px] text-muted-foreground">Environment Variables</label>
                   <button
                     onClick={handleEnvAdd}
                     disabled={saving}
@@ -763,7 +775,7 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
                   </button>
                 </div>
                 {Object.keys(env).length === 0 ? (
-                  <p className="text-[12px] text-ink-subtle">No environment variables configured</p>
+                  <p className="text-[12px] text-muted-foreground">No environment variables configured</p>
                 ) : (
                   <div className="space-y-2">
                     {Object.entries(env).map(([key, value]) => (
@@ -783,11 +795,11 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
                           disabled={saving}
                           className={cn(
                             'flex-1 px-2 py-1.5 rounded-lg font-mono text-[12px]',
-                            'bg-dark-surface border border-dark-border',
-                            'text-ink focus:outline-none focus:border-burnt/50'
+                            'bg-secondary border border-border',
+                            'text-foreground focus:outline-none focus:border-burnt/50'
                           )}
                         />
-                        <span className="text-ink-muted">=</span>
+                        <span className="text-muted-foreground">=</span>
                         <input
                           type="text"
                           value={value}
@@ -795,14 +807,14 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
                           disabled={saving}
                           className={cn(
                             'flex-1 px-2 py-1.5 rounded-lg font-mono text-[12px]',
-                            'bg-dark-surface border border-dark-border',
-                            'text-ink focus:outline-none focus:border-burnt/50'
+                            'bg-secondary border border-border',
+                            'text-foreground focus:outline-none focus:border-burnt/50'
                           )}
                         />
                         <button
                           onClick={() => handleEnvRemove(key)}
                           disabled={saving}
-                          className="p-1 text-ink-muted hover:text-red-400"
+                          className="p-1 text-muted-foreground hover:text-red-400"
                         >
                           <X size={14} />
                         </button>
@@ -817,7 +829,7 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
           {/* Remote-specific fields */}
           {mcp.mcp_type === 'remote' && (
             <div>
-              <label className="block text-[12px] text-ink-muted mb-1.5">Server URL</label>
+              <label className="block text-[12px] text-muted-foreground mb-1.5">Server URL</label>
               <input
                 type="url"
                 value={serverUrl}
@@ -826,8 +838,8 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
                 placeholder="https://mcp.example.com"
                 className={cn(
                   'w-full px-3 py-2.5 rounded-xl',
-                  'bg-dark-surface border border-dark-border',
-                  'text-ink text-[14px] placeholder:text-ink-subtle',
+                  'bg-secondary border border-border',
+                  'text-foreground text-[14px] placeholder:text-muted-foreground',
                   'focus:outline-none focus:border-burnt/50'
                 )}
               />
@@ -836,13 +848,13 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-dark-border flex-shrink-0">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border flex-shrink-0">
           <button
             onClick={onClose}
             disabled={saving}
             className={cn(
               'px-4 py-2 rounded-xl text-[14px]',
-              'text-ink-muted hover:text-ink transition-colors'
+              'text-muted-foreground hover:text-foreground transition-colors'
             )}
           >
             Cancel
@@ -891,14 +903,14 @@ function DeleteMCPDialog({ mcp, isDeleting, onClose, onConfirm }: DeleteMCPDialo
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
-      <div className="relative w-full max-w-sm mx-4 bg-dark-bg border border-dark-border rounded-2xl shadow-xl">
+      <div className="relative w-full max-w-sm mx-4 bg-background border border-border rounded-2xl shadow-xl">
         <div className="p-6 text-center">
           <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
             <Trash2 size={24} className="text-red-400" />
           </div>
-          <h3 className="text-[16px] font-medium text-ink mb-2">Delete MCP Server</h3>
-          <p className="text-[13px] text-ink-subtle mb-6">
-            Are you sure you want to delete <strong className="text-ink">{mcp.mcp_name}</strong>?
+          <h3 className="text-[16px] font-medium text-foreground mb-2">Delete MCP Server</h3>
+          <p className="text-[13px] text-muted-foreground mb-6">
+            Are you sure you want to delete <strong className="text-foreground">{mcp.mcp_name}</strong>?
             This action cannot be undone.
           </p>
           <div className="flex items-center justify-center gap-3">
@@ -907,8 +919,8 @@ function DeleteMCPDialog({ mcp, isDeleting, onClose, onConfirm }: DeleteMCPDialo
               disabled={isDeleting}
               className={cn(
                 'px-4 py-2 rounded-xl text-[14px]',
-                'bg-dark-surface text-ink-muted',
-                'hover:text-ink transition-colors'
+                'bg-secondary text-muted-foreground',
+                'hover:text-foreground transition-colors'
               )}
             >
               Cancel

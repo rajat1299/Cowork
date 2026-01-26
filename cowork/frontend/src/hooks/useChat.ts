@@ -1,7 +1,8 @@
 import { useCallback, useMemo } from 'react'
 import { useChatStore } from '../stores/chatStore'
 import { startSSEConnection, stopSSEConnection, sendImproveMessage } from '../lib/sse'
-import { generateId } from '../types/chat'
+import { generateId, createMessage } from '../types/chat'
+import { history, chatMessages } from '../api/coreApi'
 import type { ChatTask, Message, ProgressStep, ArtifactInfo } from '../types/chat'
 
 interface UseChatReturn {
@@ -23,7 +24,8 @@ interface UseChatReturn {
 
   // Task Management
   createNewChat: (projectId?: string, question?: string) => string
-  switchTask: (taskId: string) => void
+  switchTask: (taskId: string) => Promise<void>
+  loadTask: (taskId: string) => Promise<boolean>
 }
 
 /**
@@ -150,12 +152,79 @@ export function useChat(): UseChatReturn {
     clearTasks()
   }, [activeTaskId, clearTasks])
 
-  // Switch to a different task
+  // Load a task from backend into the store
+  // Fetches full conversation history from /chat/messages endpoint
+  const loadTask = useCallback(async (taskId: string): Promise<boolean> => {
+    // Check if task already exists in store
+    if (tasks[taskId]) {
+      return true
+    }
+
+    try {
+      // Fetch task metadata from backend
+      const historyTask = await history.getByTaskId(taskId)
+
+      // Fetch full conversation messages from /chat/messages endpoint
+      let messages: Message[] = []
+      try {
+        const chatMsgs = await chatMessages.listByProject(historyTask.project_id)
+        // Convert backend messages to frontend Message format
+        messages = chatMsgs.map((msg) => ({
+          id: String(msg.id),
+          role: msg.role as 'user' | 'assistant' | 'system',
+          content: msg.content,
+          timestamp: new Date(msg.created_at).getTime(),
+          agentName: msg.metadata?.agent_name as string | undefined,
+        }))
+      } catch (msgError) {
+        console.warn('Failed to fetch chat messages, falling back to summary:', msgError)
+        // Fallback: use question + summary if messages endpoint fails
+        messages = [
+          createMessage('user', historyTask.question),
+          ...(historyTask.summary ? [createMessage('assistant', historyTask.summary)] : [])
+        ]
+      }
+
+      // Create task in store with the fetched data
+      const newTask: ChatTask = {
+        id: taskId,
+        projectId: historyTask.project_id,
+        messages,
+        status: historyTask.status === 2 ? 'completed' : 'running',
+        subtasks: [],
+        streamingDecomposeText: '',
+        activeAgents: [],
+        currentStep: null,
+        progressSteps: [],
+        artifacts: [],
+        tokens: historyTask.tokens || 0,
+        startTime: historyTask.created_at ? new Date(historyTask.created_at).getTime() : Date.now(),
+        endTime: historyTask.status === 2 ? (historyTask.updated_at ? new Date(historyTask.updated_at).getTime() : Date.now()) : undefined,
+      }
+
+      // Add task to store using internal method
+      useChatStore.setState((state) => ({
+        tasks: { ...state.tasks, [taskId]: newTask },
+        activeProjectId: historyTask.project_id, // Set active project for follow-ups
+      }))
+
+      return true
+    } catch (error) {
+      console.error('Failed to load task from backend:', error)
+      return false
+    }
+  }, [tasks])
+
+  // Switch to a different task, loading from backend if needed
   const switchTask = useCallback(
-    (taskId: string) => {
+    async (taskId: string) => {
+      // Try to load from backend if not in store
+      if (!tasks[taskId]) {
+        await loadTask(taskId)
+      }
       setActiveTask(taskId)
     },
-    [setActiveTask]
+    [tasks, loadTask, setActiveTask]
   )
 
   return {
@@ -178,6 +247,7 @@ export function useChat(): UseChatReturn {
     // Task Management
     createNewChat,
     switchTask,
+    loadTask,
   }
 }
 

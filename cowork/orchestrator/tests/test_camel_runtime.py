@@ -51,6 +51,9 @@ async def test_camel_complex_flow_emits_expected_steps(monkeypatch):
     async def fake_fetch_configs(auth_header, group=None):
         return []
 
+    async def fake_fetch_mcp_users(auth_header):
+        return []
+
     def fake_build_agent(provider, system_prompt, agent_id, stream=False, tools=None):
         return types.SimpleNamespace(agent_id=agent_id, agent_name="agent")
 
@@ -149,6 +152,7 @@ async def test_camel_complex_flow_emits_expected_steps(monkeypatch):
     monkeypatch.setattr(cr, "create_history", fake_create_history)
     monkeypatch.setattr(cr, "update_history", fake_update_history)
     monkeypatch.setattr(cr, "fetch_configs", fake_fetch_configs)
+    monkeypatch.setattr(cr, "fetch_mcp_users", fake_fetch_mcp_users)
     monkeypatch.setattr(cr, "build_agent_tools", lambda *args, **kwargs: [])
     monkeypatch.setattr(cr, "_build_agent", fake_build_agent)
     monkeypatch.setattr(cr, "CoworkWorkforce", FakeWorkforce)

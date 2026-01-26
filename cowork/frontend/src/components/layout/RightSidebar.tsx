@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -9,10 +9,15 @@ import {
   Loader2,
   Plus,
   X,
+  Camera,
+  ExternalLink,
+  Maximize2,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useChatStore } from '../../stores/chatStore'
-import type { ProgressStep, ArtifactInfo } from '../../types/chat'
+import { useSnapshots } from '../../hooks/useSnapshots'
+import type { ArtifactInfo, TaskInfo } from '../../types/chat'
+import type { Snapshot } from '../../api/coreApi'
 
 interface RightSidebarProps {
   className?: string
@@ -29,8 +34,8 @@ export function RightSidebar({ className }: RightSidebarProps) {
     <aside
       className={cn(
         'w-80 h-full flex flex-col',
-        'border-l border-dark-border',
-        'bg-dark-bg',
+        'border-l border-border',
+        'bg-card/80 backdrop-blur-xl',
         className
       )}
     >
@@ -57,14 +62,14 @@ function NewChatSidebar() {
           <div className="flex items-center gap-2">
             {/* Progress circles */}
             <ProgressCircle status="completed" />
-            <div className="w-4 h-px bg-dark-border" />
+            <div className="w-4 h-px bg-border" />
             <ProgressCircle status="completed" />
-            <div className="w-4 h-px bg-dark-border" />
+            <div className="w-4 h-px bg-border" />
             <ProgressCircle status="active" />
-            <div className="w-4 h-px bg-dark-border" />
+            <div className="w-4 h-px bg-border" />
             <ProgressCircle status="pending" />
           </div>
-          <p className="text-[13px] text-ink-subtle mt-3">
+          <p className="text-[13px] text-muted-foreground mt-3">
             Steps will show as the task unfolds.
           </p>
         </Section>
@@ -74,7 +79,7 @@ function NewChatSidebar() {
           <div className="grid grid-cols-3 gap-2">
             <ArtifactPlaceholder />
           </div>
-          <p className="text-[13px] text-ink-subtle mt-3">
+          <p className="text-[13px] text-muted-foreground mt-3">
             Outputs created during the task land here.
           </p>
         </Section>
@@ -85,7 +90,7 @@ function NewChatSidebar() {
             <ContextPlaceholder />
             <ContextPlaceholder active />
           </div>
-          <p className="text-[13px] text-ink-subtle mt-3">
+          <p className="text-[13px] text-muted-foreground mt-3">
             Track the tools and files in use as Claude works.
           </p>
         </Section>
@@ -100,90 +105,141 @@ function NewChatSidebar() {
 // ============ Active Task Sidebar (New Design) ============
 
 interface ActiveTaskSidebarProps {
-  task: NonNullable<ReturnType<typeof useChatStore.getState>['getActiveTask']>
+  task: NonNullable<ReturnType<ReturnType<typeof useChatStore.getState>['getActiveTask']>>
   isRunning: boolean
 }
 
 function ActiveTaskSidebar({ task, isRunning }: ActiveTaskSidebarProps) {
-  const progressSteps = task?.progressSteps || []
-  const artifacts = task?.artifacts || []
+  const subtasks: TaskInfo[] = task?.subtasks || []
+  const artifacts: ArtifactInfo[] = task?.artifacts || []
+  const taskId = task?.id
+
+  // Snapshots state
+  const { snapshots, fetchSnapshots, getImageUrl } = useSnapshots()
+  const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null)
+
+  // Fetch snapshots when task changes
+  useEffect(() => {
+    if (taskId) {
+      fetchSnapshots(taskId)
+    }
+  }, [taskId, fetchSnapshots])
 
   // Extract files from artifacts for working folder
   const workingFiles = artifacts.filter((a) => a.type === 'file' || a.type === 'code')
 
   return (
-    <div className="flex-1 overflow-y-auto scrollbar-hide">
-      {/* Progress Section */}
-      <CollapsibleSection title="Progress" defaultOpen>
-        {progressSteps.length === 0 ? (
-          <div className="px-4 pb-4">
-            <div className="flex items-center gap-2 mb-3">
-              <ProgressCircle status={isRunning ? 'active' : 'pending'} />
-              <div className="w-4 h-px bg-dark-border" />
-              <ProgressCircle status="pending" />
-              <div className="w-4 h-px bg-dark-border" />
-              <ProgressCircle status="pending" />
+    <>
+      <div className="flex-1 overflow-y-auto scrollbar-hide">
+        {/* Progress Section - Now shows subtasks, not internal steps */}
+        <CollapsibleSection title="Progress" defaultOpen>
+          {subtasks.length === 0 ? (
+            <div className="px-4 pb-4">
+              <div className="flex items-center gap-2 mb-3">
+                <ProgressCircle status={isRunning ? 'active' : 'pending'} />
+                <div className="w-4 h-px bg-border" />
+                <ProgressCircle status="pending" />
+                <div className="w-4 h-px bg-border" />
+                <ProgressCircle status="pending" />
+              </div>
+              <p className="text-[13px] text-muted-foreground">
+                {isRunning ? 'Analyzing your request...' : 'Steps will show as the task unfolds.'}
+              </p>
             </div>
-            <p className="text-[13px] text-ink-subtle">
-              Steps will show as the task unfolds.
-            </p>
-          </div>
-        ) : (
-          <div className="px-4 pb-4 space-y-0">
-            {progressSteps.map((step, index) => (
-              <ProgressStepItem
-                key={`${step.step}-${index}`}
-                step={step}
-                stepNumber={index + 1}
-                isLast={index === progressSteps.length - 1}
-              />
-            ))}
-          </div>
-        )}
-      </CollapsibleSection>
-
-      {/* Working folder Section */}
-      <CollapsibleSection title="Working folder" defaultOpen>
-        <div className="px-4 pb-4">
-          <WorkingFolderTree files={workingFiles} />
-        </div>
-      </CollapsibleSection>
-
-      {/* Scratchpad Section */}
-      <CollapsibleSection title="Scratchpad" defaultOpen={false}>
-        <div className="px-4 pb-4">
-          {artifacts.length === 0 ? (
-            <p className="text-[13px] text-ink-subtle">
-              Files created or viewed will appear here.
-            </p>
           ) : (
-            <div className="space-y-1">
-              {artifacts.slice(0, 10).map((artifact, idx) => (
-                <ScratchpadItem key={artifact.id || idx} artifact={artifact} />
+            <div className="px-4 pb-4 space-y-0">
+              {subtasks.map((subtask, index) => (
+                <SubtaskProgressItem
+                  key={subtask.id}
+                  subtask={subtask}
+                  stepNumber={index + 1}
+                  isLast={index === subtasks.length - 1}
+                />
               ))}
-              {artifacts.length > 10 && (
-                <button className="text-[12px] text-ink-muted hover:text-ink transition-colors">
-                  Show {artifacts.length - 10} more
-                </button>
-              )}
             </div>
           )}
-        </div>
-      </CollapsibleSection>
+        </CollapsibleSection>
 
-      {/* Context Section */}
-      <CollapsibleSection title="Context" defaultOpen={false}>
-        <div className="px-4 pb-4">
-          <div className="flex gap-2 mb-3">
-            <ContextCard type="tools" active={isRunning} />
-            <ContextCard type="files" active={artifacts.length > 0} />
+        {/* Working folder Section */}
+        <CollapsibleSection title="Working folder" defaultOpen>
+          <div className="px-4 pb-4">
+            <WorkingFolderTree files={workingFiles} />
           </div>
-          <p className="text-[12px] text-ink-subtle">
-            Track tools and referenced files used in this task.
-          </p>
-        </div>
-      </CollapsibleSection>
-    </div>
+        </CollapsibleSection>
+
+        {/* Snapshots Section */}
+        <CollapsibleSection title="Snapshots" defaultOpen={snapshots.length > 0}>
+          <div className="px-4 pb-4">
+            {snapshots.length === 0 ? (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Camera size={16} />
+                <span className="text-[13px]">No snapshots captured</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {snapshots.slice(0, 6).map((snapshot) => (
+                  <SnapshotThumbnail
+                    key={snapshot.id}
+                    snapshot={snapshot}
+                    imageUrl={getImageUrl(snapshot.id)}
+                    onClick={() => setSelectedSnapshot(snapshot)}
+                  />
+                ))}
+              </div>
+            )}
+            {snapshots.length > 6 && (
+              <button className="text-[12px] text-muted-foreground hover:text-foreground transition-colors mt-2">
+                View all {snapshots.length} snapshots
+              </button>
+            )}
+          </div>
+        </CollapsibleSection>
+
+        {/* Scratchpad Section */}
+        <CollapsibleSection title="Scratchpad" defaultOpen={false}>
+          <div className="px-4 pb-4">
+            {artifacts.length === 0 ? (
+              <p className="text-[13px] text-muted-foreground">
+                Files created or viewed will appear here.
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {artifacts.slice(0, 10).map((artifact, idx) => (
+                  <ScratchpadItem key={artifact.id || idx} artifact={artifact} />
+                ))}
+                {artifacts.length > 10 && (
+                  <button className="text-[12px] text-muted-foreground hover:text-foreground transition-colors">
+                    Show {artifacts.length - 10} more
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </CollapsibleSection>
+
+        {/* Context Section */}
+        <CollapsibleSection title="Context" defaultOpen={false}>
+          <div className="px-4 pb-4">
+            <div className="flex gap-2 mb-3">
+              <ContextCard type="tools" active={isRunning} />
+              <ContextCard type="files" active={artifacts.length > 0} />
+            </div>
+            <p className="text-[12px] text-muted-foreground">
+              Track tools and referenced files used in this task.
+            </p>
+          </div>
+        </CollapsibleSection>
+      </div>
+
+      {/* Snapshot Viewer Modal */}
+      {selectedSnapshot && (
+        <SnapshotViewerModal
+          snapshot={selectedSnapshot}
+          imageUrl={getImageUrl(selectedSnapshot.id)}
+          onClose={() => setSelectedSnapshot(null)}
+        />
+      )}
+    </>
   )
 }
 
@@ -195,17 +251,17 @@ function SuggestedConnectors() {
   if (dismissed) return null
 
   return (
-    <div className="border-t border-dark-border p-4">
+    <div className="border-t border-border p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[14px] font-medium text-ink">Suggested connectors</h3>
+        <h3 className="text-[14px] font-medium text-foreground">Suggested connectors</h3>
         <button
           onClick={() => setDismissed(true)}
-          className="p-1 rounded hover:bg-dark-surface transition-colors"
+          className="p-1 rounded hover:bg-secondary transition-colors"
         >
-          <X size={14} className="text-ink-subtle" />
+          <X size={14} className="text-muted-foreground" />
         </button>
       </div>
-      <p className="text-[12px] text-ink-subtle mb-4">
+      <p className="text-[12px] text-muted-foreground mb-4">
         Cowork uses connectors to browse websites, manage tasks, and more.
       </p>
 
@@ -215,7 +271,7 @@ function SuggestedConnectors() {
         <ConnectorItem icon="linear" label="Linear" />
       </div>
 
-      <button className="flex items-center gap-1 mt-4 text-[13px] text-ink-muted hover:text-ink transition-colors">
+      <button className="flex items-center gap-1 mt-4 text-[13px] text-muted-foreground hover:text-foreground transition-colors">
         <span>See all connectors</span>
         <ChevronRight size={14} />
       </button>
@@ -228,7 +284,7 @@ function SuggestedConnectors() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h3 className="text-[14px] font-medium text-ink mb-3">{title}</h3>
+      <h3 className="text-[14px] font-medium text-foreground mb-3">{title}</h3>
       {children}
     </div>
   )
@@ -239,19 +295,20 @@ function ProgressCircle({ status }: { status: 'completed' | 'active' | 'pending'
     <div
       className={cn(
         'w-6 h-6 rounded-full flex items-center justify-center',
-        status === 'completed' && 'bg-warm-beige/20',
+        status === 'completed' && 'bg-foreground/10',
         status === 'active' && 'bg-burnt/20 ring-2 ring-burnt/30',
-        status === 'pending' && 'bg-dark-surface border border-dark-border'
+        status === 'pending' && 'bg-secondary border border-border'
       )}
     >
       {status === 'completed' && (
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
           <path
             d="M2.5 6L5 8.5L9.5 4"
-            stroke="#F5E8D8"
+            stroke="currentColor"
             strokeWidth="1.5"
             strokeLinecap="round"
             strokeLinejoin="round"
+            className="text-foreground"
           />
         </svg>
       )}
@@ -262,11 +319,11 @@ function ProgressCircle({ status }: { status: 'completed' | 'active' | 'pending'
 
 function ArtifactPlaceholder() {
   return (
-    <div className="aspect-[4/3] rounded-lg bg-dark-surface border border-dark-border flex items-center justify-center">
+    <div className="aspect-[4/3] rounded-lg bg-secondary border border-border flex items-center justify-center">
       <div className="space-y-1">
-        <div className="w-6 h-1 bg-ink-faint rounded" />
-        <div className="w-8 h-1 bg-ink-faint rounded" />
-        <div className="w-5 h-1 bg-ink-faint rounded" />
+        <div className="w-6 h-1 bg-muted-foreground/20 rounded" />
+        <div className="w-8 h-1 bg-muted-foreground/20 rounded" />
+        <div className="w-5 h-1 bg-muted-foreground/20 rounded" />
       </div>
     </div>
   )
@@ -278,13 +335,13 @@ function ContextPlaceholder({ active = false }: { active?: boolean }) {
       className={cn(
         'w-12 h-10 rounded-lg flex items-center justify-center',
         'border transition-all duration-200',
-        active ? 'bg-dark-elevated border-burnt/30' : 'bg-dark-surface border-dark-border'
+        active ? 'bg-accent border-burnt/30' : 'bg-secondary border-border'
       )}
     >
       <div className="space-y-0.5">
-        <div className="w-5 h-0.5 bg-ink-faint rounded" />
-        <div className="w-6 h-0.5 bg-ink-faint rounded" />
-        <div className="w-4 h-0.5 bg-ink-faint rounded" />
+        <div className="w-5 h-0.5 bg-muted-foreground/20 rounded" />
+        <div className="w-6 h-0.5 bg-muted-foreground/20 rounded" />
+        <div className="w-4 h-0.5 bg-muted-foreground/20 rounded" />
       </div>
     </div>
   )
@@ -295,21 +352,21 @@ function ConnectorItem({ icon, label }: { icon: string; label: string }) {
     <div
       className={cn(
         'flex items-center justify-between p-3 rounded-xl',
-        'bg-dark-surface border border-dark-border',
-        'hover:border-ink-faint transition-all duration-200',
+        'bg-secondary border border-border',
+        'hover:border-foreground/30 transition-all duration-200',
         'group cursor-pointer'
       )}
     >
       <div className="flex items-center gap-3">
         <ConnectorIcon type={icon} />
-        <span className="text-[13px] text-ink-muted group-hover:text-ink transition-colors">
+        <span className="text-[13px] text-muted-foreground group-hover:text-foreground transition-colors">
           {label}
         </span>
       </div>
       <button
         className={cn(
           'w-6 h-6 rounded-md flex items-center justify-center',
-          'bg-dark-elevated text-ink-subtle',
+          'bg-accent text-muted-foreground',
           'hover:bg-burnt hover:text-white',
           'transition-all duration-200'
         )}
@@ -345,7 +402,7 @@ function ConnectorIcon({ type }: { type: string }) {
         </div>
       )
     default:
-      return <div className={cn(baseClass, 'bg-dark-elevated')} />
+      return <div className={cn(baseClass, 'bg-accent')} />
   }
 }
 
@@ -361,19 +418,19 @@ function CollapsibleSection({ title, defaultOpen = true, children }: Collapsible
   const [isOpen, setIsOpen] = useState(defaultOpen)
 
   return (
-    <div className="border-b border-dark-border">
+    <div className="border-b border-border">
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
           'w-full flex items-center justify-between px-4 py-3',
-          'hover:bg-dark-surface/50 transition-colors'
+          'hover:bg-secondary/50 transition-colors'
         )}
       >
-        <h3 className="text-[14px] font-medium text-ink">{title}</h3>
+        <h3 className="text-[14px] font-medium text-foreground">{title}</h3>
         {isOpen ? (
-          <ChevronDown size={16} className="text-ink-muted" />
+          <ChevronDown size={16} className="text-muted-foreground" />
         ) : (
-          <ChevronRight size={16} className="text-ink-muted" />
+          <ChevronRight size={16} className="text-muted-foreground" />
         )}
       </button>
       {isOpen && children}
@@ -381,18 +438,19 @@ function CollapsibleSection({ title, defaultOpen = true, children }: Collapsible
   )
 }
 
-// ============ Progress Step Item ============
+// ============ Subtask Progress Item (New - shows actual task progress) ============
 
-interface ProgressStepItemProps {
-  step: ProgressStep
+interface SubtaskProgressItemProps {
+  subtask: TaskInfo
   stepNumber: number
   isLast: boolean
 }
 
-function ProgressStepItem({ step, stepNumber, isLast }: ProgressStepItemProps) {
-  const isActive = step.status === 'active'
-  const isCompleted = step.status === 'completed'
-  const isPending = step.status === 'pending'
+function SubtaskProgressItem({ subtask, stepNumber, isLast }: SubtaskProgressItemProps) {
+  const isActive = subtask.status === 'running'
+  const isCompleted = subtask.status === 'completed'
+  const isFailed = subtask.status === 'failed'
+  const isPending = subtask.status === 'pending' || subtask.status === 'paused'
 
   return (
     <div className="flex gap-3">
@@ -402,19 +460,28 @@ function ProgressStepItem({ step, stepNumber, isLast }: ProgressStepItemProps) {
           className={cn(
             'w-6 h-6 rounded-full flex items-center justify-center text-[12px] font-medium',
             'transition-colors',
-            isCompleted && 'bg-warm-beige/20 text-warm-beige',
+            isCompleted && 'bg-[hsl(var(--status-done)/0.2)] text-[hsl(var(--status-done))]',
             isActive && 'bg-burnt text-white',
-            isPending && 'bg-dark-surface border border-dark-border text-ink-subtle'
+            isFailed && 'bg-destructive/20 text-destructive',
+            isPending && 'bg-secondary border border-border text-muted-foreground'
           )}
         >
-          {isActive ? <Loader2 size={12} className="animate-spin" /> : stepNumber}
+          {isActive ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : isCompleted ? (
+            '✓'
+          ) : isFailed ? (
+            '✗'
+          ) : (
+            stepNumber
+          )}
         </div>
         {/* Vertical line connecting steps */}
         {!isLast && (
           <div
             className={cn(
               'w-px flex-1 min-h-[20px]',
-              isCompleted ? 'bg-warm-beige/30' : 'bg-dark-border'
+              isCompleted ? 'bg-[hsl(var(--status-done)/0.3)]' : 'bg-border'
             )}
           />
         )}
@@ -425,17 +492,14 @@ function ProgressStepItem({ step, stepNumber, isLast }: ProgressStepItemProps) {
         <p
           className={cn(
             'text-[13px] leading-relaxed',
-            isActive && 'text-ink',
-            isCompleted && 'text-ink-muted',
-            isPending && 'text-ink-subtle'
+            isActive && 'text-foreground',
+            isCompleted && 'text-muted-foreground',
+            isFailed && 'text-destructive',
+            isPending && 'text-muted-foreground'
           )}
         >
-          {step.label}
+          {subtask.title}
         </p>
-        {/* Show additional data if present */}
-        {step.data?.detail != null && (
-          <p className="text-[11px] text-ink-subtle mt-0.5">{String(step.data.detail)}</p>
-        )}
       </div>
     </div>
   )
@@ -452,7 +516,7 @@ function WorkingFolderTree({ files }: WorkingFolderTreeProps) {
 
   if (files.length === 0) {
     return (
-      <div className="flex items-center gap-2 text-ink-muted">
+      <div className="flex items-center gap-2 text-muted-foreground">
         <FolderOpen size={16} />
         <span className="text-[13px]">No files in context</span>
       </div>
@@ -462,7 +526,7 @@ function WorkingFolderTree({ files }: WorkingFolderTreeProps) {
   return (
     <div className="space-y-1">
       {/* Root folder */}
-      <div className="flex items-center gap-2 text-ink">
+      <div className="flex items-center gap-2 text-foreground">
         <FolderOpen size={16} className="text-burnt" />
         <span className="text-[13px] font-medium">{rootDir}</span>
       </div>
@@ -473,7 +537,7 @@ function WorkingFolderTree({ files }: WorkingFolderTreeProps) {
           <FileItem key={file.id || idx} file={file} />
         ))}
         {files.length > 6 && (
-          <button className="flex items-center gap-1 text-[12px] text-ink-muted hover:text-ink transition-colors py-1">
+          <button className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground transition-colors py-1">
             <span>Show {files.length - 6} more</span>
           </button>
         )}
@@ -485,12 +549,12 @@ function WorkingFolderTree({ files }: WorkingFolderTreeProps) {
 function FileItem({ file }: { file: ArtifactInfo }) {
   const getIcon = () => {
     if (file.type === 'image' || file.name?.match(/\.(png|jpg|jpeg|gif|svg)$/i)) {
-      return <Image size={14} className="text-ink-muted" />
+      return <Image size={14} className="text-muted-foreground" />
     }
     if (file.type === 'code' || file.name?.match(/\.(ts|tsx|js|jsx|py|json)$/i)) {
-      return <FileCode size={14} className="text-ink-muted" />
+      return <FileCode size={14} className="text-muted-foreground" />
     }
-    return <FileText size={14} className="text-ink-muted" />
+    return <FileText size={14} className="text-muted-foreground" />
   }
 
   const displayName = file.name || 'Untitled'
@@ -499,7 +563,7 @@ function FileItem({ file }: { file: ArtifactInfo }) {
   return (
     <div className="flex items-center gap-2 py-0.5 group">
       {getIcon()}
-      <span className="text-[12px] text-ink-muted group-hover:text-ink transition-colors truncate">
+      <span className="text-[12px] text-muted-foreground group-hover:text-foreground transition-colors truncate">
         {truncatedName}
       </span>
     </div>
@@ -525,17 +589,17 @@ function ScratchpadItem({ artifact }: ScratchpadItemProps) {
     <div
       className={cn(
         'flex items-center justify-between gap-2 p-2 rounded-lg',
-        'bg-dark-surface/50 hover:bg-dark-surface',
+        'bg-secondary/50 hover:bg-secondary',
         'transition-colors cursor-pointer group'
       )}
     >
       <div className="flex items-center gap-2 min-w-0">
-        <div className="text-ink-muted">{getIcon()}</div>
-        <span className="text-[12px] text-ink-muted group-hover:text-ink truncate">
+        <div className="text-muted-foreground">{getIcon()}</div>
+        <span className="text-[12px] text-muted-foreground group-hover:text-foreground truncate">
           {artifact.name || 'Untitled'}
         </span>
       </div>
-      {action && <span className="text-[10px] text-ink-subtle flex-shrink-0">{action}</span>}
+      {action && <span className="text-[10px] text-muted-foreground flex-shrink-0">{action}</span>}
     </div>
   )
 }
@@ -553,25 +617,25 @@ function ContextCard({ type, active = false }: ContextCardProps) {
       className={cn(
         'flex-1 p-3 rounded-xl',
         'border transition-all duration-200',
-        active ? 'bg-dark-surface border-burnt/30' : 'bg-dark-surface/50 border-dark-border'
+        active ? 'bg-secondary border-burnt/30' : 'bg-secondary/50 border-border'
       )}
     >
       <div className="flex items-center gap-2 mb-2">
         {type === 'tools' ? (
-          <div className="w-6 h-6 rounded bg-dark-elevated flex items-center justify-center">
+          <div className="w-6 h-6 rounded bg-accent flex items-center justify-center">
             <div className="grid grid-cols-2 gap-0.5">
-              <div className="w-1.5 h-1.5 bg-ink-faint rounded-sm" />
-              <div className="w-1.5 h-1.5 bg-ink-faint rounded-sm" />
-              <div className="w-1.5 h-1.5 bg-ink-faint rounded-sm" />
-              <div className="w-1.5 h-1.5 bg-ink-faint rounded-sm" />
+              <div className="w-1.5 h-1.5 bg-muted-foreground/20 rounded-sm" />
+              <div className="w-1.5 h-1.5 bg-muted-foreground/20 rounded-sm" />
+              <div className="w-1.5 h-1.5 bg-muted-foreground/20 rounded-sm" />
+              <div className="w-1.5 h-1.5 bg-muted-foreground/20 rounded-sm" />
             </div>
           </div>
         ) : (
-          <div className="w-6 h-6 rounded bg-dark-elevated flex items-center justify-center">
-            <FileText size={12} className="text-ink-muted" />
+          <div className="w-6 h-6 rounded bg-accent flex items-center justify-center">
+            <FileText size={12} className="text-muted-foreground" />
           </div>
         )}
-        <span className="text-[12px] text-ink-muted capitalize">{type}</span>
+        <span className="text-[12px] text-muted-foreground capitalize">{type}</span>
       </div>
       {active && (
         <div className="flex items-center gap-1">
@@ -579,6 +643,151 @@ function ContextCard({ type, active = false }: ContextCardProps) {
           <span className="text-[10px] text-burnt">In use</span>
         </div>
       )}
+    </div>
+  )
+}
+
+// ============ Snapshot Components ============
+
+interface SnapshotThumbnailProps {
+  snapshot: Snapshot
+  imageUrl: string
+  onClick: () => void
+}
+
+function SnapshotThumbnail({ snapshot, imageUrl, onClick }: SnapshotThumbnailProps) {
+  const [imageError, setImageError] = useState(false)
+
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'relative aspect-video rounded-lg overflow-hidden',
+        'border border-border hover:border-burnt/50',
+        'transition-all duration-200 group',
+        'bg-secondary'
+      )}
+    >
+      {imageError ? (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <Camera size={20} className="text-muted-foreground" />
+        </div>
+      ) : (
+        <img
+          src={imageUrl}
+          alt={`Snapshot ${snapshot.id}`}
+          className="w-full h-full object-cover"
+          onError={() => setImageError(true)}
+        />
+      )}
+      {/* Hover overlay */}
+      <div
+        className={cn(
+          'absolute inset-0 bg-background/60 opacity-0 group-hover:opacity-100',
+          'flex items-center justify-center transition-opacity'
+        )}
+      >
+        <Maximize2 size={16} className="text-foreground" />
+      </div>
+      {/* URL indicator */}
+      {snapshot.browser_url && (
+        <div className="absolute bottom-1 left-1 right-1 px-1.5 py-0.5 bg-background/80 rounded text-[9px] text-muted-foreground truncate">
+          {new URL(snapshot.browser_url).hostname}
+        </div>
+      )}
+    </button>
+  )
+}
+
+interface SnapshotViewerModalProps {
+  snapshot: Snapshot
+  imageUrl: string
+  onClose: () => void
+}
+
+function SnapshotViewerModal({ snapshot, imageUrl, onClose }: SnapshotViewerModalProps) {
+  const [imageError, setImageError] = useState(false)
+
+  // Close on escape key
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [onClose])
+
+  const formattedDate = new Date(snapshot.created_at).toLocaleString()
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className={cn(
+          'relative max-w-4xl max-h-[90vh] w-full mx-4',
+          'bg-secondary rounded-xl border border-border',
+          'overflow-hidden shadow-2xl'
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div className="flex items-center gap-3">
+            <Camera size={18} className="text-muted-foreground" />
+            <div>
+              <h3 className="text-[14px] font-medium text-foreground">Browser Snapshot</h3>
+              <p className="text-[11px] text-muted-foreground">{formattedDate}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {snapshot.browser_url && (
+              <a
+                href={snapshot.browser_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg',
+                  'text-[12px] text-muted-foreground hover:text-foreground',
+                  'bg-accent hover:bg-background/50',
+                  'transition-colors'
+                )}
+              >
+                <ExternalLink size={12} />
+                <span className="max-w-[200px] truncate">{snapshot.browser_url}</span>
+              </a>
+            )}
+            <button
+              onClick={onClose}
+              className={cn(
+                'p-2 rounded-lg',
+                'text-muted-foreground hover:text-foreground',
+                'hover:bg-accent transition-colors'
+              )}
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        {/* Image */}
+        <div className="relative overflow-auto max-h-[calc(90vh-60px)] bg-background/50">
+          {imageError ? (
+            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+              <Camera size={40} className="mb-3" />
+              <p className="text-[14px]">Failed to load snapshot</p>
+            </div>
+          ) : (
+            <img
+              src={imageUrl}
+              alt={`Snapshot ${snapshot.id}`}
+              className="w-full h-auto"
+              onError={() => setImageError(true)}
+            />
+          )}
+        </div>
+      </div>
     </div>
   )
 }

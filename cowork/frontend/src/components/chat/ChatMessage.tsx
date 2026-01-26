@@ -14,7 +14,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
   if (isSystem) {
     return (
       <div className="flex justify-center">
-        <div className="px-4 py-2 rounded-lg bg-dark-elevated text-ink-muted text-[13px] max-w-[85%]">
+        <div className="px-4 py-2 rounded-lg bg-accent text-muted-foreground text-[13px] max-w-[85%]">
           {message.content}
         </div>
       </div>
@@ -33,17 +33,17 @@ export function ChatMessage({ message }: ChatMessageProps) {
           'max-w-[75%] px-4 py-3 rounded-2xl',
           isUser
             ? 'bg-burnt text-white rounded-br-md'
-            : 'bg-dark-surface text-ink border border-dark-border rounded-bl-md'
+            : 'bg-secondary text-foreground border border-border rounded-bl-md'
         )}
       >
         <p className="text-[14px] leading-relaxed whitespace-pre-wrap">
           {message.content}
           {isStreaming && (
-            <span className="inline-block w-2 h-4 ml-1 bg-ink-muted animate-pulse rounded-sm" />
+            <span className="inline-block w-2 h-4 ml-1 bg-muted-foreground animate-pulse rounded-sm" />
           )}
         </p>
         {message.agentName && (
-          <p className="mt-1 text-[11px] text-ink-subtle">
+          <p className="mt-1 text-[11px] text-muted-foreground">
             via {message.agentName}
           </p>
         )}

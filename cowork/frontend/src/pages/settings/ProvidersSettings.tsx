@@ -15,6 +15,8 @@ import {
 import { cn } from '../../lib/utils'
 import { useProviders, PROVIDER_TEMPLATES, CLOUD_PROVIDERS, LOCAL_PROVIDERS } from '../../hooks/useProviders'
 import type { Provider } from '../../api/coreApi'
+import { showSuccess, showError } from '../../lib/toast'
+import { ProviderCardSkeleton } from '../../components/ui/skeletons'
 
 /**
  * Providers settings page - BYOK (Bring Your Own Key)
@@ -40,8 +42,8 @@ export default function ProvidersSettings() {
     <div className="p-6 max-w-2xl">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-lg font-medium text-ink">API Providers</h2>
-          <p className="text-[13px] text-ink-subtle mt-1">
+          <h2 className="text-lg font-medium text-foreground">API Providers</h2>
+          <p className="text-[13px] text-muted-foreground mt-1">
             Add your API keys to use your own models
           </p>
         </div>
@@ -73,8 +75,9 @@ export default function ProvidersSettings() {
 
       {/* Loading state */}
       {isLoading && providers.length === 0 && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 size={24} className="animate-spin text-ink-subtle" />
+        <div className="space-y-3">
+          <ProviderCardSkeleton />
+          <ProviderCardSkeleton />
         </div>
       )}
 
@@ -85,7 +88,10 @@ export default function ProvidersSettings() {
           onSubmit={async (data) => {
             const result = await createProvider(data)
             if (result) {
+              showSuccess('Provider added')
               setShowAddForm(false)
+            } else {
+              showError('Failed to add provider')
             }
           }}
           validateProvider={validateProvider}
@@ -95,21 +101,21 @@ export default function ProvidersSettings() {
 
       {/* Provider list */}
       {!isLoading && providers.length === 0 && !showAddForm ? (
-        <div className="border border-dark-border border-dashed rounded-xl p-8 text-center">
-          <div className="w-12 h-12 rounded-full bg-dark-surface flex items-center justify-center mx-auto mb-4">
-            <Key size={24} className="text-ink-muted" />
+        <div className="border border-border border-dashed rounded-xl p-8 text-center">
+          <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center mx-auto mb-4">
+            <Key size={24} className="text-muted-foreground" />
           </div>
-          <h3 className="text-[15px] font-medium text-ink mb-2">No providers configured</h3>
-          <p className="text-[13px] text-ink-subtle mb-4">
+          <h3 className="text-[15px] font-medium text-foreground mb-2">No providers configured</h3>
+          <p className="text-[13px] text-muted-foreground mb-4">
             Add your API keys for OpenAI, Anthropic, or other providers to use your own models.
           </p>
           <button
             onClick={() => setShowAddForm(true)}
             className={cn(
               'inline-flex items-center gap-2 px-4 py-2 rounded-xl',
-              'bg-dark-surface border border-dark-border',
-              'text-ink text-[13px]',
-              'hover:border-ink-faint transition-colors'
+              'bg-secondary border border-border',
+              'text-foreground text-[13px]',
+              'hover:border-foreground/30 transition-colors'
             )}
           >
             <Plus size={14} />
@@ -128,11 +134,28 @@ export default function ProvidersSettings() {
               onUpdate={async (data) => {
                 const result = await updateProvider(provider.id, data)
                 if (result) {
+                  showSuccess('Provider updated')
                   setEditingProvider(null)
+                } else {
+                  showError('Failed to update provider')
                 }
               }}
-              onDelete={() => deleteProvider(provider.id)}
-              onSetPreferred={() => setPreferred(provider.id)}
+              onDelete={async () => {
+                const success = await deleteProvider(provider.id)
+                if (success) {
+                  showSuccess('Provider deleted')
+                } else {
+                  showError('Failed to delete provider')
+                }
+              }}
+              onSetPreferred={async () => {
+                const success = await setPreferred(provider.id)
+                if (success) {
+                  showSuccess('Default provider updated')
+                } else {
+                  showError('Failed to set default provider')
+                }
+              }}
               validateProvider={validateProvider}
             />
           ))}
@@ -140,19 +163,19 @@ export default function ProvidersSettings() {
       )}
 
       {/* Supported providers info */}
-      <div className="mt-8 p-4 bg-dark-surface rounded-xl">
-        <h4 className="text-[13px] font-medium text-ink mb-3">Supported Providers</h4>
+      <div className="mt-8 p-4 bg-secondary rounded-xl">
+        <h4 className="text-[13px] font-medium text-foreground mb-3">Supported Providers</h4>
         <div className="mb-3">
-          <p className="text-[11px] text-ink-subtle uppercase tracking-wide mb-2">Cloud</p>
-          <div className="grid grid-cols-3 gap-2 text-[12px] text-ink-muted">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-2">Cloud</p>
+          <div className="grid grid-cols-3 gap-2 text-[12px] text-muted-foreground">
             {CLOUD_PROVIDERS.map((template) => (
               <div key={template.id}>{template.name}</div>
             ))}
           </div>
         </div>
         <div>
-          <p className="text-[11px] text-ink-subtle uppercase tracking-wide mb-2">Local</p>
-          <div className="grid grid-cols-3 gap-2 text-[12px] text-ink-muted">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-2">Local</p>
+          <div className="grid grid-cols-3 gap-2 text-[12px] text-muted-foreground">
             {LOCAL_PROVIDERS.map((template) => (
               <div key={template.id}>{template.name}</div>
             ))}
@@ -171,8 +194,8 @@ interface ProviderCardProps {
   onEdit: () => void
   onCancelEdit: () => void
   onUpdate: (data: { api_key?: string; endpoint_url?: string; model_type?: string }) => Promise<void>
-  onDelete: () => void
-  onSetPreferred: () => void
+  onDelete: () => Promise<void>
+  onSetPreferred: () => Promise<void>
   validateProvider: (data: { model_platform: string; model_type: string; api_key: string; url?: string }) => Promise<{ valid: boolean; message?: string }>
 }
 
@@ -227,18 +250,18 @@ function ProviderCard({
 
   if (isEditing) {
     return (
-      <div className="p-4 rounded-xl bg-dark-surface border border-burnt/30">
+      <div className="p-4 rounded-xl bg-secondary border border-burnt/30">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-dark-elevated flex items-center justify-center">
-              <Key size={18} className="text-ink-muted" />
+            <div className="w-10 h-10 rounded-lg bg-accent flex items-center justify-center">
+              <Key size={18} className="text-muted-foreground" />
             </div>
             <div>
-              <span className="text-[14px] font-medium text-ink">{template?.name || provider.provider_name}</span>
-              <p className="text-[12px] text-ink-subtle">{template?.description}</p>
+              <span className="text-[14px] font-medium text-foreground">{template?.name || provider.provider_name}</span>
+              <p className="text-[12px] text-muted-foreground">{template?.description}</p>
             </div>
           </div>
-          <button onClick={onCancelEdit} className="p-2 text-ink-muted hover:text-ink">
+          <button onClick={onCancelEdit} className="p-2 text-muted-foreground hover:text-foreground">
             <X size={16} />
           </button>
         </div>
@@ -246,7 +269,7 @@ function ProviderCard({
         <div className="space-y-3">
           {/* API Key */}
           <div>
-            <label className="block text-[12px] text-ink-muted mb-1">API Key</label>
+            <label className="block text-[12px] text-muted-foreground mb-1">API Key</label>
             <div className="relative">
               <input
                 type={showApiKey ? 'text' : 'password'}
@@ -255,15 +278,15 @@ function ProviderCard({
                 placeholder={provider.api_key_last4 ? `****${provider.api_key_last4}` : 'Enter API key'}
                 className={cn(
                   'w-full px-3 py-2 pr-10 rounded-lg',
-                  'bg-dark-elevated border border-dark-border',
-                  'text-ink text-[13px] placeholder:text-ink-subtle',
+                  'bg-accent border border-border',
+                  'text-foreground text-[13px] placeholder:text-muted-foreground',
                   'focus:outline-none focus:border-burnt/50'
                 )}
               />
               <button
                 type="button"
                 onClick={() => setShowApiKey(!showApiKey)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-muted hover:text-ink"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
@@ -272,7 +295,7 @@ function ProviderCard({
 
           {/* Endpoint URL */}
           <div>
-            <label className="block text-[12px] text-ink-muted mb-1">Endpoint URL</label>
+            <label className="block text-[12px] text-muted-foreground mb-1">Endpoint URL</label>
             <input
               type="text"
               value={endpoint}
@@ -280,8 +303,8 @@ function ProviderCard({
               placeholder={template?.defaultEndpoint || 'https://api.example.com/v1'}
               className={cn(
                 'w-full px-3 py-2 rounded-lg',
-                'bg-dark-elevated border border-dark-border',
-                'text-ink text-[13px] placeholder:text-ink-subtle',
+                'bg-accent border border-border',
+                'text-foreground text-[13px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50'
               )}
             />
@@ -289,7 +312,7 @@ function ProviderCard({
 
           {/* Model Type */}
           <div>
-            <label className="block text-[12px] text-ink-muted mb-1">Model Type</label>
+            <label className="block text-[12px] text-muted-foreground mb-1">Model Type</label>
             <input
               type="text"
               value={modelType}
@@ -297,13 +320,13 @@ function ProviderCard({
               placeholder={template?.supportedModels[0] || 'gpt-4o'}
               className={cn(
                 'w-full px-3 py-2 rounded-lg',
-                'bg-dark-elevated border border-dark-border',
-                'text-ink text-[13px] placeholder:text-ink-subtle',
+                'bg-accent border border-border',
+                'text-foreground text-[13px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50'
               )}
             />
             {template && (
-              <p className="text-[11px] text-ink-subtle mt-1">
+              <p className="text-[11px] text-muted-foreground mt-1">
                 Supported: {template.supportedModels.slice(0, 3).join(', ')}
                 {template.supportedModels.length > 3 && '...'}
               </p>
@@ -321,7 +344,7 @@ function ProviderCard({
           <div className="flex justify-end gap-2 pt-2">
             <button
               onClick={onCancelEdit}
-              className="px-3 py-1.5 rounded-lg text-[13px] text-ink-muted hover:text-ink"
+              className="px-3 py-1.5 rounded-lg text-[13px] text-muted-foreground hover:text-foreground"
             >
               Cancel
             </button>
@@ -353,16 +376,16 @@ function ProviderCard({
     <div
       className={cn(
         'flex items-center gap-4 p-4 rounded-xl',
-        'bg-dark-surface border border-dark-border',
+        'bg-secondary border border-border',
         provider.prefer && 'border-burnt/30'
       )}
     >
-      <div className="w-10 h-10 rounded-lg bg-dark-elevated flex items-center justify-center">
-        <Key size={18} className="text-ink-muted" />
+      <div className="w-10 h-10 rounded-lg bg-accent flex items-center justify-center">
+        <Key size={18} className="text-muted-foreground" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-[14px] font-medium text-ink">{template?.name || provider.provider_name}</span>
+          <span className="text-[14px] font-medium text-foreground">{template?.name || provider.provider_name}</span>
           {provider.prefer && (
             <span className="flex items-center gap-1 text-[11px] text-burnt">
               <Star size={10} fill="currentColor" />
@@ -376,7 +399,7 @@ function ProviderCard({
             </span>
           )}
         </div>
-        <div className="text-[12px] text-ink-subtle">
+        <div className="text-[12px] text-muted-foreground">
           {provider.model_type || 'No model configured'}
           {provider.api_key_set && provider.api_key_last4 && ` • ****${provider.api_key_last4}`}
           {provider.api_key_set && !provider.api_key_last4 && ' • Key saved'}
@@ -387,21 +410,21 @@ function ProviderCard({
       <div className="relative">
         <button
           onClick={() => setShowMenu(!showMenu)}
-          className="p-2 rounded-lg hover:bg-dark-elevated transition-colors"
+          className="p-2 rounded-lg hover:bg-accent transition-colors"
         >
-          <MoreVertical size={16} className="text-ink-muted" />
+          <MoreVertical size={16} className="text-muted-foreground" />
         </button>
 
         {showMenu && (
           <>
             <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
-            <div className="absolute right-0 top-full mt-1 z-20 w-40 py-1 bg-dark-surface border border-dark-border rounded-lg shadow-lg">
+            <div className="absolute right-0 top-full mt-1 z-20 w-40 py-1 bg-secondary border border-border rounded-lg shadow-lg">
               <button
                 onClick={() => {
                   setShowMenu(false)
                   onEdit()
                 }}
-                className="w-full px-3 py-2 text-left text-[13px] text-ink hover:bg-dark-elevated"
+                className="w-full px-3 py-2 text-left text-[13px] text-foreground hover:bg-accent"
               >
                 Edit
               </button>
@@ -411,7 +434,7 @@ function ProviderCard({
                     setShowMenu(false)
                     onSetPreferred()
                   }}
-                  className="w-full px-3 py-2 text-left text-[13px] text-ink hover:bg-dark-elevated"
+                  className="w-full px-3 py-2 text-left text-[13px] text-foreground hover:bg-accent"
                 >
                   Set as Default
                 </button>
@@ -421,7 +444,7 @@ function ProviderCard({
                   setShowMenu(false)
                   onDelete()
                 }}
-                className="w-full px-3 py-2 text-left text-[13px] text-red-400 hover:bg-dark-elevated"
+                className="w-full px-3 py-2 text-left text-[13px] text-red-400 hover:bg-accent"
               >
                 <span className="flex items-center gap-2">
                   <Trash2 size={14} />
@@ -491,10 +514,10 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
   }
 
   return (
-    <div className="mb-6 p-4 rounded-xl bg-dark-surface border border-dark-border">
+    <div className="mb-6 p-4 rounded-xl bg-secondary border border-border">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-[14px] font-medium text-ink">Add Provider</h3>
-        <button onClick={onClose} className="p-1 text-ink-muted hover:text-ink">
+        <h3 className="text-[14px] font-medium text-foreground">Add Provider</h3>
+        <button onClick={onClose} className="p-1 text-muted-foreground hover:text-foreground">
           <X size={16} />
         </button>
       </div>
@@ -504,7 +527,7 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
         <div className="space-y-4">
           {/* Cloud Providers */}
           <div>
-            <p className="text-[11px] text-ink-subtle uppercase tracking-wide mb-2">Cloud Providers</p>
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-2">Cloud Providers</p>
             <div className="grid grid-cols-2 gap-2">
               {CLOUD_PROVIDERS.map((tmpl) => {
                 const isConfigured = alreadyConfigured.includes(tmpl.id)
@@ -515,15 +538,15 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
                     disabled={isConfigured}
                     className={cn(
                       'p-3 rounded-lg text-left',
-                      'border border-dark-border',
+                      'border border-border',
                       'transition-colors',
                       isConfigured
                         ? 'opacity-50 cursor-not-allowed'
-                        : 'hover:border-burnt/50 hover:bg-dark-elevated'
+                        : 'hover:border-burnt/50 hover:bg-accent'
                     )}
                   >
-                    <div className="text-[13px] font-medium text-ink">{tmpl.name}</div>
-                    <div className="text-[11px] text-ink-subtle mt-1">
+                    <div className="text-[13px] font-medium text-foreground">{tmpl.name}</div>
+                    <div className="text-[11px] text-muted-foreground mt-1">
                       {isConfigured ? 'Already configured' : tmpl.description}
                     </div>
                   </button>
@@ -533,7 +556,7 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
           </div>
           {/* Local Providers */}
           <div>
-            <p className="text-[11px] text-ink-subtle uppercase tracking-wide mb-2">Local Models</p>
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-2">Local Models</p>
             <div className="grid grid-cols-2 gap-2">
               {LOCAL_PROVIDERS.map((tmpl) => {
                 const isConfigured = alreadyConfigured.includes(tmpl.id)
@@ -544,15 +567,15 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
                     disabled={isConfigured}
                     className={cn(
                       'p-3 rounded-lg text-left',
-                      'border border-dark-border',
+                      'border border-border',
                       'transition-colors',
                       isConfigured
                         ? 'opacity-50 cursor-not-allowed'
-                        : 'hover:border-burnt/50 hover:bg-dark-elevated'
+                        : 'hover:border-burnt/50 hover:bg-accent'
                     )}
                   >
-                    <div className="text-[13px] font-medium text-ink">{tmpl.name}</div>
-                    <div className="text-[11px] text-ink-subtle mt-1">
+                    <div className="text-[13px] font-medium text-foreground">{tmpl.name}</div>
+                    <div className="text-[11px] text-muted-foreground mt-1">
                       {isConfigured ? 'Already configured' : tmpl.description}
                     </div>
                   </button>
@@ -567,17 +590,17 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
           <div className="flex items-center gap-2 mb-4">
             <button
               onClick={() => setSelectedTemplate(null)}
-              className="text-ink-muted hover:text-ink text-[13px]"
+              className="text-muted-foreground hover:text-foreground text-[13px]"
             >
               ← Back
             </button>
-            <span className="text-[14px] font-medium text-ink">{template?.name}</span>
+            <span className="text-[14px] font-medium text-foreground">{template?.name}</span>
           </div>
 
           {/* API Key */}
           {template?.requiresApiKey && (
             <div>
-              <label className="block text-[12px] text-ink-muted mb-1">API Key *</label>
+              <label className="block text-[12px] text-muted-foreground mb-1">API Key *</label>
               <div className="relative">
                 <input
                   type={showApiKey ? 'text' : 'password'}
@@ -586,15 +609,15 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
                   placeholder="Enter your API key"
                   className={cn(
                     'w-full px-3 py-2 pr-10 rounded-lg',
-                    'bg-dark-elevated border border-dark-border',
-                    'text-ink text-[13px] placeholder:text-ink-subtle',
+                    'bg-accent border border-border',
+                    'text-foreground text-[13px] placeholder:text-muted-foreground',
                     'focus:outline-none focus:border-burnt/50'
                   )}
                 />
                 <button
                   type="button"
                   onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-muted hover:text-ink"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
@@ -604,7 +627,7 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
 
           {/* Endpoint */}
           <div>
-            <label className="block text-[12px] text-ink-muted mb-1">Endpoint URL</label>
+            <label className="block text-[12px] text-muted-foreground mb-1">Endpoint URL</label>
             <input
               type="text"
               value={endpoint}
@@ -612,8 +635,8 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
               placeholder={template?.defaultEndpoint}
               className={cn(
                 'w-full px-3 py-2 rounded-lg',
-                'bg-dark-elevated border border-dark-border',
-                'text-ink text-[13px] placeholder:text-ink-subtle',
+                'bg-accent border border-border',
+                'text-foreground text-[13px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50'
               )}
             />
@@ -621,7 +644,7 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
 
           {/* Model Type */}
           <div>
-            <label className="block text-[12px] text-ink-muted mb-1">Model Type</label>
+            <label className="block text-[12px] text-muted-foreground mb-1">Model Type</label>
             <input
               type="text"
               value={modelType}
@@ -629,13 +652,13 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
               placeholder={template?.supportedModels[0]}
               className={cn(
                 'w-full px-3 py-2 rounded-lg',
-                'bg-dark-elevated border border-dark-border',
-                'text-ink text-[13px] placeholder:text-ink-subtle',
+                'bg-accent border border-border',
+                'text-foreground text-[13px] placeholder:text-muted-foreground',
                 'focus:outline-none focus:border-burnt/50'
               )}
             />
             {template && (
-              <p className="text-[11px] text-ink-subtle mt-1">
+              <p className="text-[11px] text-muted-foreground mt-1">
                 Suggested: {template.supportedModels.join(', ')}
               </p>
             )}
@@ -652,7 +675,7 @@ function AddProviderForm({ onClose, onSubmit, validateProvider, existingProvider
           <div className="flex justify-end gap-2 pt-2">
             <button
               onClick={onClose}
-              className="px-3 py-1.5 rounded-lg text-[13px] text-ink-muted hover:text-ink"
+              className="px-3 py-1.5 rounded-lg text-[13px] text-muted-foreground hover:text-foreground"
             >
               Cancel
             </button>

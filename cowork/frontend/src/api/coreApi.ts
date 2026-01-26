@@ -162,6 +162,38 @@ export const config = {
     coreApi.delete(`/configs/${id}`),
 }
 
+// ============ Chat Messages Types ============
+
+/**
+ * Message from /chat/messages endpoint
+ * Represents a persisted chat message (user or assistant)
+ */
+export interface ChatMessage {
+  id: number
+  user_id: number
+  project_id: string
+  task_id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  message_type: 'user' | 'assistant' | 'task_result' | 'message'
+  metadata?: Record<string, unknown> | null
+  created_at: string
+}
+
+// ============ Chat Messages Endpoints ============
+
+export const chatMessages = {
+  /**
+   * Get all messages for a task or project
+   * Use for full conversation replay
+   */
+  listByTask: (taskId: string): Promise<ChatMessage[]> =>
+    coreApi.get(`/chat/messages?task_id=${taskId}`),
+
+  listByProject: (projectId: string): Promise<ChatMessage[]> =>
+    coreApi.get(`/chat/messages?project_id=${projectId}`),
+}
+
 // ============ Steps Endpoints ============
 
 export const steps = {
@@ -331,9 +363,10 @@ export const providers = {
 
   /**
    * Validate a model configuration
+   * Requires authentication - user must be logged in
    */
   validate: (data: ValidateModelRequest): Promise<ValidateModelResponse> =>
-    coreApi.post('/model/validate', data, false),
+    coreApi.post('/model/validate', data, true),
 }
 
 // ============ History/Sessions Endpoints ============
@@ -547,4 +580,50 @@ export const mcp = {
    */
   deleteUserMcp: (id: number): Promise<void> =>
     coreApi.delete(`/mcp/users/${id}`),
+}
+
+// ============ Snapshot Types ============
+
+export interface Snapshot {
+  id: number
+  user_id: string
+  task_id: string
+  image_path: string
+  browser_url?: string
+  created_at: string
+}
+
+export interface CreateSnapshotRequest {
+  task_id: string
+  image_base64: string
+  browser_url?: string
+}
+
+// ============ Snapshot Endpoints ============
+
+export const snapshots = {
+  /**
+   * List snapshots for a task
+   */
+  list: (taskId: string): Promise<Snapshot[]> =>
+    coreApi.get(`/chat/snapshots?task_id=${taskId}`),
+
+  /**
+   * Get snapshot image file URL
+   * Returns the URL to fetch the image (use directly in img src)
+   */
+  getImageUrl: (id: number): string =>
+    `${CORE_API_URL}/chat/snapshots/${id}/file`,
+
+  /**
+   * Create a new snapshot
+   */
+  create: (data: CreateSnapshotRequest): Promise<Snapshot> =>
+    coreApi.post('/chat/snapshots', data),
+
+  /**
+   * Delete a snapshot
+   */
+  delete: (id: number): Promise<void> =>
+    coreApi.delete(`/chat/snapshots/${id}`),
 }

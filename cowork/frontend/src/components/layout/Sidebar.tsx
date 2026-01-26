@@ -14,7 +14,7 @@ import {
 import { cn } from '../../lib/utils'
 import { useAuthStore } from '../../stores/authStore'
 import { useSessionStore, formatRelativeTime } from '../../stores/sessionStore'
-import { useChatStore } from '../../stores/chatStore'
+import { useChat } from '../../hooks'
 
 interface SidebarProps {
   collapsed?: boolean
@@ -32,9 +32,12 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
   const { sessions, isLoading, fetchSessions } = useSessionStore()
-  const { setActiveTask, activeTaskId } = useChatStore()
+  const { switchTask, activeTask } = useChat()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [activeTab, setActiveTab] = useState('cowork')
+  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null)
+
+  const activeTaskId = activeTask?.id ?? null
 
   // Fetch sessions on mount
   useEffect(() => {
@@ -48,13 +51,18 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
 
   const handleNewTask = () => {
     // Clear active task and navigate home to start fresh
-    setActiveTask(null)
+    switchTask('')
     navigate('/')
   }
 
-  const handleSessionClick = (sessionId: string) => {
-    setActiveTask(sessionId)
-    navigate('/')
+  const handleSessionClick = async (sessionId: string) => {
+    setLoadingSessionId(sessionId)
+    try {
+      await switchTask(sessionId)
+      navigate('/')
+    } finally {
+      setLoadingSessionId(null)
+    }
   }
 
   const userInitial = user?.email?.charAt(0).toUpperCase() || 'U'
@@ -64,8 +72,8 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
     <aside
       className={cn(
         'relative flex flex-col h-full',
-        'bg-dark-bg',
-        'border-r border-dark-border',
+        'bg-card/80 backdrop-blur-xl',
+        'border-r border-border',
         'transition-all duration-300 ease-smooth',
         collapsed ? 'w-16' : 'w-64'
       )}
@@ -76,8 +84,8 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           onClick={onToggle}
           className={cn(
             'w-8 h-8 flex items-center justify-center',
-            'text-ink-subtle hover:text-ink',
-            'rounded-lg hover:bg-dark-surface',
+            'text-muted-foreground hover:text-foreground',
+            'rounded-lg hover:bg-secondary',
             'transition-all duration-200'
           )}
         >
@@ -92,7 +100,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
       {/* Tab navigation */}
       {!collapsed && (
         <div className="px-3 mb-4">
-          <div className="flex items-center gap-1 p-1 bg-dark-surface rounded-xl">
+          <div className="flex items-center gap-1 p-1 bg-secondary rounded-xl">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -101,8 +109,8 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                   'flex-1 py-2 px-3 rounded-lg text-[13px] font-medium',
                   'transition-all duration-200',
                   activeTab === tab.id
-                    ? 'bg-dark-elevated text-ink'
-                    : 'text-ink-subtle hover:text-ink'
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 {tab.label}
@@ -118,8 +126,8 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           onClick={handleNewTask}
           className={cn(
             'flex items-center justify-center gap-2 h-10 w-full',
-            'text-ink-muted hover:text-ink',
-            'border border-dark-border hover:border-ink-faint',
+            'text-muted-foreground hover:text-foreground',
+            'border border-border hover:border-foreground/30',
             'rounded-xl',
             'transition-all duration-200',
             collapsed && 'w-10 mx-auto'
@@ -134,15 +142,15 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
       <nav className="flex-1 px-3 overflow-y-auto scrollbar-hide">
         {!collapsed && (
           <div>
-            <h3 className="text-[12px] font-medium text-ink-subtle uppercase tracking-wide px-2 mb-2">
+            <h3 className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide px-2 mb-2">
               Recents
             </h3>
             {isLoading && sessions.length === 0 ? (
               <div className="flex items-center justify-center py-4">
-                <Loader2 size={16} className="animate-spin text-ink-subtle" />
+                <Loader2 size={16} className="animate-spin text-muted-foreground" />
               </div>
             ) : sessions.length === 0 ? (
-              <p className="text-[13px] text-ink-subtle px-2">
+              <p className="text-[13px] text-muted-foreground px-2">
                 No sessions yet
               </p>
             ) : (
@@ -152,13 +160,14 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                     key={session.id}
                     session={session}
                     isActive={session.id === activeTaskId}
+                    isLoading={session.id === loadingSessionId}
                     onClick={() => handleSessionClick(session.id)}
                   />
                 ))}
                 {sessions.length > 10 && (
                   <button
                     onClick={() => navigate('/history')}
-                    className="w-full text-center py-2 text-[12px] text-ink-subtle hover:text-ink transition-colors"
+                    className="w-full text-center py-2 text-[12px] text-muted-foreground hover:text-foreground transition-colors"
                   >
                     View all ({sessions.length})
                   </button>
@@ -175,7 +184,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           onClick={() => setShowUserMenu(!showUserMenu)}
           className={cn(
             'w-full flex items-center gap-3 p-2 rounded-xl',
-            'hover:bg-dark-surface',
+            'hover:bg-secondary',
             'transition-all duration-200',
             collapsed && 'justify-center'
           )}
@@ -185,8 +194,8 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           </div>
           {!collapsed && (
             <div className="flex-1 text-left">
-              <span className="block text-[13px] text-ink truncate">{userName}</span>
-              <span className="block text-[11px] text-ink-subtle">Free plan</span>
+              <span className="block text-[13px] text-foreground truncate">{userName}</span>
+              <span className="block text-[11px] text-muted-foreground">Free plan</span>
             </div>
           )}
         </button>
@@ -196,7 +205,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           <div
             className={cn(
               'absolute bottom-full left-3 right-3 mb-2',
-              'bg-dark-surface border border-dark-border rounded-xl',
+              'bg-card border border-border rounded-xl',
               'shadow-lg shadow-black/20',
               'py-1 animate-scale-in origin-bottom'
             )}
@@ -204,7 +213,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             <MenuItem icon={User} label="Profile" onClick={() => navigate('/settings')} />
             <MenuItem icon={Clock} label="History" onClick={() => navigate('/history')} />
             <MenuItem icon={Settings} label="Settings" onClick={() => navigate('/settings')} />
-            <div className="h-px bg-dark-border my-1" />
+            <div className="h-px bg-border my-1" />
             <MenuItem icon={LogOut} label="Sign out" onClick={handleLogout} />
           </div>
         )}
@@ -223,7 +232,7 @@ function MenuItem({ icon: Icon, label, onClick }: MenuItemProps) {
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-3 px-3 py-2 text-ink-muted hover:text-ink hover:bg-dark-elevated transition-colors"
+      className="w-full flex items-center gap-3 px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
     >
       <Icon size={15} strokeWidth={1.5} />
       <span className="text-[13px]">{label}</span>
@@ -242,32 +251,43 @@ interface SessionItemProps {
     updatedAt: string
   }
   isActive: boolean
+  isLoading?: boolean
   onClick: () => void
 }
 
-function SessionItem({ session, isActive, onClick }: SessionItemProps) {
+function SessionItem({ session, isActive, isLoading, onClick }: SessionItemProps) {
   return (
     <button
       onClick={onClick}
+      disabled={isLoading}
       className={cn(
         'w-full flex items-start gap-2 px-2 py-2 rounded-lg text-left',
         'transition-all duration-200',
         isActive
-          ? 'bg-dark-surface text-ink'
-          : 'text-ink-muted hover:text-ink hover:bg-dark-surface/50'
+          ? 'bg-secondary text-foreground'
+          : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50',
+        isLoading && 'opacity-70'
       )}
     >
-      <MessageSquare
-        size={14}
-        strokeWidth={1.5}
-        className={cn(
-          'mt-0.5 flex-shrink-0',
-          session.status === 'ongoing' ? 'text-burnt' : 'text-ink-subtle'
-        )}
-      />
+      {isLoading ? (
+        <Loader2
+          size={14}
+          strokeWidth={1.5}
+          className="mt-0.5 flex-shrink-0 animate-spin text-burnt"
+        />
+      ) : (
+        <MessageSquare
+          size={14}
+          strokeWidth={1.5}
+          className={cn(
+            'mt-0.5 flex-shrink-0',
+            session.status === 'ongoing' ? 'text-burnt' : 'text-muted-foreground'
+          )}
+        />
+      )}
       <div className="flex-1 min-w-0">
         <p className="text-[13px] font-medium truncate">{session.title}</p>
-        <p className="text-[11px] text-ink-subtle truncate">
+        <p className="text-[11px] text-muted-foreground truncate">
           {formatRelativeTime(session.updatedAt)}
         </p>
       </div>

@@ -15,8 +15,8 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   // Show loading while checking auth
   if (isLoading) {
     return (
-      <div className="h-screen bg-dark-bg flex items-center justify-center">
-        <div className="text-ink-subtle text-[14px]">Loading...</div>
+      <div className="h-screen flex items-center justify-center">
+        <div className="text-muted-foreground text-[14px]">Loading...</div>
       </div>
     )
   }

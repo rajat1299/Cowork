@@ -3,7 +3,8 @@ import { ChatMessage } from './ChatMessage'
 import { ChatInput } from './ChatInput'
 import { TypingIndicator } from './TypingIndicator'
 import { WelcomeScreen } from './WelcomeScreen'
-import { useChat } from '../../hooks'
+import { WorkFlowPanel } from '../WorkFlow'
+import { useChat, useWorkflow } from '../../hooks'
 import { StopCircle } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
@@ -17,6 +18,15 @@ export function ChatContainer() {
     sendFollowUp,
     stopTask,
   } = useChat()
+
+  // Workflow state for the panel
+  const {
+    agents,
+    tasks,
+    activeAgentId,
+    decomposeText,
+    status: workflowStatus,
+  } = useWorkflow()
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -53,6 +63,16 @@ export function ChatContainer() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Workflow Panel - shows when task is running */}
+      <WorkFlowPanel
+        agents={agents}
+        tasks={tasks}
+        activeAgentId={activeAgentId}
+        decomposeText={decomposeText}
+        status={workflowStatus}
+        isVisible={workflowStatus !== 'idle'}
+      />
+
       {/* Messages or Welcome Screen */}
       <div className="flex-1 overflow-y-auto">
         {isWelcome ? (
@@ -85,8 +105,8 @@ export function ChatContainer() {
             onClick={handleStop}
             className={cn(
               'flex items-center gap-2 px-4 py-2 rounded-lg',
-              'bg-dark-surface border border-dark-border',
-              'text-ink-muted hover:text-ink hover:border-ink-faint',
+              'bg-secondary border border-border',
+              'text-muted-foreground hover:text-foreground hover:border-foreground/30',
               'transition-colors text-[13px]'
             )}
           >

@@ -1,10 +1,40 @@
-# Ignore specified files and directories
+# Project-specific ignores
 eigent/
 cowork/project status
 cowork/backend design
 cowork/frontend coordination
+cowork/frontend/FRONTEND_IMPLEMENTATION_PLAN.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+*.egg-info/
+.pytest_cache/
+
+# Node.js
+node_modules/
+dist/
+.eslintcache
+package-lock.json
 
 # Environment files
 *.env
 .env
 
+# AI Tooling & Editor configs
+.agent/
+.agents/
+.claude/
+.codex/
+.cursor/
+.gemini/
+.opencode/
+.idea/
+.vscode/
+
+# OS specific
+.DS_Store

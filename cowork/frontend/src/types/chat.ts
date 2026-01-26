@@ -75,14 +75,25 @@ export interface SubTasksData {
 export interface AgentData {
   agent_id: string
   agent_name: string
+  tools?: string[]  // Optional for safety, but should be present
   task_id?: string
 }
 
+export interface AssignTaskData {
+  assignee_id: string  // Maps to agent_id from create_agent
+  task_id: string
+  content: string
+  state: 'waiting' | 'running' | 'DONE' | 'FAILED'
+  failure_count: number
+}
+
 export interface ToolkitData {
+  agent_name: string           // Used for correlation (not agent_id)
+  process_task_id: string      // Subtask ID
   toolkit_name: string
-  method_name?: string
-  agent_id?: string
-  output?: string
+  method_name: string
+  message: string              // args/kwargs as string
+  output?: string              // Present in deactivate_toolkit
   result?: string
 }
 
@@ -152,7 +163,8 @@ export interface TaskInfo {
   id: string
   title: string
   status: TaskStatus
-  assignee?: string
+  assignee?: string        // agent_id from assign_task.assignee_id
+  failureCount?: number    // From assign_task.failure_count
 }
 
 export interface AgentInfo {
@@ -160,6 +172,7 @@ export interface AgentInfo {
   name: string
   status: 'idle' | 'active' | 'finished'
   tasks: TaskInfo[]
+  tools?: string[]  // From create_agent event
 }
 
 // ============ Chat State Types ============

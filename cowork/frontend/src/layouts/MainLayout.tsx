@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Outlet, Navigate } from 'react-router-dom'
 import { Sidebar, RightSidebar } from '../components/layout'
+import { ErrorBoundary } from '../components/ErrorBoundary'
 import { useAuthStore } from '../stores'
 
 /**
@@ -14,8 +15,8 @@ export function MainLayout() {
   // Show loading while checking auth
   if (isLoading) {
     return (
-      <div className="h-screen bg-dark-bg flex items-center justify-center">
-        <div className="text-ink-subtle text-[14px]">Loading...</div>
+      <div className="h-screen flex items-center justify-center">
+        <div className="text-muted-foreground text-[14px]">Loading...</div>
       </div>
     )
   }
@@ -26,8 +27,8 @@ export function MainLayout() {
   }
 
   return (
-    <div className="h-screen flex bg-dark-bg">
-      {/* Left Sidebar */}
+    <div className="h-screen flex">
+      {/* Left Sidebar - frosted glass effect */}
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -36,7 +37,9 @@ export function MainLayout() {
       {/* Main content */}
       <main className="flex-1 flex flex-col min-w-0">
         <div className="flex-1 overflow-hidden">
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </div>
       </main>
 

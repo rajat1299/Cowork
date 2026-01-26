@@ -91,7 +91,7 @@ async def improve_chat(
 ):
     task_lock = get(project_id)
     if not task_lock:
-        raise HTTPException(status_code=404, detail="Project not found")
+        task_lock = get_or_create(project_id)
     await task_lock.put(
         ActionImprove(
             project_id=project_id,
