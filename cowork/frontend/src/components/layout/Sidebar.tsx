@@ -32,7 +32,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
   const { sessions, isLoading, fetchSessions } = useSessionStore()
-  const { switchTask, activeTask } = useChat()
+  const { switchTask, activeTask, resetActiveChat } = useChat()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [activeTab, setActiveTab] = useState('cowork')
   const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null)
@@ -51,7 +51,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
 
   const handleNewTask = () => {
     // Clear active task and navigate home to start fresh
-    switchTask('')
+    resetActiveChat()
     navigate('/')
   }
 
@@ -72,7 +72,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
     <aside
       className={cn(
         'relative flex flex-col h-full',
-        'bg-card/80 backdrop-blur-xl',
+        'bg-card/40 backdrop-blur-md',
         'border-r border-border',
         'transition-all duration-300 ease-smooth',
         collapsed ? 'w-16' : 'w-64'

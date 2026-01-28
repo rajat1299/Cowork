@@ -65,6 +65,7 @@ interface ChatState {
   createTask: (projectId: string, question: string) => string
   removeTask: (taskId: string) => void
   setActiveTask: (taskId: string | null) => void
+  resetActiveChat: () => void
 
   // Actions - Message Management
   addMessage: (taskId: string, message: Message) => void
@@ -176,6 +177,12 @@ export const useChatStore = create<ChatState>()(
 
       setActiveTask: (taskId) => {
         set({ activeTaskId: taskId })
+      },
+      resetActiveChat: () => {
+        set({
+          activeTaskId: null,
+          activeProjectId: null,
+        })
       },
 
       // Message Management

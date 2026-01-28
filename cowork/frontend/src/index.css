@@ -6,6 +6,7 @@
 @tailwind utilities;
 
 @layer base {
+
   /* ========== DARK THEME (default) ========== */
   :root {
     --background: 12 6% 7%;
@@ -28,21 +29,21 @@
     --input: 12 6% 18%;
     --ring: 16 100% 50%;
     --radius: 0.75rem;
-    
+
     /* Workflow-specific tokens */
     --workflow-bg: 12 6% 11%;
     --workflow-surface: 12 6% 14%;
     --glass-bg: rgba(45, 45, 45, 0.7);
     --glass-border: rgba(255, 255, 255, 0.08);
     --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-    
+
     /* Agent colors - dark theme */
     --agent-developer: 142 76% 36%;
     --agent-search: 217 91% 60%;
     --agent-document: 45 93% 47%;
     --agent-multimodal: 280 87% 65%;
     --agent-custom: 16 100% 50%;
-    
+
     /* Status colors */
     --status-active: 142 76% 46%;
     --status-waiting: 45 93% 47%;
@@ -71,21 +72,21 @@
     --border: 30 15% 80%;
     --input: 30 15% 85%;
     --ring: 16 100% 45%;
-    
+
     /* Workflow-specific tokens - light */
     --workflow-bg: 30 33% 91%;
     --workflow-surface: 30 25% 95%;
     --glass-bg: rgba(255, 255, 255, 0.75);
     --glass-border: rgba(0, 0, 0, 0.06);
     --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-    
+
     /* Agent colors - light theme (slightly deeper) */
     --agent-developer: 142 70% 32%;
     --agent-search: 217 85% 50%;
     --agent-document: 40 90% 42%;
     --agent-multimodal: 280 80% 55%;
     --agent-custom: 16 95% 45%;
-    
+
     /* Status colors - light */
     --status-active: 142 70% 40%;
     --status-waiting: 40 90% 45%;
@@ -104,7 +105,7 @@
     font-feature-settings: 'cv11', 'ss01';
     -webkit-font-smoothing: antialiased;
     letter-spacing: -0.01em;
-    
+
     /* Gradient background from image - dark theme */
     background-image: url('/85562f4a-46ac-451d-bdd6-d4a525206afc.jpg');
     background-size: cover;
@@ -121,11 +122,16 @@
 
   #root {
     min-height: 100vh;
+    /* Subtle overlay removed from root to allow sidebar blur */
+    background: transparent;
+  }
+
+  .content-overlay {
     /* Subtle overlay to ensure content readability */
     background: rgba(0, 0, 0, 0.3);
   }
-  
-  .light #root {
+
+  .light .content-overlay {
     background: rgba(255, 255, 255, 0.15);
   }
 
@@ -153,6 +159,7 @@
 }
 
 @layer components {
+
   /* ========== GLASSMORPHISM ========== */
   .glass {
     background: var(--glass-bg);
@@ -209,10 +216,13 @@
 
   /* ========== BREATHING ANIMATION ========== */
   @keyframes breathe {
-    0%, 100% {
+
+    0%,
+    100% {
       transform: scale(1);
       opacity: 1;
     }
+
     50% {
       transform: scale(1.02);
       opacity: 0.95;
@@ -224,6 +234,7 @@
       transform: scale(0.95);
       opacity: 1;
     }
+
     100% {
       transform: scale(1.5);
       opacity: 0;
@@ -231,9 +242,12 @@
   }
 
   @keyframes float {
-    0%, 100% {
+
+    0%,
+    100% {
       transform: translateY(0px);
     }
+
     50% {
       transform: translateY(-4px);
     }
@@ -243,6 +257,7 @@
     0% {
       background-position: -200% 0;
     }
+
     100% {
       background-position: 200% 0;
     }
@@ -261,12 +276,10 @@
   }
 
   .animate-shimmer {
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      rgba(255, 255, 255, 0.1) 50%,
-      transparent 100%
-    );
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.1) 50%,
+        transparent 100%);
     background-size: 200% 100%;
     animation: shimmer 2s ease-in-out infinite;
   }
@@ -320,6 +333,7 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
@@ -335,9 +349,23 @@
   }
 
   /* Staggered animation delays */
-  .delay-0 { animation-delay: 0ms; }
-  .delay-75 { animation-delay: 75ms; }
-  .delay-150 { animation-delay: 150ms; }
-  .delay-225 { animation-delay: 225ms; }
-  .delay-300 { animation-delay: 300ms; }
+  .delay-0 {
+    animation-delay: 0ms;
+  }
+
+  .delay-75 {
+    animation-delay: 75ms;
+  }
+
+  .delay-150 {
+    animation-delay: 150ms;
+  }
+
+  .delay-225 {
+    animation-delay: 225ms;
+  }
+
+  .delay-300 {
+    animation-delay: 300ms;
+  }
 }

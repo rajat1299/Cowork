@@ -19,6 +19,8 @@ class TaskLock:
     conversation_history: list[dict[str, str]] = field(default_factory=list)
     last_task_result: str = ""
     last_task_summary: str = ""
+    thread_summary: str = ""
+    memory_notes: list[dict[str, object]] = field(default_factory=list)
     background_tasks: set[asyncio.Task] = field(default_factory=set)
     human_input: dict[str, asyncio.Queue[str]] = field(default_factory=dict)
     workforce: Any | None = None

@@ -21,6 +21,7 @@ interface UseChatReturn {
   sendFollowUp: (message: string) => Promise<void>
   stopTask: () => void
   clearChat: () => void
+  resetActiveChat: () => void
 
   // Task Management
   createNewChat: (projectId?: string, question?: string) => string
@@ -42,6 +43,7 @@ export function useChat(): UseChatReturn {
     isConnecting,
     createTask,
     setActiveTask,
+    resetActiveChat,
     addMessage,
     stopTask: stopTaskAction,
     clearTasks,
@@ -243,6 +245,7 @@ export function useChat(): UseChatReturn {
     sendFollowUp,
     stopTask,
     clearChat,
+    resetActiveChat,
 
     // Task Management
     createNewChat,

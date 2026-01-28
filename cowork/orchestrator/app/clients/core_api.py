@@ -32,6 +32,34 @@ class ChatMessage(BaseModel):
     created_at: datetime
 
 
+class ThreadSummary(BaseModel):
+    id: int
+    project_id: str
+    summary: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskSummary(BaseModel):
+    id: int
+    project_id: str | None = None
+    task_id: str
+    summary: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class MemoryNote(BaseModel):
+    id: int
+    project_id: str
+    task_id: str | None = None
+    category: str
+    content: str
+    pinned: bool
+    created_at: datetime
+    updated_at: datetime
+
+
 def _build_headers(auth_header: str | None) -> dict[str, str]:
     headers: dict[str, str] = {}
     if auth_header:
@@ -80,6 +108,17 @@ async def fetch_provider(
 async def create_history(auth_header: str | None, payload: dict[str, Any]) -> dict[str, Any] | None:
     if not auth_header:
         return None
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return None
+    headers = _build_headers(auth_header)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{base_url}/chat/history", json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPError:
+        return None
 
 
 async def create_message(auth_header: str | None, payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -123,17 +162,6 @@ async def fetch_messages(
             return [ChatMessage(**item) for item in resp.json()]
     except httpx.HTTPError:
         return []
-    base_url = settings.core_api_url.rstrip("/")
-    if not base_url:
-        return None
-    headers = _build_headers(auth_header)
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{base_url}/chat/history", json=payload, headers=headers)
-            resp.raise_for_status()
-            return resp.json()
-    except httpx.HTTPError:
-        return None
 
 
 async def fetch_configs(
@@ -170,6 +198,112 @@ async def fetch_mcp_users(auth_header: str | None) -> list[dict[str, Any]]:
             return resp.json()
     except httpx.HTTPError:
         return []
+
+
+async def fetch_memory_notes(
+    auth_header: str | None,
+    project_id: str,
+    task_id: str | None = None,
+) -> list[MemoryNote]:
+    if not auth_header:
+        return []
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return []
+    headers = _build_headers(auth_header)
+    params: dict[str, Any] = {"project_id": project_id}
+    if task_id:
+        params["task_id"] = task_id
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{base_url}/memory/notes", headers=headers, params=params)
+            resp.raise_for_status()
+            return [MemoryNote(**item) for item in resp.json()]
+    except httpx.HTTPError:
+        return []
+
+
+async def fetch_thread_summary(
+    auth_header: str | None,
+    project_id: str,
+) -> ThreadSummary | None:
+    if not auth_header:
+        return None
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return None
+    headers = _build_headers(auth_header)
+    params = {"project_id": project_id}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{base_url}/memory/thread-summary", headers=headers, params=params)
+            resp.raise_for_status()
+            return ThreadSummary(**resp.json())
+    except httpx.HTTPError:
+        return None
+
+
+async def upsert_thread_summary(
+    auth_header: str | None,
+    project_id: str,
+    summary: str,
+) -> ThreadSummary | None:
+    if not auth_header:
+        return None
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return None
+    headers = _build_headers(auth_header)
+    payload = {"project_id": project_id, "summary": summary}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.put(f"{base_url}/memory/thread-summary", headers=headers, json=payload)
+            resp.raise_for_status()
+            return ThreadSummary(**resp.json())
+    except httpx.HTTPError:
+        return None
+
+
+async def fetch_task_summary(
+    auth_header: str | None,
+    task_id: str,
+) -> TaskSummary | None:
+    if not auth_header:
+        return None
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return None
+    headers = _build_headers(auth_header)
+    params = {"task_id": task_id}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{base_url}/memory/task-summary", headers=headers, params=params)
+            resp.raise_for_status()
+            return TaskSummary(**resp.json())
+    except httpx.HTTPError:
+        return None
+
+
+async def upsert_task_summary(
+    auth_header: str | None,
+    task_id: str,
+    summary: str,
+    project_id: str | None = None,
+) -> TaskSummary | None:
+    if not auth_header:
+        return None
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return None
+    headers = _build_headers(auth_header)
+    payload = {"task_id": task_id, "project_id": project_id, "summary": summary}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.put(f"{base_url}/memory/task-summary", headers=headers, json=payload)
+            resp.raise_for_status()
+            return TaskSummary(**resp.json())
+    except httpx.HTTPError:
+        return None
 
 
 async def update_history(

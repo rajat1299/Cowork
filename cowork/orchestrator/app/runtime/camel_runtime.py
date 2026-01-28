@@ -32,8 +32,13 @@ from app.clients.core_api import (
     create_message,
     fetch_configs,
     fetch_messages,
+    fetch_memory_notes,
     fetch_mcp_users,
     fetch_provider,
+    fetch_task_summary,
+    fetch_thread_summary,
+    upsert_task_summary,
+    upsert_thread_summary,
     update_history,
 )
 from app.runtime.actions import ActionType, AgentSpec, TaskStatus
@@ -45,7 +50,7 @@ from app.runtime.llm_client import (
     collect_chat_completion,
     stream_chat,
 )
-from app.runtime.sync import fire_and_forget
+from app.runtime.sync import fire_and_forget, fire_and_forget_artifact
 from app.runtime.task_lock import TaskLock
 from app.runtime.tool_context import current_agent_name, current_process_task_id
 from app.runtime.toolkits.camel_tools import build_agent_tools
@@ -59,13 +64,20 @@ from app.runtime.workforce import (
     build_summary_prompt,
     parse_subtasks,
 )
-from shared.schemas import StepEvent as StepEventModel
+from shared.schemas import ArtifactEvent, StepEvent as StepEventModel
 
 
 logger = logging.getLogger(__name__)
 
+_MAX_CONTEXT_LENGTH = 100000
+_COMPACTION_TRIGGER = 80000
+_COMPACTION_KEEP_LAST = 12
+_TOOL_OUTPUT_ARTIFACT_THRESHOLD = 2000
+
 
 def _emit(task_id: str, step: StepEvent, data: dict) -> StepEventModel:
+    if step == StepEvent.deactivate_toolkit:
+        _maybe_store_tool_output(task_id, data)
     event = StepEventModel(
         task_id=task_id,
         step=step,
@@ -76,6 +88,40 @@ def _emit(task_id: str, step: StepEvent, data: dict) -> StepEventModel:
     return event
 
 
+def _maybe_store_tool_output(task_id: str, data: dict) -> None:
+    message = data.get("message")
+    if not isinstance(message, str):
+        return
+    if len(message) < _TOOL_OUTPUT_ARTIFACT_THRESHOLD:
+        return
+    workdir = os.environ.get("CAMEL_WORKDIR")
+    if workdir:
+        base_path = Path(workdir)
+    else:
+        base_path = _resolve_workdir(task_id)
+    artifacts_dir = base_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = int(time.time() * 1000)
+    filename = f"tool_output_{timestamp}.txt"
+    path = artifacts_dir / filename
+    try:
+        path.write_text(message, encoding="utf-8")
+    except Exception:
+        return
+    data["message"] = f"Stored tool output in artifact: {filename}"
+    data["artifact_name"] = filename
+    data["artifact_path"] = str(path)
+    fire_and_forget_artifact(
+        ArtifactEvent(
+            task_id=task_id,
+            artifact_type="tool_output",
+            name=filename,
+            content_url=str(path),
+            created_at=time.time(),
+        )
+    )
+
+
 def _usage_total(usage: dict | None) -> int:
     if not usage:
         return 0
@@ -83,9 +129,43 @@ def _usage_total(usage: dict | None) -> int:
 
 
 def _build_context(task_lock: TaskLock) -> str:
-    if not task_lock.conversation_history:
+    if (
+        not task_lock.conversation_history
+        and not task_lock.thread_summary
+        and not task_lock.last_task_summary
+        and not task_lock.memory_notes
+    ):
         return ""
-    lines = ["=== Previous Conversation ==="]
+    lines: list[str] = []
+    if task_lock.thread_summary:
+        lines.extend(
+            [
+                "=== Thread Summary ===",
+                task_lock.thread_summary,
+                "",
+            ]
+        )
+    if task_lock.last_task_summary:
+        lines.extend(
+            [
+                "=== Task Summary ===",
+                task_lock.last_task_summary,
+                "",
+            ]
+        )
+    if task_lock.memory_notes:
+        pinned = [note for note in task_lock.memory_notes if note.get("pinned")]
+        other = [note for note in task_lock.memory_notes if not note.get("pinned")]
+        lines.append("=== Memory Notes ===")
+        for note in pinned + other:
+            content = note.get("content", "")
+            category = note.get("category", "note")
+            label = "pinned" if note.get("pinned") else category
+            lines.append(f"- ({label}) {content}")
+        lines.append("")
+    if not task_lock.conversation_history:
+        return "\n".join(lines).strip() + "\n"
+    lines.append("=== Previous Conversation ===")
     for entry in task_lock.conversation_history:
         role = entry.get("role") or "assistant"
         content = entry.get("content") or ""
@@ -94,6 +174,21 @@ def _build_context(task_lock: TaskLock) -> str:
         else:
             lines.append(f"{role}: {content}")
     return "\n".join(lines) + "\n"
+
+
+def _conversation_length(task_lock: TaskLock) -> int:
+    total_length = 0
+    if task_lock.thread_summary:
+        total_length += len(task_lock.thread_summary)
+    if task_lock.last_task_summary:
+        total_length += len(task_lock.last_task_summary)
+    for note in task_lock.memory_notes:
+        content = note.get("content", "")
+        total_length += len(content) if isinstance(content, str) else len(str(content))
+    for entry in task_lock.conversation_history:
+        content = entry.get("content", "")
+        total_length += len(content) if isinstance(content, str) else len(str(content))
+    return total_length
 
 
 async def _hydrate_conversation_history(
@@ -118,6 +213,80 @@ async def _hydrate_conversation_history(
         if message.role == "assistant":
             task_lock.last_task_result = message.content
             break
+
+
+async def _hydrate_thread_summary(
+    task_lock: TaskLock,
+    auth_token: str | None,
+    project_id: str,
+) -> None:
+    if task_lock.thread_summary:
+        return
+    summary = await fetch_thread_summary(auth_token, project_id)
+    if summary and summary.summary:
+        task_lock.thread_summary = summary.summary
+
+
+async def _hydrate_task_summary(
+    task_lock: TaskLock,
+    auth_token: str | None,
+    task_id: str,
+) -> None:
+    summary = await fetch_task_summary(auth_token, task_id)
+    if summary and summary.summary:
+        task_lock.last_task_summary = summary.summary
+
+
+async def _hydrate_memory_notes(
+    task_lock: TaskLock,
+    auth_token: str | None,
+    project_id: str,
+) -> None:
+    notes = await fetch_memory_notes(auth_token, project_id)
+    task_lock.memory_notes = [note.model_dump() for note in notes]
+
+
+async def _compact_context(
+    task_lock: TaskLock,
+    provider: ProviderConfig,
+    auth_token: str | None,
+    project_id: str,
+) -> bool:
+    if not task_lock.conversation_history:
+        return False
+    history_lines = []
+    for entry in task_lock.conversation_history:
+        role = entry.get("role") or "assistant"
+        content = entry.get("content") or ""
+        history_lines.append(f"{role}: {content}")
+    history_text = "\n".join(history_lines)
+    prompt = f"""Summarize the conversation for long-term memory.
+
+Existing summary (if any):
+{task_lock.thread_summary or "None"}
+
+Conversation:
+{history_text}
+
+Return a concise summary with sections:
+- Goal
+- Decisions
+- Outputs
+- Open Questions
+- Next Steps
+"""
+    summary_text, _ = await collect_chat_completion(
+        provider,
+        [{"role": "user", "content": prompt}],
+        temperature=0.1,
+    )
+    summary_text = summary_text.strip()
+    if not summary_text:
+        return False
+    task_lock.thread_summary = summary_text
+    await upsert_thread_summary(auth_token, project_id, summary_text)
+    task_lock.conversation_history = task_lock.conversation_history[-_COMPACTION_KEEP_LAST:]
+    return True
 
 
 async def _persist_message(
@@ -748,6 +917,15 @@ async def _run_camel_complex(
         )
         token_tracker.add(summary_usage)
         project_name, summary = _parse_summary(summary_text)
+        task_summary = summary or summary_text or ""
+        if task_summary:
+            task_lock.last_task_summary = task_summary
+            await upsert_task_summary(
+                action.auth_token,
+                action.task_id,
+                task_summary,
+                project_id=action.project_id,
+            )
 
         payload = {
             "project_id": action.project_id,
@@ -852,6 +1030,14 @@ async def _run_camel_complex(
             token_tracker.add(results_usage)
             if summary_result:
                 final_result = summary_result
+        if not task_lock.last_task_summary and final_result:
+            task_lock.last_task_summary = final_result
+            await upsert_task_summary(
+                action.auth_token,
+                action.task_id,
+                final_result,
+                project_id=action.project_id,
+            )
 
         if not final_result:
             final_result = "Task completed."
@@ -912,9 +1098,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             task_lock.status = TaskStatus.processing
             task_lock.current_task_id = action.task_id
             await _hydrate_conversation_history(task_lock, action.auth_token, action.project_id)
-
-            yield _emit(action.task_id, StepEvent.confirmed, {"question": action.question})
-            yield _emit(action.task_id, StepEvent.task_state, {"state": "processing"})
+            await _hydrate_thread_summary(task_lock, action.auth_token, action.project_id)
 
             provider: ProviderConfig | None = None
             if action.api_key and action.model_type:
@@ -943,6 +1127,37 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 )
                 task_lock.status = TaskStatus.done
                 continue
+
+            context_length = _conversation_length(task_lock)
+            if context_length > _COMPACTION_TRIGGER:
+                yield _emit(
+                    action.task_id,
+                    StepEvent.notice,
+                    {"message": "Compacting conversation so we can keep chatting..."},
+                )
+                try:
+                    await _compact_context(task_lock, provider, action.auth_token, action.project_id)
+                except Exception as exc:
+                    logger.warning("Context compaction failed: %s", exc)
+
+            await _hydrate_task_summary(task_lock, action.auth_token, action.task_id)
+            await _hydrate_memory_notes(task_lock, action.auth_token, action.project_id)
+
+            context_length = _conversation_length(task_lock)
+            if context_length > _MAX_CONTEXT_LENGTH:
+                yield _emit(
+                    action.task_id,
+                    StepEvent.context_too_long,
+                    {
+                        "message": "The conversation history is too long. Please create a new project to continue.",
+                        "current_length": context_length,
+                        "max_length": _MAX_CONTEXT_LENGTH,
+                    },
+                )
+                continue
+
+            yield _emit(action.task_id, StepEvent.confirmed, {"question": action.question})
+            yield _emit(action.task_id, StepEvent.task_state, {"state": "processing"})
 
             history_id = None
             history_payload = {
@@ -976,7 +1191,11 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 content_parts: list[str] = []
                 usage: dict | None = None
                 try:
-                    messages = [{"role": "user", "content": action.question}]
+                    prompt = (
+                        f"{context}User Query: {action.question}\n\n"
+                        "Provide a direct, helpful answer to this simple question."
+                    )
+                    messages = [{"role": "user", "content": prompt}]
                     async for chunk, usage_update in stream_chat(provider, messages):
                         if task_lock.stop_requested:
                             break
@@ -1012,6 +1231,15 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 total_tokens += _usage_total(usage)
                 if history_id is not None:
                     await update_history(action.auth_token, history_id, {"tokens": total_tokens, "status": 2})
+
+                if result_text:
+                    task_lock.last_task_summary = result_text
+                    await upsert_task_summary(
+                        action.auth_token,
+                        action.task_id,
+                        result_text,
+                        project_id=action.project_id,
+                    )
 
                 yield _emit(action.task_id, StepEvent.end, {"result": result_text, "usage": usage or {}})
                 task_lock.add_conversation("assistant", result_text)

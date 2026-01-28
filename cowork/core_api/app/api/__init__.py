@@ -8,6 +8,7 @@ from app.api.health import router as health_router
 from app.api.mcp import router as mcp_router
 from app.api.mcp_proxy import router as mcp_proxy_router
 from app.api.messages import router as messages_router
+from app.api.memory import router as memory_router
 from app.api.model import router as model_router
 from app.api.oauth import router as oauth_router
 from app.api.providers import router as providers_router
@@ -25,6 +26,7 @@ router.include_router(health_router)
 router.include_router(mcp_router)
 router.include_router(mcp_proxy_router)
 router.include_router(messages_router)
+router.include_router(memory_router)
 router.include_router(model_router)
 router.include_router(oauth_router)
 router.include_router(providers_router)

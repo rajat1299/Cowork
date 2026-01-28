@@ -14,5 +14,7 @@ class StepEvent(StrEnum):
     deactivate_toolkit = "deactivate_toolkit"
     streaming = "streaming"
     artifact = "artifact"
+    notice = "notice"
     end = "end"
     error = "error"
+    context_too_long = "context_too_long"
