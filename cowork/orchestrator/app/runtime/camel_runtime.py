@@ -30,6 +30,7 @@ from app.clients.core_api import (
     ProviderConfig,
     create_history,
     create_message,
+    create_memory_note,
     fetch_configs,
     fetch_messages,
     fetch_memory_notes,
@@ -52,7 +53,12 @@ from app.runtime.llm_client import (
 )
 from app.runtime.sync import fire_and_forget, fire_and_forget_artifact
 from app.runtime.task_lock import TaskLock
-from app.runtime.tool_context import current_agent_name, current_process_task_id
+from app.runtime.tool_context import (
+    current_agent_name,
+    current_auth_token,
+    current_process_task_id,
+    current_project_id,
+)
 from app.runtime.toolkits.camel_tools import build_agent_tools
 from app.runtime.camel_agent import CoworkChatAgent
 from app.runtime.workforce import (
@@ -73,6 +79,15 @@ _MAX_CONTEXT_LENGTH = 100000
 _COMPACTION_TRIGGER = 80000
 _COMPACTION_KEEP_LAST = 12
 _TOOL_OUTPUT_ARTIFACT_THRESHOLD = 2000
+GLOBAL_USER_CONTEXT = "GLOBAL_USER_CONTEXT"
+GLOBAL_MEMORY_CATEGORIES = {
+    "work_context",
+    "personal_context",
+    "top_of_mind",
+    "brief_history",
+    "earlier_context",
+    "long_term_background",
+}
 
 
 def _emit(task_id: str, step: StepEvent, data: dict) -> StepEventModel:
@@ -127,6 +142,19 @@ def _usage_total(usage: dict | None) -> int:
         return 0
     return int(usage.get("total_tokens") or 0)
 
+def _append_memory_notes(lines: list[str], title: str, notes: list[dict[str, object]]) -> None:
+    if not notes:
+        return
+    lines.append(title)
+    pinned = [note for note in notes if note.get("pinned")]
+    other = [note for note in notes if not note.get("pinned")]
+    for note in pinned + other:
+        content = note.get("content", "")
+        category = note.get("category", "note")
+        label = "pinned" if note.get("pinned") else category
+        lines.append(f"- ({label}) {content}")
+    lines.append("")
+
 
 def _build_context(task_lock: TaskLock) -> str:
     if (
@@ -134,6 +162,7 @@ def _build_context(task_lock: TaskLock) -> str:
         and not task_lock.thread_summary
         and not task_lock.last_task_summary
         and not task_lock.memory_notes
+        and not task_lock.global_memory_notes
     ):
         return ""
     lines: list[str] = []
@@ -153,16 +182,8 @@ def _build_context(task_lock: TaskLock) -> str:
                 "",
             ]
         )
-    if task_lock.memory_notes:
-        pinned = [note for note in task_lock.memory_notes if note.get("pinned")]
-        other = [note for note in task_lock.memory_notes if not note.get("pinned")]
-        lines.append("=== Memory Notes ===")
-        for note in pinned + other:
-            content = note.get("content", "")
-            category = note.get("category", "note")
-            label = "pinned" if note.get("pinned") else category
-            lines.append(f"- ({label}) {content}")
-        lines.append("")
+    _append_memory_notes(lines, "=== User Preferences ===", task_lock.global_memory_notes)
+    _append_memory_notes(lines, "=== Project Context ===", task_lock.memory_notes)
     if not task_lock.conversation_history:
         return "\n".join(lines).strip() + "\n"
     lines.append("=== Previous Conversation ===")
@@ -183,6 +204,9 @@ def _conversation_length(task_lock: TaskLock) -> int:
     if task_lock.last_task_summary:
         total_length += len(task_lock.last_task_summary)
     for note in task_lock.memory_notes:
+        content = note.get("content", "")
+        total_length += len(content) if isinstance(content, str) else len(str(content))
+    for note in task_lock.global_memory_notes:
         content = note.get("content", "")
         total_length += len(content) if isinstance(content, str) else len(str(content))
     for entry in task_lock.conversation_history:
@@ -241,9 +265,15 @@ async def _hydrate_memory_notes(
     task_lock: TaskLock,
     auth_token: str | None,
     project_id: str,
+    include_global: bool = True,
 ) -> None:
     notes = await fetch_memory_notes(auth_token, project_id)
     task_lock.memory_notes = [note.model_dump() for note in notes]
+    if include_global:
+        global_notes = await fetch_memory_notes(auth_token, GLOBAL_USER_CONTEXT)
+        task_lock.global_memory_notes = [note.model_dump() for note in global_notes]
+    else:
+        task_lock.global_memory_notes = []
 
 
 async def _compact_context(
@@ -287,6 +317,82 @@ Return a concise summary with sections:
     await upsert_thread_summary(auth_token, project_id, summary_text)
     task_lock.conversation_history = task_lock.conversation_history[-_COMPACTION_KEEP_LAST:]
     return True
+
+
+async def _generate_global_memory_notes(
+    task_lock: TaskLock,
+    provider: ProviderConfig,
+    auth_token: str | None,
+) -> None:
+    if not auth_token or not task_lock.conversation_history:
+        return
+    existing_notes = await fetch_memory_notes(auth_token, GLOBAL_USER_CONTEXT)
+    existing_dump = [note.model_dump() for note in existing_notes]
+    existing_contents = {
+        str(note.get("content", "")).strip().lower()
+        for note in existing_dump
+        if note.get("content")
+    }
+    existing_text = "\n".join(
+        f"- ({note.get('category', 'note')}) {note.get('content', '')}"
+        for note in existing_dump
+        if note.get("content")
+    ) or "None"
+    history_lines = []
+    for entry in task_lock.conversation_history:
+        role = entry.get("role") or "assistant"
+        content = entry.get("content") or ""
+        history_lines.append(f"{role}: {content}")
+    history_text = "\n".join(history_lines)
+    prompt = f"""You update global user memory.
+
+Existing memory notes:
+{existing_text}
+
+Conversation:
+{history_text}
+
+Extract only NEW, durable user facts (preferences, role, background, working style).
+Ignore task-specific details, transient requests, and project-only info.
+Allowed categories: work_context, personal_context, top_of_mind, brief_history, earlier_context, long_term_background.
+Return ONLY a JSON array of objects with keys: category, content.
+If there is nothing new, return [].
+"""
+    response_text, _ = await collect_chat_completion(
+        provider,
+        [{"role": "user", "content": prompt}],
+        temperature=0.1,
+    )
+    response_text = response_text.strip()
+    if not response_text:
+        return
+    try:
+        payload = json.loads(response_text)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(payload, list):
+        return
+    seen = set()
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "").strip()
+        category = str(item.get("category") or "").strip()
+        if not content or category not in GLOBAL_MEMORY_CATEGORIES:
+            continue
+        norm = content.lower()
+        if norm in existing_contents or norm in seen:
+            continue
+        seen.add(norm)
+        await create_memory_note(
+            auth_token,
+            {
+                "project_id": GLOBAL_USER_CONTEXT,
+                "category": category,
+                "content": content,
+                "pinned": False,
+            },
+        )
 
 
 async def _persist_message(
@@ -367,6 +473,25 @@ def _restore_env(previous: dict[str, str | None]) -> None:
             os.environ[key] = value
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _config_flag(configs: list[dict[str, Any]], name: str, default: bool = False) -> bool:
+    for item in configs:
+        key = item.get("key") or item.get("name")
+        if key != name:
+            continue
+        value = item.get("value")
+        if value is None:
+            return default
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+    return default
+
+
 def _agent_profile_from_spec(spec: AgentSpec) -> AgentProfile:
     name = (spec.name or "").strip()
     description = (spec.description or "").strip()
@@ -407,6 +532,12 @@ def _merge_agent_specs(
         if not replaced:
             merged.append(profile)
     return merged
+
+
+def _ensure_tool(agent_specs: list[AgentProfile], tool_name: str) -> None:
+    for spec in agent_specs:
+        if tool_name not in spec.tools:
+            spec.tools.append(tool_name)
 
 
 def _normalize_mcp_args(value) -> list[str] | None:
@@ -853,6 +984,7 @@ async def _run_camel_complex(
     token_tracker: TokenTracker,
     event_stream: EventStream,
     context: str,
+    memory_generate_enabled: bool,
 ) -> None:
     env_snapshot: dict[str, str | None] | None = None
     mcp_toolkit: MCPToolkit | None = None
@@ -942,6 +1074,7 @@ async def _run_camel_complex(
         tool_env["CAMEL_WORKDIR"] = str(workdir)
         env_snapshot = _apply_env_overrides(tool_env)
         mcp_toolkit, mcp_tools = await _load_mcp_tools(action.auth_token)
+        memory_search_enabled = _env_flag("MEMORY_SEARCH_PAST_CHATS", default=True)
 
         coordinator_agent = _build_agent(
             provider,
@@ -968,6 +1101,8 @@ async def _run_camel_complex(
         task_lock.workforce = workforce
 
         agent_specs = _merge_agent_specs(build_default_agents(), action.agents)
+        if memory_search_enabled:
+            _ensure_tool(agent_specs, "memory_search")
         for spec in agent_specs:
             tools = build_agent_tools(
                 spec.tools or [],
@@ -1064,6 +1199,12 @@ async def _run_camel_complex(
             final_result,
             "task_result",
         )
+        if memory_generate_enabled:
+            task_lock.add_background_task(
+                asyncio.create_task(
+                    _generate_global_memory_notes(task_lock, provider, action.auth_token)
+                )
+            )
         task_lock.status = TaskStatus.done
     except Exception as exc:
         event_stream.emit(StepEvent.error, {"error": str(exc)})
@@ -1094,6 +1235,8 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             break
 
         if action.type == ActionType.improve:
+            current_auth_token.set(action.auth_token)
+            current_project_id.set(action.project_id)
             task_lock.stop_requested = False
             task_lock.status = TaskStatus.processing
             task_lock.current_task_id = action.task_id
@@ -1127,6 +1270,12 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 )
                 task_lock.status = TaskStatus.done
                 continue
+            memory_configs = await fetch_configs(action.auth_token, group="memory")
+            memory_generate_enabled = _config_flag(
+                memory_configs,
+                "MEMORY_GENERATE_FROM_CHATS",
+                default=True,
+            )
 
             context_length = _conversation_length(task_lock)
             if context_length > _COMPACTION_TRIGGER:
@@ -1141,7 +1290,12 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                     logger.warning("Context compaction failed: %s", exc)
 
             await _hydrate_task_summary(task_lock, action.auth_token, action.task_id)
-            await _hydrate_memory_notes(task_lock, action.auth_token, action.project_id)
+            await _hydrate_memory_notes(
+                task_lock,
+                action.auth_token,
+                action.project_id,
+                include_global=memory_generate_enabled,
+            )
 
             context_length = _conversation_length(task_lock)
             if context_length > _MAX_CONTEXT_LENGTH:
@@ -1251,6 +1405,12 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                     result_text,
                     "assistant",
                 )
+                if memory_generate_enabled:
+                    task_lock.add_background_task(
+                        asyncio.create_task(
+                            _generate_global_memory_notes(task_lock, provider, action.auth_token)
+                        )
+                    )
                 task_lock.status = TaskStatus.done
                 continue
 
@@ -1266,6 +1426,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                     token_tracker,
                     event_stream,
                     context,
+                    memory_generate_enabled,
                 )
             )
             task_lock.add_background_task(run_task)

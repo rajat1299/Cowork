@@ -200,6 +200,33 @@ async def fetch_mcp_users(auth_header: str | None) -> list[dict[str, Any]]:
         return []
 
 
+async def search_chat_messages(
+    auth_header: str | None,
+    query: str,
+    project_id: str | None = None,
+    task_id: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    if not auth_header:
+        return []
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return []
+    headers = _build_headers(auth_header)
+    params: dict[str, Any] = {"query": query, "limit": limit}
+    if project_id:
+        params["project_id"] = project_id
+    if task_id:
+        params["task_id"] = task_id
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{base_url}/memory/search", headers=headers, params=params)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPError:
+        return []
+
+
 async def fetch_memory_notes(
     auth_header: str | None,
     project_id: str,
@@ -221,6 +248,25 @@ async def fetch_memory_notes(
             return [MemoryNote(**item) for item in resp.json()]
     except httpx.HTTPError:
         return []
+
+
+async def create_memory_note(
+    auth_header: str | None,
+    payload: dict[str, Any],
+) -> MemoryNote | None:
+    if not auth_header:
+        return None
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return None
+    headers = _build_headers(auth_header)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{base_url}/memory/notes", json=payload, headers=headers)
+            resp.raise_for_status()
+            return MemoryNote(**resp.json())
+    except httpx.HTTPError:
+        return None
 
 
 async def fetch_thread_summary(

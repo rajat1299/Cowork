@@ -3,8 +3,10 @@ import { ChatMessage } from './ChatMessage'
 import { ChatInput } from './ChatInput'
 import { TypingIndicator } from './TypingIndicator'
 import { WelcomeScreen } from './WelcomeScreen'
+import { CompactingNotice } from './CompactingNotice'
 import { WorkFlowPanel } from '../WorkFlow'
 import { useChat, useWorkflow } from '../../hooks'
+import { useChatStore } from '../../stores/chatStore'
 import { StopCircle } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
@@ -27,6 +29,12 @@ export function ChatContainer() {
     decomposeText,
     status: workflowStatus,
   } = useWorkflow()
+
+  // Get notice from active task
+  const activeTaskId = useChatStore((s) => s.activeTaskId)
+  const activeTaskNotice = useChatStore((s) =>
+    activeTaskId ? s.tasks[activeTaskId]?.notice : null
+  )
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -83,8 +91,16 @@ export function ChatContainer() {
               <ChatMessage key={message.id} message={message} />
             ))}
 
+            {/* Compacting notice when backend is summarizing history */}
+            {activeTaskNotice && (
+              <CompactingNotice
+                message={activeTaskNotice.message}
+                progress={activeTaskNotice.progress}
+              />
+            )}
+
             {/* Typing indicator while loading */}
-            {isLoading && <TypingIndicator />}
+            {isLoading && !activeTaskNotice && <TypingIndicator />}
 
             {/* Error message */}
             {error && (

@@ -2,11 +2,12 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.auth import get_current_user
 from app.db import get_session
-from app.models import MemoryNote, TaskSummary, ThreadSummary
+from app.models import ChatMessage, MemoryNote, TaskSummary, ThreadSummary
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -73,6 +74,17 @@ class ContextStatsOut(BaseModel):
     notes_updated_at: datetime | None
     note_count: int
     pinned_count: int
+
+
+class ChatSearchResultOut(BaseModel):
+    id: int
+    project_id: str
+    task_id: str
+    role: str
+    content: str
+    message_type: str
+    created_at: datetime
+    rank: float
 
 
 class ClearMemoryRequest(BaseModel):
@@ -339,3 +351,43 @@ def clear_memory(
 
     session.commit()
     return Response(status_code=204)
+
+
+@router.get("/search", response_model=list[ChatSearchResultOut])
+def search_chat_messages(
+    query: str = Query(..., min_length=1),
+    project_id: str | None = Query(default=None),
+    task_id: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    user=Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[ChatSearchResultOut]:
+    ts_query = func.plainto_tsquery("english", query)
+    tsvector = func.to_tsvector("english", ChatMessage.content)
+    rank = func.ts_rank_cd(tsvector, ts_query).label("rank")
+    statement = (
+        select(ChatMessage, rank)
+        .where(ChatMessage.user_id == user.id)
+        .where(tsvector.op("@@")(ts_query))
+    )
+    if project_id:
+        statement = statement.where(ChatMessage.project_id == project_id)
+    if task_id:
+        statement = statement.where(ChatMessage.task_id == task_id)
+    statement = statement.order_by(rank.desc(), ChatMessage.created_at.desc()).limit(limit)
+    results = session.exec(statement).all()
+    payload: list[ChatSearchResultOut] = []
+    for record, score in results:
+        payload.append(
+            ChatSearchResultOut(
+                id=record.id,
+                project_id=record.project_id,
+                task_id=record.task_id,
+                role=record.role,
+                content=record.content,
+                message_type=record.message_type,
+                created_at=record.created_at,
+                rank=float(score or 0.0),
+            )
+        )
+    return payload

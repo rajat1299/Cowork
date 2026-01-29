@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import {
   Plus,
   PanelLeftClose,
@@ -82,6 +82,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
       <div className="flex items-center p-3">
         <button
           onClick={onToggle}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           className={cn(
             'w-8 h-8 flex items-center justify-center',
             'text-muted-foreground hover:text-foreground',
@@ -210,9 +211,9 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
               'py-1 animate-scale-in origin-bottom'
             )}
           >
-            <MenuItem icon={User} label="Profile" onClick={() => navigate('/settings')} />
-            <MenuItem icon={Clock} label="History" onClick={() => navigate('/history')} />
-            <MenuItem icon={Settings} label="Settings" onClick={() => navigate('/settings')} />
+            <MenuItem icon={User} label="Profile" to="/settings" />
+            <MenuItem icon={Clock} label="History" to="/history" />
+            <MenuItem icon={Settings} label="Settings" to="/settings" />
             <div className="h-px bg-border my-1" />
             <MenuItem icon={LogOut} label="Sign out" onClick={handleLogout} />
           </div>
@@ -226,9 +227,22 @@ interface MenuItemProps {
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>
   label: string
   onClick?: () => void
+  to?: string
 }
 
-function MenuItem({ icon: Icon, label, onClick }: MenuItemProps) {
+function MenuItem({ icon: Icon, label, onClick, to }: MenuItemProps) {
+  if (to) {
+    return (
+      <Link
+        to={to}
+        className="w-full flex items-center gap-3 px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+      >
+        <Icon size={15} strokeWidth={1.5} />
+        <span className="text-[13px]">{label}</span>
+      </Link>
+    )
+  }
+
   return (
     <button
       onClick={onClick}

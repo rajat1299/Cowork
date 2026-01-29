@@ -91,6 +91,26 @@ CONFIG_GROUPS = [
         ],
     },
     {
+        "id": "memory",
+        "name": "Memory",
+        "icon": "memory",
+        "toolkit": "memory_toolkit",
+        "fields": [
+            {
+                "key": "MEMORY_SEARCH_PAST_CHATS",
+                "label": "Search past chats",
+                "type": "text",
+                "required": False,
+            },
+            {
+                "key": "MEMORY_GENERATE_FROM_CHATS",
+                "label": "Generate memory from chats",
+                "type": "text",
+                "required": False,
+            },
+        ],
+    },
+    {
         "id": "github",
         "name": "GitHub",
         "icon": "github",
@@ -225,6 +245,10 @@ CONFIG_CATALOG: dict[str, dict[str, list[str] | str]] = {
     "search": {
         "env_vars": ["GOOGLE_API_KEY", "SEARCH_ENGINE_ID", "EXA_API_KEY"],
         "toolkit": "search_toolkit",
+    },
+    "memory": {
+        "env_vars": ["MEMORY_SEARCH_PAST_CHATS", "MEMORY_GENERATE_FROM_CHATS"],
+        "toolkit": "memory_toolkit",
     },
     "github": {"env_vars": ["GITHUB_TOKEN"], "toolkit": "github_toolkit"},
     "google_calendar": {

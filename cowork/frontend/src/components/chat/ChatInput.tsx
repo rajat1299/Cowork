@@ -74,11 +74,13 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
             </button>
 
             {/* Add attachment */}
-            <button className={cn(
-              'w-8 h-8 rounded-lg flex items-center justify-center',
-              'text-muted-foreground hover:text-foreground hover:bg-secondary',
-              'transition-all duration-200'
-            )}>
+            <button
+              aria-label="Add attachment"
+              className={cn(
+                'w-8 h-8 rounded-lg flex items-center justify-center',
+                'text-muted-foreground hover:text-foreground hover:bg-secondary',
+                'transition-all duration-200'
+              )}>
               <Plus size={18} strokeWidth={1.5} />
             </button>
           </div>
@@ -141,6 +143,7 @@ export function ChatInput({ onSend, disabled = false, isWelcome = false }: ChatI
         type="button"
         onClick={handleSubmit}
         disabled={disabled || !value.trim()}
+        aria-label="Send message"
         className={cn(
           'w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0',
           'transition-all duration-200',

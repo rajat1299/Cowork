@@ -1,0 +1,1 @@
+export { ManageMemoryModal } from './ManageMemoryModal'

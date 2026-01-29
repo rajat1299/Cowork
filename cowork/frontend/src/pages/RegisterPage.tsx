@@ -51,8 +51,9 @@ export function RegisterPage() {
           )}
 
           <div>
-            <label className="block text-[13px] text-muted-foreground mb-2">Email</label>
+            <label htmlFor="register-email" className="block text-[13px] text-muted-foreground mb-2">Email</label>
             <input
+              id="register-email"
               type="email"
               value={email}
               onChange={(e) => {
@@ -60,7 +61,8 @@ export function RegisterPage() {
                 clearError()
                 setLocalError(null)
               }}
-              placeholder="you@example.com"
+              placeholder="you@example.com…"
+              autoComplete="email"
               required
               className={cn(
                 'w-full px-4 py-3 rounded-xl',
@@ -73,8 +75,9 @@ export function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-[13px] text-muted-foreground mb-2">Password</label>
+            <label htmlFor="register-password" className="block text-[13px] text-muted-foreground mb-2">Password</label>
             <input
+              id="register-password"
               type="password"
               value={password}
               onChange={(e) => {
@@ -83,6 +86,7 @@ export function RegisterPage() {
                 setLocalError(null)
               }}
               placeholder="••••••••"
+              autoComplete="new-password"
               required
               className={cn(
                 'w-full px-4 py-3 rounded-xl',
@@ -95,8 +99,9 @@ export function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-[13px] text-muted-foreground mb-2">Confirm password</label>
+            <label htmlFor="register-confirm-password" className="block text-[13px] text-muted-foreground mb-2">Confirm password</label>
             <input
+              id="register-confirm-password"
               type="password"
               value={confirmPassword}
               onChange={(e) => {
@@ -104,6 +109,7 @@ export function RegisterPage() {
                 setLocalError(null)
               }}
               placeholder="••••••••"
+              autoComplete="new-password"
               required
               className={cn(
                 'w-full px-4 py-3 rounded-xl',

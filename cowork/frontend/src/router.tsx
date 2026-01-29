@@ -15,6 +15,7 @@ const RegisterPage = lazy(() => import('./pages/RegisterPage').then(m => ({ defa
 const ProvidersSettings = lazy(() => import('./pages/settings/ProvidersSettings'))
 const ConnectorsSettings = lazy(() => import('./pages/settings/ConnectorsSettings'))
 const MCPSettings = lazy(() => import('./pages/settings/MCPSettings'))
+const CapabilitiesSettings = lazy(() => import('./pages/settings/CapabilitiesSettings'))
 
 // Loading fallback
 function PageLoader() {
@@ -128,7 +129,7 @@ export const router = createBrowserRouter([
           },
           {
             path: 'capabilities',
-            element: <PlaceholderSettings title="Capabilities" />,
+            element: withSuspense(CapabilitiesSettings),
           },
           {
             path: 'developer',

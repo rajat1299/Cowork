@@ -136,6 +136,9 @@ function handleStreaming(taskId: string, data: StreamingData): void {
 
   if (!task) return
 
+  // Clear any compacting notice when streaming resumes
+  clearCompactingNotice(taskId)
+
   // Check if we have an assistant message to append to
   const lastMessage = task.messages[task.messages.length - 1]
 
@@ -266,6 +269,9 @@ function handleEnd(taskId: string, data: EndData): void {
 
   if (!task) return
 
+  // Clear any compacting notice
+  clearCompactingNotice(taskId)
+
   // Finalize any streaming message
   const lastMessage = task.messages[task.messages.length - 1]
   if (lastMessage?.isStreaming) {
@@ -330,10 +336,39 @@ function handleAsk(taskId: string, data: Record<string, unknown>): void {
 }
 
 function handleNotice(taskId: string, data: Record<string, unknown>): void {
-  const notice = (data.notice as string) || (data.message as string) || ''
-  if (notice) {
-    const store = useChatStore.getState()
-    store.addMessage(taskId, createMessage('system', notice))
+  const store = useChatStore.getState()
+  const message = (data.notice as string) || (data.message as string) || ''
+  const progress = data.progress as number | undefined
+
+  if (message) {
+    // Check if this is a compacting notice
+    const isCompacting =
+      message.toLowerCase().includes('compact') ||
+      message.toLowerCase().includes('summariz')
+
+    if (isCompacting) {
+      // Set notice state for the compacting UI (shown inline, no message bubble)
+      store.setNotice(taskId, {
+        message,
+        type: 'compacting',
+        progress,
+      })
+    } else {
+      // Regular notice - add as system message
+      store.addMessage(taskId, createMessage('system', message))
+    }
+  }
+}
+
+/**
+ * Clear notice when compacting is done
+ * Called when we receive end or other events that indicate compacting is complete
+ */
+function clearCompactingNotice(taskId: string): void {
+  const store = useChatStore.getState()
+  const task = store.getTask(taskId)
+  if (task?.notice?.type === 'compacting') {
+    store.setNotice(taskId, null)
   }
 }
 

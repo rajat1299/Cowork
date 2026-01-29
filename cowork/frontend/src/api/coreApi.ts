@@ -599,6 +599,109 @@ export interface CreateSnapshotRequest {
   browser_url?: string
 }
 
+// ============ Memory Types ============
+
+export interface MemoryContextStats {
+  last_updated_at: string | null
+  thread_summary_updated_at?: string | null
+  task_summary_updated_at?: string | null
+  notes_updated_at?: string | null
+  note_count: number
+  pinned_count: number
+}
+
+export type MemoryCategory =
+  | 'work_context'
+  | 'personal_context'
+  | 'top_of_mind'
+  | 'brief_history'
+  | 'earlier_context'
+  | 'long_term_background'
+  | string
+
+export interface MemoryNote {
+  id: number
+  project_id: string
+  task_id?: string
+  category: MemoryCategory
+  content: string
+  pinned: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateMemoryNoteRequest {
+  project_id: string
+  task_id?: string
+  category: MemoryCategory
+  content: string
+  pinned?: boolean
+}
+
+export interface UpdateMemoryNoteRequest {
+  content?: string
+  category?: MemoryCategory
+  pinned?: boolean
+}
+
+export interface TaskSummary {
+  id: number
+  task_id: string
+  summary: string
+  created_at: string
+  updated_at: string
+}
+
+// ============ Memory Endpoints ============
+
+export const memory = {
+  /**
+   * Get context stats for a project
+   * Returns last updated timestamp and note counts
+   */
+  getContextStats: (projectId: string): Promise<MemoryContextStats> =>
+    coreApi.get(`/memory/context-stats?project_id=${projectId}`),
+
+  /**
+   * List memory notes, optionally filtered by category
+   */
+  listNotes: (projectId: string, category?: MemoryCategory): Promise<MemoryNote[]> => {
+    const params = new URLSearchParams({ project_id: projectId })
+    if (category) params.set('category', category)
+    return coreApi.get(`/memory/notes?${params.toString()}`)
+  },
+
+  /**
+   * Create a new memory note
+   */
+  createNote: (data: CreateMemoryNoteRequest): Promise<MemoryNote> =>
+    coreApi.post('/memory/notes', data),
+
+  /**
+   * Update an existing memory note
+   */
+  updateNote: (noteId: number, data: UpdateMemoryNoteRequest): Promise<MemoryNote> =>
+    coreApi.put(`/memory/notes/${noteId}`, data),
+
+  /**
+   * Delete a memory note
+   */
+  deleteNote: (noteId: number): Promise<void> =>
+    coreApi.delete(`/memory/notes/${noteId}`),
+
+  /**
+   * Get task summary
+   */
+  getTaskSummary: (taskId: string): Promise<TaskSummary> =>
+    coreApi.get(`/memory/task-summary?task_id=${taskId}`),
+
+  /**
+   * Update task summary
+   */
+  updateTaskSummary: (taskId: string, summary: string): Promise<TaskSummary> =>
+    coreApi.put('/memory/task-summary', { task_id: taskId, summary }),
+}
+
 // ============ Snapshot Endpoints ============
 
 export const snapshots = {

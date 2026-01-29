@@ -12,8 +12,13 @@ from camel.toolkits.file_toolkit import FileToolkit
 from camel.toolkits.search_toolkit import SearchToolkit
 from camel.toolkits.terminal_toolkit import TerminalToolkit
 
+from app.clients.core_api import search_chat_messages
 from app.runtime.events import StepEvent
-from app.runtime.tool_context import current_agent_name, current_process_task_id
+from app.runtime.tool_context import (
+    current_agent_name,
+    current_auth_token,
+    current_process_task_id,
+)
 from app.runtime.toolkits.camel_listen import auto_listen_toolkit
 
 logger = logging.getLogger(__name__)
@@ -50,6 +55,35 @@ def _run_async_in_sync(coro):
             loop = asyncio.new_event_loop()
             _thread_local.loop = loop
             return loop.run_until_complete(coro)
+
+
+def _coerce_limit(value: int | None, default: int = 5, max_limit: int = 20) -> int:
+    try:
+        limit = int(value) if value is not None else default
+    except (TypeError, ValueError):
+        limit = default
+    return max(1, min(limit, max_limit))
+
+
+async def search_past_chats(
+    query: str,
+    project_id: str | None = None,
+    task_id: str | None = None,
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Search past chat messages for the current user."""
+    auth_token = current_auth_token.get()
+    if not auth_token:
+        return {"results": [], "count": 0, "error": "Missing auth token"}
+    resolved_limit = _coerce_limit(limit)
+    results = await search_chat_messages(
+        auth_token,
+        query,
+        project_id=project_id,
+        task_id=task_id,
+        limit=resolved_limit,
+    )
+    return {"results": results, "count": len(results)}
 
 
 @auto_listen_toolkit(SearchToolkit)
@@ -278,6 +312,7 @@ def _build_toolkit_tools(
 
 
 SUPPORTED_TOOL_NAMES = {
+    "memory_search",
     "search",
     "browser",
     "hybrid_browser",
@@ -326,6 +361,7 @@ TOOL_ALIASES = {
     "file_write_toolkit": "file",
     "file_toolkit": "file",
     "search_toolkit": "search",
+    "search_past_chats": "memory_search",
     "browser_toolkit": "browser",
     "async_browser_toolkit": "browser",
     "hybrid_browser_toolkit": "hybrid_browser",
@@ -394,6 +430,14 @@ def build_agent_tools(
             _safe_extend(tools, toolkit.get_tools())
         except Exception as exc:
             logger.warning("Search toolkit unavailable: %s", exc)
+
+    if "memory_search" in expanded:
+        try:
+            tool = FunctionTool(search_past_chats)
+            wrapped = _wrap_function_tool(tool, event_stream, agent_name, "memory")
+            _safe_extend(tools, [wrapped])
+        except Exception as exc:
+            logger.warning("Memory search toolkit unavailable: %s", exc)
 
     if "browser" in expanded:
         try:

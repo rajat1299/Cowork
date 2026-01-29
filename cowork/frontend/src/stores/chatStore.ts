@@ -9,6 +9,7 @@ import type {
   ArtifactInfo,
   TaskInfo,
   AgentInfo,
+  NoticeData,
 } from '../types/chat'
 import { generateId, createMessage, getStepLabel } from '../types/chat'
 
@@ -95,6 +96,9 @@ interface ChatState {
   setTaskError: (taskId: string, error: string | undefined) => void
   setTaskTokens: (taskId: string, tokens: number) => void
   setContextExceeded: (taskId: string, exceeded: boolean) => void
+
+  // Actions - Notice
+  setNotice: (taskId: string, notice: NoticeData | null) => void
 
   // Actions - Connection State
   setConnecting: (connecting: boolean) => void
@@ -495,6 +499,24 @@ export const useChatStore = create<ChatState>()(
                 ...task,
                 isContextExceeded: exceeded,
                 status: exceeded ? 'paused' : task.status,
+              },
+            },
+          }
+        })
+      },
+
+      // Notice
+      setNotice: (taskId, notice) => {
+        set((state) => {
+          const task = state.tasks[taskId]
+          if (!task) return state
+
+          return {
+            tasks: {
+              ...state.tasks,
+              [taskId]: {
+                ...task,
+                notice,
               },
             },
           }

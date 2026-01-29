@@ -41,6 +41,8 @@ def create_session(
     user=Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    if request.project_id == "GLOBAL_USER_CONTEXT":
+        raise HTTPException(status_code=400, detail="Reserved project id")
     existing = session.exec(
         select(SessionModel).where(
             SessionModel.user_id == user.id,

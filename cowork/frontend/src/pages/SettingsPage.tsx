@@ -43,10 +43,13 @@ const settingsGroups = [
  */
 export default function SettingsPage() {
   const location = useLocation()
-  
-  // If on /settings, show general by default
-  const isRoot = location.pathname === '/settings' || location.pathname === '/settings/'
-  
+
+  // Show GeneralSettings for /settings, /settings/, or /settings/general
+  const isGeneralRoute =
+    location.pathname === '/settings' ||
+    location.pathname === '/settings/' ||
+    location.pathname === '/settings/general'
+
   return (
     <div className="h-full flex">
       {/* Settings nav sidebar */}
@@ -69,7 +72,7 @@ export default function SettingsPage() {
                     cn(
                       'flex items-center gap-2.5 px-3 py-2 rounded-lg',
                       'transition-colors text-[14px]',
-                      (isActive || (isRoot && item.path === 'general'))
+                      (isActive || (isGeneralRoute && item.path === 'general'))
                         ? 'bg-secondary text-foreground'
                         : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
                     )
@@ -86,7 +89,7 @@ export default function SettingsPage() {
 
       {/* Settings content */}
       <div className="flex-1 overflow-y-auto">
-        {isRoot ? <GeneralSettings /> : <Outlet />}
+        {isGeneralRoute ? <GeneralSettings /> : <Outlet />}
       </div>
     </div>
   )

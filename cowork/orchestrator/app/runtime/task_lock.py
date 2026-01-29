@@ -21,6 +21,7 @@ class TaskLock:
     last_task_summary: str = ""
     thread_summary: str = ""
     memory_notes: list[dict[str, object]] = field(default_factory=list)
+    global_memory_notes: list[dict[str, object]] = field(default_factory=list)
     background_tasks: set[asyncio.Task] = field(default_factory=set)
     human_input: dict[str, asyncio.Queue[str]] = field(default_factory=dict)
     workforce: Any | None = None

@@ -130,6 +130,12 @@ export interface ContextTooLongData {
   max_length: number
 }
 
+export interface NoticeData {
+  message: string
+  type?: 'compacting' | 'info' | 'warning'
+  progress?: number
+}
+
 // ============ Chat/Message Types ============
 
 export type MessageRole = 'user' | 'assistant' | 'system'
@@ -199,6 +205,8 @@ export interface ChatTask {
   // Error state
   error?: string
   isContextExceeded?: boolean
+  // Notice state (for compacting, etc.)
+  notice?: NoticeData | null
 }
 
 export interface ProgressStep {

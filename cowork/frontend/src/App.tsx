@@ -24,7 +24,7 @@ function App() {
     }
 
     initAuth()
-  }, [])
+  }, [checkAuth, checkOAuthCallback])
 
   return (
     <>

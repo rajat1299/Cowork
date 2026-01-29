@@ -1,5 +1,6 @@
 export { ChatContainer } from './ChatContainer'
 export { ChatInput } from './ChatInput'
 export { ChatMessage } from './ChatMessage'
+export { CompactingNotice } from './CompactingNotice'
 export { TypingIndicator } from './TypingIndicator'
 export { WelcomeScreen } from './WelcomeScreen'

@@ -17,6 +17,7 @@ _chat_limiter = SlidingWindowLimiter(
     window_seconds=60,
 )
 _chat_rate_limit = rate_limit(_chat_limiter, ip_key("chat"))
+GLOBAL_USER_CONTEXT = "GLOBAL_USER_CONTEXT"
 
 
 class ChatRequest(BaseModel):
@@ -46,6 +47,8 @@ async def start_chat(
     request: ChatRequest,
     authorization: str | None = Header(None),
 ):
+    if request.project_id == GLOBAL_USER_CONTEXT:
+        raise HTTPException(status_code=400, detail="Reserved project id")
     async def event_stream():
         task_lock = get_or_create(request.project_id)
         await task_lock.put(
@@ -89,6 +92,8 @@ async def improve_chat(
     request: ImproveRequest,
     authorization: str | None = Header(None),
 ):
+    if project_id == GLOBAL_USER_CONTEXT:
+        raise HTTPException(status_code=400, detail="Reserved project id")
     task_lock = get(project_id)
     if not task_lock:
         task_lock = get_or_create(project_id)
