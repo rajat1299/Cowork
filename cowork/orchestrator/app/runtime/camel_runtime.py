@@ -4,10 +4,12 @@ import asyncio
 import json
 import logging
 import os
+import platform
 import re
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
 
@@ -83,10 +85,8 @@ GLOBAL_USER_CONTEXT = "GLOBAL_USER_CONTEXT"
 GLOBAL_MEMORY_CATEGORIES = {
     "work_context",
     "personal_context",
-    "top_of_mind",
-    "brief_history",
-    "earlier_context",
-    "long_term_background",
+    "tech_stack",
+    "preferences",
 }
 
 
@@ -344,19 +344,25 @@ async def _generate_global_memory_notes(
         content = entry.get("content") or ""
         history_lines.append(f"{role}: {content}")
     history_text = "\n".join(history_lines)
-    prompt = f"""You update global user memory.
+    prompt = f"""You are the Memory Manager. Your goal is to update the `GLOBAL_USER_CONTEXT` based on the conversation that just finished.
 
-Existing memory notes:
+<existing_memory>
 {existing_text}
+</existing_memory>
 
-Conversation:
+<conversation_log>
 {history_text}
+</conversation_log>
 
-Extract only NEW, durable user facts (preferences, role, background, working style).
-Ignore task-specific details, transient requests, and project-only info.
-Allowed categories: work_context, personal_context, top_of_mind, brief_history, earlier_context, long_term_background.
-Return ONLY a JSON array of objects with keys: category, content.
-If there is nothing new, return [].
+<instructions>
+1. **Filter**: Look ONLY for stable user preferences, facts, or technical constraints.
+   - Examples: "User prefers TypeScript", "User works in CST timezone", "User hates unit tests".
+2. **Ignore**: Transient task details ("Fix bug in line 50"), pleasantries, or one-off searches.
+3. **Deduplicate**: If a fact already exists in `<existing_memory>`, DO NOT output it.
+4. **Format**: Return a JSON array of objects: `[{{"category": "work_context", "content": "..."}}]`.
+   - Categories: `work_context`, `personal_context`, `tech_stack`, `preferences`.
+5. If no NEW long-term facts are found, return an empty array `[]`.
+</instructions>
 """
     response_text, _ = await collect_chat_completion(
         provider,
@@ -473,6 +479,31 @@ def _restore_env(previous: dict[str, str | None]) -> None:
             os.environ[key] = value
 
 
+def _build_global_base_context(working_directory: str, project_name: str) -> str:
+    os_info = f"{platform.system()} {platform.release()} ({platform.machine()})"
+    current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return f"""<operating_environment>
+- **System**: {os_info}
+- **Working Directory**: `{working_directory}`.
+  - ALL file operations must happen inside this directory.
+  - Use absolute paths for precision.
+- **Date**: {current_date}
+</operating_environment>
+
+<memory_protocol>
+- **User Context**: You have access to `GLOBAL_USER_CONTEXT`. Respect the user's stated preferences (tech stack, tone, workflow) found there.
+- **Project Context**: You are working within project `{project_name}`.
+</memory_protocol>
+
+<execution_philosophy>
+- **Bias for Action**: Do not just suggest code; write it. Do not just suggest a search; perform it.
+- **Artifacts over Chat**: Whenever possible, produce tangible outputs (files, code, reports) rather than just long chat messages.
+- **Tool Discipline**: Never guess tool parameters. If a path or ID is missing, verify it first using `ls` or `search`.
+</execution_philosophy>
+
+"""
+
+
 def _env_flag(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -498,9 +529,10 @@ def _agent_profile_from_spec(spec: AgentSpec) -> AgentProfile:
     system_prompt = (spec.system_prompt or "").strip()
     if not system_prompt:
         if description:
-            system_prompt = f"You are {description}"
+            system_prompt = f"You are {description}."
         else:
             system_prompt = f"You are {name}."
+        system_prompt = f"{system_prompt} Use tools when needed. Be concise and actionable."
     if not description:
         description = f"{name} agent"
     return AgentProfile(
@@ -619,7 +651,7 @@ def _resolve_model_url(provider: ProviderConfig) -> str | None:
 async def _is_complex_task(provider: ProviderConfig, question: str, context: str) -> tuple[bool, int]:
     prompt = build_complexity_prompt(question, context)
     messages = [
-        {"role": "system", "content": "You are a classifier. Reply only yes or no."},
+        {"role": "system", "content": "You are a classifier. Reply only \"yes\" or \"no\"."},
         {"role": "user", "content": prompt},
     ]
     text, usage = await collect_chat_completion(provider, messages, temperature=0.0)
@@ -993,7 +1025,7 @@ async def _run_camel_complex(
         decompose_usage: dict | None = None
         decompose_prompt = build_decomposition_prompt(action.question, context)
         decompose_messages = [
-            {"role": "system", "content": "You are a task planner."},
+            {"role": "system", "content": "You are a task planner. Return only valid JSON."},
             {"role": "user", "content": decompose_prompt},
         ]
         try:
@@ -1078,13 +1110,13 @@ async def _run_camel_complex(
 
         coordinator_agent = _build_agent(
             provider,
-            "You are a coordinating agent that helps route work to specialists.",
+            "You are a coordinating agent that routes work to specialists. Keep decisions concise.",
             str(uuid.uuid4()),
         )
         coordinator_agent.agent_name = "coordinator_agent"
         task_agent = _build_agent(
             provider,
-            "You are a task planning agent that decomposes complex work.",
+            "You are a task planning agent that decomposes complex work into clear, self-contained tasks.",
             str(uuid.uuid4()),
             stream=True,
         )
@@ -1103,6 +1135,7 @@ async def _run_camel_complex(
         agent_specs = _merge_agent_specs(build_default_agents(), action.agents)
         if memory_search_enabled:
             _ensure_tool(agent_specs, "memory_search")
+        global_base_context = _build_global_base_context(str(workdir), action.project_id)
         for spec in agent_specs:
             tools = build_agent_tools(
                 spec.tools or [],
@@ -1111,7 +1144,8 @@ async def _run_camel_complex(
                 str(workdir),
                 mcp_tools=mcp_tools,
             )
-            agent = _build_agent(provider, spec.system_prompt, spec.agent_id, tools=tools)
+            full_system_prompt = global_base_context + spec.system_prompt
+            agent = _build_agent(provider, full_system_prompt, spec.agent_id, tools=tools)
             agent.agent_name = spec.name
             workforce.add_single_agent_worker(spec.description, agent, spec.tools)
 
@@ -1347,7 +1381,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 try:
                     prompt = (
                         f"{context}User Query: {action.question}\n\n"
-                        "Provide a direct, helpful answer to this simple question."
+                        "Provide a direct, helpful answer to this simple question. Do not call tools."
                     )
                     messages = [{"role": "user", "content": prompt}]
                     async for chunk, usage_update in stream_chat(provider, messages):
