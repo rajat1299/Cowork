@@ -20,6 +20,21 @@ class ProviderConfig(BaseModel):
     is_valid: bool | None = None
 
 
+class ProviderFeatureFlags(BaseModel):
+    id: int
+    user_id: int
+    provider_id: int
+    model: str
+    native_web_search_enabled: bool = False
+    image_generation_enabled: bool = False
+    audio_enabled: bool = False
+    tool_use_enabled: bool = False
+    browser_enabled: bool = False
+    extra_params_json: dict | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ChatMessage(BaseModel):
     id: int
     user_id: int
@@ -103,6 +118,30 @@ async def fetch_provider(
         filtered = providers
     preferred = [item for item in filtered if item.prefer]
     return (preferred or filtered or [None])[0]
+
+
+async def fetch_provider_features(
+    auth_header: str | None,
+    provider_id: int | None,
+    model: str | None,
+) -> ProviderFeatureFlags | None:
+    if not auth_header or provider_id is None or not model:
+        return None
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return None
+    headers = _build_headers(auth_header)
+    params = {"provider_id": provider_id, "model": model}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{base_url}/provider-features", headers=headers, params=params)
+            resp.raise_for_status()
+            payload = resp.json()
+            if not payload:
+                return None
+            return ProviderFeatureFlags(**payload[0])
+    except httpx.HTTPError:
+        return None
 
 
 async def create_history(auth_header: str | None, payload: dict[str, Any]) -> dict[str, Any] | None:

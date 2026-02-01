@@ -128,6 +128,10 @@ function mergeSessions(local: SessionItem[], remote: SessionItem[]): SessionItem
   )
 }
 
+// ============ Request Deduplication ============
+
+let fetchSessionsPromise: Promise<void> | null = null
+
 // ============ Store Implementation ============
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -138,52 +142,61 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   page: 1,
 
   fetchSessions: async () => {
+    // Deduplicate concurrent requests
+    if (fetchSessionsPromise) {
+      return fetchSessionsPromise
+    }
+
     set({ isLoading: true, error: null })
 
-    try {
-      // Get local sessions first
-      const localSessions = getLocalSessions()
-
-      // Try to fetch from backend (silently fail if not available)
-      let remoteSessions: SessionItem[] = []
+    fetchSessionsPromise = (async () => {
       try {
-        // Try grouped endpoint first for better UX
-        const groupedResponse = await history.listGrouped(false)
-        if (groupedResponse.projects) {
-          remoteSessions = groupedResponse.projects.map(projectGroupToSession)
-        }
-      } catch {
-        // Fall back to flat list
+        // Get local sessions first
+        const localSessions = getLocalSessions()
+
+        // Try to fetch from backend (silently fail if not available)
+        let remoteSessions: SessionItem[] = []
         try {
-          const listResponse = await history.list(20, 0)
-          if (Array.isArray(listResponse)) {
-            remoteSessions = listResponse.map(historyTaskToSession)
+          // Try grouped endpoint first for better UX
+          const groupedResponse = await history.listGrouped(false)
+          if (groupedResponse.projects) {
+            remoteSessions = groupedResponse.projects.map(projectGroupToSession)
           }
         } catch {
-          // Backend not available - silently use local only
-          // This is expected when history endpoints aren't implemented yet
+          // Fall back to flat list
+          try {
+            const listResponse = await history.list(20, 0)
+            if (Array.isArray(listResponse)) {
+              remoteSessions = listResponse.map(historyTaskToSession)
+            }
+          } catch {
+            // Backend not available - silently use local only
+          }
         }
+
+        // Merge local and remote
+        const mergedSessions = mergeSessions(localSessions, remoteSessions)
+
+        set({
+          sessions: mergedSessions,
+          isLoading: false,
+          hasMore: remoteSessions.length >= 20,
+          page: 1,
+        })
+      } catch (error) {
+        console.error('Failed to fetch sessions:', error)
+        const localSessions = getLocalSessions()
+        set({
+          sessions: localSessions,
+          isLoading: false,
+          error: error instanceof Error ? error.message : 'Failed to load sessions',
+        })
+      } finally {
+        fetchSessionsPromise = null
       }
+    })()
 
-      // Merge local and remote
-      const mergedSessions = mergeSessions(localSessions, remoteSessions)
-
-      set({
-        sessions: mergedSessions,
-        isLoading: false,
-        hasMore: remoteSessions.length >= 20,
-        page: 1,
-      })
-    } catch (error) {
-      console.error('Failed to fetch sessions:', error)
-      // Still show local sessions on error
-      const localSessions = getLocalSessions()
-      set({
-        sessions: localSessions,
-        isLoading: false,
-        error: error instanceof Error ? error.message : 'Failed to load sessions',
-      })
-    }
+    return fetchSessionsPromise
   },
 
   fetchMoreSessions: async () => {

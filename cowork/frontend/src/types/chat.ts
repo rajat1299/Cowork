@@ -151,6 +151,8 @@ export interface Message {
   toolName?: string
   // For artifacts
   artifacts?: ArtifactInfo[]
+  // For attachments
+  attachments?: AttachmentInfo[]
 }
 
 export interface ArtifactInfo {
@@ -159,6 +161,17 @@ export interface ArtifactInfo {
   name: string
   contentUrl?: string
   action?: 'created' | 'viewed' | 'modified'
+}
+
+export interface AttachmentInfo {
+  id: string
+  name: string
+  size: number
+  contentType?: string
+  url?: string
+  path?: string
+  kind?: 'image' | 'file'
+  previewUrl?: string
 }
 
 // ============ Task Types ============
@@ -219,6 +232,12 @@ export interface ProgressStep {
 
 // ============ Chat Request Types ============
 
+/** Agent configuration for custom tool selection */
+export interface AgentConfig {
+  name: string
+  tools: string[]
+}
+
 export interface StartChatRequest {
   project_id: string
   task_id: string
@@ -229,13 +248,29 @@ export interface StartChatRequest {
   api_key?: string
   api_url?: string
   // Context
-  attaches?: string[]
+  attachments?: AttachmentPayload[]
   language?: string
+  // Features
+  search_enabled?: boolean
+  agents?: AgentConfig[]
 }
 
 export interface ImproveChatRequest {
   question: string
   task_id?: string
+  // Features (same as StartChatRequest)
+  search_enabled?: boolean
+  attachments?: AttachmentPayload[]
+  agents?: AgentConfig[]
+}
+
+export interface AttachmentPayload {
+  id?: string
+  name: string
+  path: string
+  content_type?: string
+  size?: number
+  url?: string
 }
 
 // ============ Utility Functions ============

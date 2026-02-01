@@ -10,7 +10,7 @@
  * - Toolkit events use agent_name (not agent_id), so we correlate by name
  */
 
-import { useMemo, useRef, useCallback } from 'react'
+import { useMemo, useRef, useCallback, useEffect } from 'react'
 import { useChatStore } from '@/stores/chatStore'
 import type { AgentInfo, TaskInfo, TaskStatus } from '@/types/chat'
 import type { 
@@ -28,7 +28,8 @@ import { generateId } from '@/types/chat'
  * Hook to get workflow state from the active task
  */
 export function useWorkflow() {
-  const task = useChatStore((s) => s.getActiveTask())
+  // Use a stable selector instead of calling getActiveTask() which creates new references
+  const task = useChatStore((s) => s.activeTaskId ? s.tasks[s.activeTaskId] : undefined)
   
   // Track toolkit activities keyed by agent_name (since that's what events provide)
   const toolkitActivitiesByNameRef = useRef<Map<string, ToolkitActivity[]>>(new Map())
@@ -36,8 +37,8 @@ export function useWorkflow() {
   // Track agent_name -> agent_id mapping for correlation
   const agentNameToIdRef = useRef<Map<string, string>>(new Map())
   
-  // Build agent name->id mapping from current agents
-  useMemo(() => {
+  // Build agent name->id mapping from current agents (useEffect for side effects)
+  useEffect(() => {
     if (!task?.activeAgents) return
     task.activeAgents.forEach((agent) => {
       agentNameToIdRef.current.set(agent.name, agent.id)

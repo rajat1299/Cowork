@@ -10,6 +10,7 @@ import type {
   TaskInfo,
   AgentInfo,
   NoticeData,
+  AttachmentInfo,
 } from '../types/chat'
 import { generateId, createMessage, getStepLabel } from '../types/chat'
 
@@ -63,7 +64,12 @@ interface ChatState {
   isConnecting: boolean
 
   // Actions - Task Management
-  createTask: (projectId: string, question: string) => string
+  createTask: (
+    projectId: string,
+    question: string,
+    attachments?: AttachmentInfo[],
+    taskIdOverride?: string
+  ) => string
   removeTask: (taskId: string) => void
   setActiveTask: (taskId: string | null) => void
   resetActiveChat: () => void
@@ -115,11 +121,16 @@ interface ChatState {
 
 // ============ Initial Task State ============
 
-function createInitialTask(projectId: string, taskId: string, question: string): ChatTask {
+function createInitialTask(
+  projectId: string,
+  taskId: string,
+  question: string,
+  attachments?: AttachmentInfo[]
+): ChatTask {
   return {
     id: taskId,
     projectId,
-    messages: [createMessage('user', question)],
+    messages: [createMessage('user', question, { attachments })],
     status: 'pending',
     subtasks: [],
     streamingDecomposeText: '',
@@ -143,9 +154,9 @@ export const useChatStore = create<ChatState>()(
       isConnecting: false,
 
       // Task Management
-      createTask: (projectId, question) => {
-        const taskId = generateId()
-        const task = createInitialTask(projectId, taskId, question)
+      createTask: (projectId, question, attachments, taskIdOverride) => {
+        const taskId = taskIdOverride || generateId()
+        const task = createInitialTask(projectId, taskId, question, attachments)
 
         set((state) => ({
           activeProjectId: projectId,

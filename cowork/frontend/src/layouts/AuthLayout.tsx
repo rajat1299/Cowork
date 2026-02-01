@@ -10,7 +10,9 @@ interface AuthLayoutProps {
  * Redirects to home if already authenticated
  */
 export function AuthLayout({ children }: AuthLayoutProps) {
-  const { isAuthenticated, isLoading } = useAuthStore()
+  // Use individual selectors to avoid re-renders on unrelated state changes
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const isLoading = useAuthStore((s) => s.isLoading)
 
   // Show loading while checking auth
   if (isLoading) {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useAuthStore } from '../stores/authStore'
 import { auth, ApiError } from '../api'
 
@@ -6,9 +6,12 @@ export function useAuth() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const { login: setAuthState, logout: clearAuthState, isAuthenticated, user } = useAuthStore()
+  const setAuthState = useAuthStore((s) => s.login)
+  const clearAuthState = useAuthStore((s) => s.logout)
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const user = useAuthStore((s) => s.user)
 
-  const login = async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     setIsLoading(true)
     setError(null)
 
@@ -29,16 +32,20 @@ export function useAuth() {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [setAuthState])
 
-  const register = async (email: string, password: string) => {
+  const register = useCallback(async (email: string, password: string) => {
     setIsLoading(true)
     setError(null)
 
     try {
       await auth.register({ email, password })
       // Auto-login after registration
-      return await login(email, password)
+      const tokens = await auth.login({ email, password })
+      useAuthStore.getState().setTokens(tokens.access_token, tokens.refresh_token)
+      const userData = await auth.me()
+      setAuthState(tokens.access_token, tokens.refresh_token, userData)
+      return true
     } catch (err) {
       if (err instanceof ApiError) {
         const data = err.data as { detail?: string }
@@ -50,13 +57,13 @@ export function useAuth() {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [setAuthState])
 
-  const logout = () => {
+  const logout = useCallback(() => {
     clearAuthState()
-  }
+  }, [clearAuthState])
 
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
     const { accessToken, setLoading } = useAuthStore.getState()
 
     if (!accessToken) {
@@ -73,7 +80,7 @@ export function useAuth() {
       clearAuthState()
       return false
     }
-  }
+  }, [clearAuthState])
 
   return {
     login,

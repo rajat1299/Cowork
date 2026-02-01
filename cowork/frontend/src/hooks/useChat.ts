@@ -3,7 +3,24 @@ import { useChatStore } from '../stores/chatStore'
 import { startSSEConnection, stopSSEConnection, sendImproveMessage } from '../lib/sse'
 import { generateId, createMessage } from '../types/chat'
 import { history, chatMessages } from '../api/coreApi'
-import type { ChatTask, Message, ProgressStep, ArtifactInfo } from '../types/chat'
+import { files as orchestratorFiles } from '../api/orchestrator'
+import { ORCHESTRATOR_URL } from '../api/client'
+import type {
+  ChatTask,
+  Message,
+  ProgressStep,
+  ArtifactInfo,
+  AgentConfig,
+  AttachmentInfo,
+  AttachmentPayload,
+} from '../types/chat'
+
+/** Options for sending a chat message */
+export interface ChatMessageOptions {
+  searchEnabled?: boolean
+  agents?: AgentConfig[]
+  files?: File[]
+}
 
 interface UseChatReturn {
   // State
@@ -17,8 +34,8 @@ interface UseChatReturn {
   error: string | undefined
 
   // Actions
-  sendMessage: (message: string, projectId?: string) => Promise<void>
-  sendFollowUp: (message: string) => Promise<void>
+  sendMessage: (message: string, options?: ChatMessageOptions & { projectId?: string }) => Promise<void>
+  sendFollowUp: (message: string, options?: ChatMessageOptions) => Promise<void>
   stopTask: () => void
   clearChat: () => void
   resetActiveChat: () => void
@@ -34,20 +51,19 @@ interface UseChatReturn {
  * Provides access to chat state and actions
  */
 export function useChat(): UseChatReturn {
-  const store = useChatStore()
+  // Use individual selectors to avoid re-renders on unrelated state changes
+  const activeTaskId = useChatStore((s) => s.activeTaskId)
+  const activeProjectId = useChatStore((s) => s.activeProjectId)
+  const tasks = useChatStore((s) => s.tasks)
+  const isConnecting = useChatStore((s) => s.isConnecting)
 
-  const {
-    activeTaskId,
-    activeProjectId,
-    tasks,
-    isConnecting,
-    createTask,
-    setActiveTask,
-    resetActiveChat,
-    addMessage,
-    stopTask: stopTaskAction,
-    clearTasks,
-  } = store
+  // Get stable action references (these don't change)
+  const createTask = useChatStore((s) => s.createTask)
+  const setActiveTask = useChatStore((s) => s.setActiveTask)
+  const resetActiveChat = useChatStore((s) => s.resetActiveChat)
+  const addMessage = useChatStore((s) => s.addMessage)
+  const stopTaskAction = useChatStore((s) => s.stopTask)
+  const clearTasks = useChatStore((s) => s.clearTasks)
 
   // Derived state
   const activeTask = useMemo(() => {
@@ -78,6 +94,42 @@ export function useChat(): UseChatReturn {
     return activeTask?.error
   }, [activeTask])
 
+  const uploadChatFiles = useCallback(
+    async (projectId: string, taskId: string, files: File[]): Promise<{
+      attachments: AttachmentInfo[]
+      payloads: AttachmentPayload[]
+    }> => {
+      if (files.length === 0) {
+        return { attachments: [], payloads: [] }
+      }
+      const formData = new FormData()
+      formData.append('project_id', projectId)
+      formData.append('task_id', taskId)
+      files.forEach((file) => formData.append('files', file))
+
+      const response = await orchestratorFiles.upload(formData)
+      const attachments: AttachmentInfo[] = response.files.map((file) => ({
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        contentType: file.content_type,
+        url: `${ORCHESTRATOR_URL}${file.url}`,
+        path: file.path,
+        kind: file.content_type?.startsWith('image/') ? 'image' : 'file',
+      }))
+      const payloads: AttachmentPayload[] = response.files.map((file) => ({
+        id: file.id,
+        name: file.name,
+        path: file.path,
+        content_type: file.content_type,
+        size: file.size,
+        url: file.url,
+      }))
+      return { attachments, payloads }
+    },
+    []
+  )
+
   // Create a new chat/task
   const createNewChat = useCallback(
     (projectId?: string, question?: string): string => {
@@ -90,15 +142,28 @@ export function useChat(): UseChatReturn {
 
   // Send a new message (starts SSE connection)
   const sendMessage = useCallback(
-    async (message: string, projectId?: string): Promise<void> => {
-      const pid = projectId || activeProjectId || generateId()
-      const taskId = createTask(pid, message)
+    async (message: string, options?: ChatMessageOptions & { projectId?: string }): Promise<void> => {
+      const pid = options?.projectId || activeProjectId || generateId()
+      const taskId = generateId()
+      let attachments: AttachmentInfo[] = []
+      let attachmentPayloads: AttachmentPayload[] = []
+
+      if (options?.files?.length) {
+        const uploadResult = await uploadChatFiles(pid, taskId, options.files)
+        attachments = uploadResult.attachments
+        attachmentPayloads = uploadResult.payloads
+      }
+
+      createTask(pid, message, attachments, taskId)
 
       try {
         await startSSEConnection({
           projectId: pid,
           taskId,
           question: message,
+          searchEnabled: options?.searchEnabled,
+          agents: options?.agents,
+          attachments: attachmentPayloads,
           onError: (err) => {
             console.error('[useChat] SSE error:', err)
           },
@@ -108,16 +173,24 @@ export function useChat(): UseChatReturn {
         throw err
       }
     },
-    [activeProjectId, createTask]
+    [activeProjectId, createTask, uploadChatFiles]
   )
 
   // Send a follow-up message to existing conversation
   const sendFollowUp = useCallback(
-    async (message: string): Promise<void> => {
+    async (message: string, options?: ChatMessageOptions): Promise<void> => {
       if (!activeProjectId || !activeTaskId) {
         // No active conversation, start a new one
-        await sendMessage(message)
+        await sendMessage(message, options)
         return
+      }
+
+      let attachments: AttachmentInfo[] = []
+      let attachmentPayloads: AttachmentPayload[] = []
+      if (options?.files?.length) {
+        const uploadResult = await uploadChatFiles(activeProjectId, activeTaskId, options.files)
+        attachments = uploadResult.attachments
+        attachmentPayloads = uploadResult.payloads
       }
 
       // Add user message to current task
@@ -126,16 +199,20 @@ export function useChat(): UseChatReturn {
         role: 'user',
         content: message,
         timestamp: Date.now(),
+        attachments,
       })
 
       try {
-        await sendImproveMessage(activeProjectId, message, activeTaskId)
+        await sendImproveMessage(activeProjectId, message, activeTaskId, {
+          ...options,
+          attachments: attachmentPayloads,
+        })
       } catch (err) {
         console.error('[useChat] Failed to send follow-up:', err)
         throw err
       }
     },
-    [activeProjectId, activeTaskId, addMessage, sendMessage]
+    [activeProjectId, activeTaskId, addMessage, sendMessage, uploadChatFiles]
   )
 
   // Stop the current task
@@ -170,6 +247,29 @@ export function useChat(): UseChatReturn {
       let messages: Message[] = []
       try {
         const chatMsgs = await chatMessages.listByProject(historyTask.project_id)
+
+        const mapAttachments = (metadata: Record<string, unknown> | null | undefined) => {
+          const raw = metadata?.attachments
+          if (!Array.isArray(raw)) return undefined
+          const mapped = raw
+            .filter((item) => item && typeof item === 'object')
+            .map((item) => {
+              const data = item as Record<string, unknown>
+              const contentType = (data.content_type || data.contentType) as string | undefined
+              const url = typeof data.url === 'string' ? data.url : undefined
+              return {
+                id: String(data.id || generateId()),
+                name: String(data.name || 'attachment'),
+                size: typeof data.size === 'number' ? data.size : 0,
+                contentType,
+                url: url ? `${ORCHESTRATOR_URL}${url}` : undefined,
+                path: typeof data.path === 'string' ? data.path : undefined,
+                kind: contentType?.startsWith('image/') ? 'image' : 'file',
+              } as AttachmentInfo
+            })
+          return mapped.length > 0 ? mapped : undefined
+        }
+
         // Convert backend messages to frontend Message format
         messages = chatMsgs.map((msg) => ({
           id: String(msg.id),
@@ -177,6 +277,7 @@ export function useChat(): UseChatReturn {
           content: msg.content,
           timestamp: new Date(msg.created_at).getTime(),
           agentName: msg.metadata?.agent_name as string | undefined,
+          attachments: mapAttachments(msg.metadata),
         }))
       } catch (msgError) {
         console.warn('Failed to fetch chat messages, falling back to summary:', msgError)

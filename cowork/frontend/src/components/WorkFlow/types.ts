@@ -98,7 +98,7 @@ export interface AgentCardProps {
   agent: WorkflowAgent
   isActive: boolean
   isMuted: boolean
-  onSelect?: () => void
+  onSelect?: (agentId: string) => void
   className?: string
 }
 

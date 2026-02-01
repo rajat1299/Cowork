@@ -6,6 +6,7 @@ import { WelcomeScreen } from './WelcomeScreen'
 import { CompactingNotice } from './CompactingNotice'
 import { WorkFlowPanel } from '../WorkFlow'
 import { useChat, useWorkflow } from '../../hooks'
+import type { ChatMessageOptions } from '../../hooks/useChat'
 import { useChatStore } from '../../stores/chatStore'
 import { StopCircle } from 'lucide-react'
 import { cn } from '../../lib/utils'
@@ -30,11 +31,11 @@ export function ChatContainer() {
     status: workflowStatus,
   } = useWorkflow()
 
-  // Get notice from active task
-  const activeTaskId = useChatStore((s) => s.activeTaskId)
-  const activeTaskNotice = useChatStore((s) =>
-    activeTaskId ? s.tasks[activeTaskId]?.notice : null
-  )
+  // Get notice from active task - use stable selector to avoid re-renders
+  const activeTaskNotice = useChatStore((s) => {
+    const taskId = s.activeTaskId
+    return taskId ? s.tasks[taskId]?.notice ?? null : null
+  })
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -45,14 +46,14 @@ export function ChatContainer() {
 
   // Handle sending messages
   const handleSend = useCallback(
-    async (content: string) => {
+    async (content: string, options?: ChatMessageOptions) => {
       try {
         if (messages.length === 0) {
           // Start new conversation
-          await sendMessage(content)
+          await sendMessage(content, options)
         } else {
           // Send follow-up
-          await sendFollowUp(content)
+          await sendFollowUp(content, options)
         }
       } catch (err) {
         console.error('Failed to send message:', err)

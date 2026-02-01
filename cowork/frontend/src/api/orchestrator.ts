@@ -17,6 +17,20 @@ export interface ImproveRequest {
   question: string
 }
 
+export interface UploadedFileInfo {
+  id: string
+  name: string
+  content_type?: string
+  size: number
+  path: string
+  relative_path: string
+  url: string
+}
+
+export interface UploadResponse {
+  files: UploadedFileInfo[]
+}
+
 export interface SSEEvent {
   task_id: string
   step: string
@@ -60,6 +74,11 @@ export const chat = {
    */
   stop: (projectId: string): Promise<void> =>
     orchestratorApi.delete(`/chat/${projectId}`),
+}
+
+export const files = {
+  upload: (formData: FormData): Promise<UploadResponse> =>
+    orchestratorApi.upload('/files/upload', formData),
 }
 
 // ============ SSE Connection ============

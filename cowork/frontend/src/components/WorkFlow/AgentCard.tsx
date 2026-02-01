@@ -11,7 +11,7 @@
  * - Minimal, purposeful UI
  */
 
-import { useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 import { Terminal, Globe, FileText, Image, Bot } from 'lucide-react'
 import type { AgentCardProps } from './types'
@@ -39,6 +39,11 @@ export function AgentCard({
   const progress = useMemo(() => getAgentProgress(agent), [agent.tasks])
   const displayName = getAgentDisplayName(agent.type)
 
+  // Memoized click handler to avoid inline function
+  const handleClick = useCallback(() => {
+    onSelect?.(agent.id)
+  }, [onSelect, agent.id])
+
   // Count tasks by status
   const taskCounts = useMemo(() => {
     let running = 0, completed = 0, waiting = 0, failed = 0
@@ -59,7 +64,7 @@ export function AgentCard({
 
   return (
     <button
-      onClick={onSelect}
+      onClick={handleClick}
       className={cn(
         // Base card with gradient bg
         'workflow-card relative min-w-[280px] max-w-[320px] text-left',

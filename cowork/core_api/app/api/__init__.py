@@ -11,7 +11,9 @@ from app.api.messages import router as messages_router
 from app.api.memory import router as memory_router
 from app.api.model import router as model_router
 from app.api.oauth import router as oauth_router
+from app.api.provider_features import router as provider_features_router
 from app.api.providers import router as providers_router
+from app.api.search import router as search_router
 from app.api.share import router as share_router
 from app.api.snapshots import router as snapshots_router
 from app.api.sessions import router as sessions_router
@@ -29,7 +31,9 @@ router.include_router(messages_router)
 router.include_router(memory_router)
 router.include_router(model_router)
 router.include_router(oauth_router)
+router.include_router(provider_features_router)
 router.include_router(providers_router)
+router.include_router(search_router)
 router.include_router(share_router)
 router.include_router(snapshots_router)
 router.include_router(sessions_router)

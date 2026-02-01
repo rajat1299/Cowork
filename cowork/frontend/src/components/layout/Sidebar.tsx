@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, memo, useCallback } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import {
   Plus,
@@ -30,8 +30,12 @@ const tabs = [
 
 export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const navigate = useNavigate()
-  const { user, logout } = useAuthStore()
-  const { sessions, isLoading, fetchSessions } = useSessionStore()
+  // Use individual selectors to avoid unnecessary re-renders
+  const user = useAuthStore((s) => s.user)
+  const logout = useAuthStore((s) => s.logout)
+  const sessions = useSessionStore((s) => s.sessions)
+  const isLoading = useSessionStore((s) => s.isLoading)
+  const fetchSessions = useSessionStore((s) => s.fetchSessions)
   const { switchTask, activeTask, resetActiveChat } = useChat()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [activeTab, setActiveTab] = useState('cowork')
@@ -55,7 +59,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
     navigate('/')
   }
 
-  const handleSessionClick = async (sessionId: string) => {
+  const handleSessionClick = useCallback(async (sessionId: string) => {
     setLoadingSessionId(sessionId)
     try {
       await switchTask(sessionId)
@@ -63,7 +67,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
     } finally {
       setLoadingSessionId(null)
     }
-  }
+  }, [switchTask, navigate])
 
   const userInitial = user?.email?.charAt(0).toUpperCase() || 'U'
   const userName = user?.email?.split('@')[0] || 'User'
@@ -269,7 +273,7 @@ interface SessionItemProps {
   onClick: () => void
 }
 
-function SessionItem({ session, isActive, isLoading, onClick }: SessionItemProps) {
+const SessionItem = memo(function SessionItem({ session, isActive, isLoading, onClick }: SessionItemProps) {
   return (
     <button
       onClick={onClick}
@@ -307,4 +311,4 @@ function SessionItem({ session, isActive, isLoading, onClick }: SessionItemProps
       </div>
     </button>
   )
-}
+})

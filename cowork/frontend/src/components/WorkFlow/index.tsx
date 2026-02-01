@@ -114,7 +114,7 @@ export function WorkFlow({
                   agent={agent}
                   isActive={agent.id === activeAgentId}
                   isMuted={agent.status === 'done' && agent.id !== activeAgentId}
-                  onSelect={() => onAgentSelect?.(agent.id)}
+                  onSelect={onAgentSelect}
                 />
               </div>
             ))}

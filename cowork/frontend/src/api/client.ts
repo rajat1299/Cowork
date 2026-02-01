@@ -108,6 +108,45 @@ export async function apiRequest<T>(
   return JSON.parse(text)
 }
 
+export async function uploadRequest<T>(
+  baseUrl: string,
+  endpoint: string,
+  formData: FormData,
+  auth: boolean = true
+): Promise<T> {
+  const { accessToken } = useAuthStore.getState()
+  const requestHeaders: Record<string, string> = {}
+
+  if (auth && accessToken) {
+    requestHeaders['Authorization'] = `Bearer ${accessToken}`
+  }
+
+  let response = await fetch(`${baseUrl}${endpoint}`, {
+    method: 'POST',
+    headers: requestHeaders,
+    body: formData,
+  })
+
+  if (response.status === 401 && auth) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      requestHeaders['Authorization'] = `Bearer ${newToken}`
+      response = await fetch(`${baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers: requestHeaders,
+        body: formData,
+      })
+    }
+  }
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null)
+    throw new ApiError(response.status, response.statusText, data)
+  }
+
+  return response.json()
+}
+
 // Convenience methods for Core API
 export const coreApi = {
   get: <T>(endpoint: string, auth = true) =>
@@ -130,6 +169,9 @@ export const orchestratorApi = {
 
   post: <T>(endpoint: string, body?: unknown, auth = true) =>
     apiRequest<T>(ORCHESTRATOR_URL, endpoint, { method: 'POST', body, auth }),
+
+  upload: <T>(endpoint: string, formData: FormData, auth = true) =>
+    uploadRequest<T>(ORCHESTRATOR_URL, endpoint, formData, auth),
 
   delete: <T>(endpoint: string, auth = true) =>
     apiRequest<T>(ORCHESTRATOR_URL, endpoint, { method: 'DELETE', auth }),

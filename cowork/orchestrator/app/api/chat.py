@@ -24,12 +24,23 @@ class ChatRequest(BaseModel):
     project_id: str
     task_id: str
     question: str
+    search_enabled: bool | None = None
+    attachments: list["AttachmentPayload"] | None = None
     provider_id: int | None = None
     model_provider: str | None = None
     model_type: str | None = None
     api_key: str | None = None
     endpoint_url: str | None = None
     agents: list[AgentSpec] | None = None
+
+
+class AttachmentPayload(BaseModel):
+    id: str | None = None
+    name: str
+    path: str
+    content_type: str | None = None
+    size: int | None = None
+    url: str | None = None
 
 
 def format_sse(event: StepEventModel) -> str:
@@ -56,6 +67,8 @@ async def start_chat(
                 project_id=request.project_id,
                 task_id=request.task_id,
                 question=request.question,
+                search_enabled=request.search_enabled,
+                attachments=request.attachments,
                 auth_token=authorization,
                 provider_id=request.provider_id,
                 model_provider=request.model_provider,
@@ -78,6 +91,8 @@ async def start_chat(
 class ImproveRequest(BaseModel):
     task_id: str
     question: str
+    search_enabled: bool | None = None
+    attachments: list[AttachmentPayload] | None = None
     provider_id: int | None = None
     model_provider: str | None = None
     model_type: str | None = None
@@ -102,6 +117,8 @@ async def improve_chat(
             project_id=project_id,
             task_id=request.task_id,
             question=request.question,
+            search_enabled=request.search_enabled,
+            attachments=request.attachments,
             auth_token=authorization,
             provider_id=request.provider_id,
             model_provider=request.model_provider,

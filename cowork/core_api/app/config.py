@@ -21,6 +21,8 @@ class CoreApiSettings(BaseSettings):
     github_client_id: str = ""
     github_client_secret: str = ""
     github_scope: str = "read:user user:email"
+    exa_api_key: str = ""
+    data_encryption_key: str = ""
     snapshot_dir: str = "storage/snapshots"
     share_token_minutes: int = 1440
     rate_limit_auth_per_minute: int = 20
@@ -41,6 +43,14 @@ class CoreApiSettings(BaseSettings):
         app_env = info.data.get("app_env")
         if app_env == "production" and not value:
             raise ValueError("INTERNAL_API_KEY is required in production")
+        return value
+
+    @field_validator("data_encryption_key")
+    @classmethod
+    def validate_data_encryption_key(cls, value: str, info):
+        app_env = info.data.get("app_env")
+        if app_env == "production" and not value:
+            raise ValueError("DATA_ENCRYPTION_KEY is required in production")
         return value
 
 

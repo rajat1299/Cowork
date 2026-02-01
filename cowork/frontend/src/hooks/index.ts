@@ -1,6 +1,7 @@
 export { useAuth } from './useAuth'
 export { useOAuth } from './useOAuth'
 export { useChat, useChatTask, useChatProgress, useChatArtifacts } from './useChat'
+export type { ChatMessageOptions } from './useChat'
 export { useConnectors } from './useConnectors'
 export { useProviders } from './useProviders'
 export { useMCP, validateMcpJson, DEFAULT_MCP_JSON } from './useMCP'

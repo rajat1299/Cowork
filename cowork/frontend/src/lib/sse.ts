@@ -17,6 +17,7 @@ import type {
   SSEEvent,
   StepType,
   StartChatRequest,
+  ImproveChatRequest,
   ConfirmedData,
   StreamingData,
   DecomposeTextData,
@@ -31,12 +32,82 @@ import type {
 } from '../types/chat'
 import { createMessage, generateId } from '../types/chat'
 
+// ============ Type Guards ============
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function hasStringProp(obj: Record<string, unknown>, key: string): boolean {
+  return typeof obj[key] === 'string'
+}
+
+function asConfirmedData(data: unknown): ConfirmedData | null {
+  if (!isRecord(data)) return null
+  return data as unknown as ConfirmedData
+}
+
+function asStreamingData(data: unknown): StreamingData | null {
+  if (!isRecord(data) || typeof data.chunk !== 'string') return null
+  return data as unknown as StreamingData
+}
+
+function asDecomposeTextData(data: unknown): DecomposeTextData | null {
+  if (!isRecord(data)) return null
+  return data as unknown as DecomposeTextData
+}
+
+function asSubTasksData(data: unknown): SubTasksData | null {
+  if (!isRecord(data)) return null
+  return data as unknown as SubTasksData
+}
+
+function asAgentData(data: unknown): AgentData | null {
+  if (!isRecord(data) || !hasStringProp(data, 'agent_id') || !hasStringProp(data, 'agent_name')) return null
+  return data as unknown as AgentData
+}
+
+function asToolkitData(data: unknown): ToolkitData | null {
+  if (!isRecord(data)) return null
+  return data as unknown as ToolkitData
+}
+
+function asArtifactData(data: unknown): ArtifactData | null {
+  if (!isRecord(data)) return null
+  return data as unknown as ArtifactData
+}
+
+function asTaskStateData(data: unknown): TaskStateData | null {
+  if (!isRecord(data) || !hasStringProp(data, 'state')) return null
+  return data as unknown as TaskStateData
+}
+
+function asEndData(data: unknown): EndData | null {
+  if (!isRecord(data)) return null
+  return data as unknown as EndData
+}
+
+function asErrorData(data: unknown): ErrorData | null {
+  if (!isRecord(data)) return null
+  return data as unknown as ErrorData
+}
+
+function asContextTooLongData(data: unknown): ContextTooLongData | null {
+  if (!isRecord(data)) return null
+  return data as unknown as ContextTooLongData
+}
+
 // ============ SSE Connection Options ============
 
 interface SSEConnectionOptions {
   projectId: string
   taskId: string
   question: string
+  // Optional features
+  searchEnabled?: boolean
+  agents?: Array<{ name: string; tools: string[] }>
+  attachments?: StartChatRequest['attachments']
+  // Callbacks
   onOpen?: () => void
   onError?: (error: Error) => void
   onClose?: () => void
@@ -53,72 +124,98 @@ function handleSSEEvent(taskId: string, event: SSEEvent): void {
   console.log(`[SSE] Step: ${step}`, data)
 
   switch (step) {
-    case 'confirmed':
-      handleConfirmed(taskId, data as unknown as ConfirmedData)
+    case 'confirmed': {
+      const typedData = asConfirmedData(data)
+      if (typedData) handleConfirmed(taskId, typedData)
       break
+    }
 
-    case 'streaming':
-      handleStreaming(taskId, data as unknown as StreamingData)
+    case 'streaming': {
+      const typedData = asStreamingData(data)
+      if (typedData) handleStreaming(taskId, typedData)
       break
+    }
 
-    case 'decompose_text':
-      handleDecomposeText(taskId, data as unknown as DecomposeTextData)
+    case 'decompose_text': {
+      const typedData = asDecomposeTextData(data)
+      if (typedData) handleDecomposeText(taskId, typedData)
       break
+    }
 
-    case 'to_sub_tasks':
-      handleSubTasks(taskId, data as unknown as SubTasksData)
+    case 'to_sub_tasks': {
+      const typedData = asSubTasksData(data)
+      if (typedData) handleSubTasks(taskId, typedData)
       break
+    }
 
     case 'create_agent':
-    case 'activate_agent':
-      handleAgentActivate(taskId, data as unknown as AgentData, step)
+    case 'activate_agent': {
+      const typedData = asAgentData(data)
+      if (typedData) handleAgentActivate(taskId, typedData, step)
       break
+    }
 
-    case 'deactivate_agent':
-      handleAgentDeactivate(taskId, data as unknown as AgentData)
+    case 'deactivate_agent': {
+      const typedData = asAgentData(data)
+      if (typedData) handleAgentDeactivate(taskId, typedData)
       break
+    }
 
-    case 'activate_toolkit':
-      handleToolkitActivate(taskId, data as unknown as ToolkitData)
+    case 'activate_toolkit': {
+      const typedData = asToolkitData(data)
+      if (typedData) handleToolkitActivate(taskId, typedData)
       break
+    }
 
-    case 'deactivate_toolkit':
-      handleToolkitDeactivate(taskId, data as unknown as ToolkitData)
+    case 'deactivate_toolkit': {
+      const typedData = asToolkitData(data)
+      if (typedData) handleToolkitDeactivate(taskId, typedData)
       break
+    }
 
     case 'artifact':
-    case 'write_file':
-      handleArtifact(taskId, data as unknown as ArtifactData)
+    case 'write_file': {
+      const typedData = asArtifactData(data)
+      if (typedData) handleArtifact(taskId, typedData)
       break
+    }
 
-    case 'task_state':
-      handleTaskState(taskId, data as unknown as TaskStateData)
+    case 'task_state': {
+      const typedData = asTaskStateData(data)
+      if (typedData) handleTaskState(taskId, typedData)
       break
+    }
 
-    case 'end':
-      handleEnd(taskId, data as unknown as EndData)
+    case 'end': {
+      const typedData = asEndData(data)
+      if (typedData) handleEnd(taskId, typedData)
       break
+    }
 
-    case 'error':
-      handleError(taskId, data as unknown as ErrorData)
+    case 'error': {
+      const typedData = asErrorData(data)
+      if (typedData) handleError(taskId, typedData)
       break
+    }
 
-    case 'context_too_long':
-      handleContextTooLong(taskId, data as unknown as ContextTooLongData)
+    case 'context_too_long': {
+      const typedData = asContextTooLongData(data)
+      if (typedData) handleContextTooLong(taskId, typedData)
       break
+    }
 
     case 'ask':
-      handleAsk(taskId, data)
+      handleAsk(taskId, data as Record<string, unknown>)
       break
 
     case 'notice':
-      handleNotice(taskId, data)
+      handleNotice(taskId, data as Record<string, unknown>)
       break
 
     default:
       // Log unhandled step types for debugging
       console.log(`[SSE] Unhandled step type: ${step}`, data)
-      addProgressStepFromEvent(taskId, step, 'active', data)
+      addProgressStepFromEvent(taskId, step, 'active', data as Record<string, unknown>)
   }
 }
 
@@ -378,7 +475,7 @@ function clearCompactingNotice(taskId: string): void {
  * Start an SSE connection to the orchestrator
  */
 export async function startSSEConnection(options: SSEConnectionOptions): Promise<void> {
-  const { projectId, taskId, question, onOpen, onError, onClose } = options
+  const { projectId, taskId, question, searchEnabled, agents, attachments, onOpen, onError, onClose } = options
 
   const store = useChatStore.getState()
   const { accessToken } = useAuthStore.getState()
@@ -395,6 +492,9 @@ export async function startSSEConnection(options: SSEConnectionOptions): Promise
     task_id: taskId,
     question,
     language: navigator.language,
+    ...(searchEnabled !== undefined && { search_enabled: searchEnabled }),
+    ...(agents && { agents }),
+    ...(attachments && { attachments }),
   }
 
   try {
@@ -489,7 +589,12 @@ export function stopSSEConnection(taskId: string): void {
 export async function sendImproveMessage(
   projectId: string,
   question: string,
-  taskId?: string
+  taskId?: string,
+  options?: {
+    searchEnabled?: boolean
+    agents?: Array<{ name: string; tools: string[] }>
+    attachments?: ImproveChatRequest['attachments']
+  }
 ): Promise<void> {
   const { accessToken } = useAuthStore.getState()
 
@@ -500,7 +605,13 @@ export async function sendImproveMessage(
         'Content-Type': 'application/json',
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
-      body: JSON.stringify({ question, task_id: taskId }),
+      body: JSON.stringify({
+        question,
+        task_id: taskId,
+        ...(options?.searchEnabled !== undefined && { search_enabled: options.searchEnabled }),
+        ...(options?.agents && { agents: options.agents }),
+        ...(options?.attachments && { attachments: options.attachments }),
+      }),
     })
 
     if (!response.ok) {

@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date as dt_date, datetime
 from typing import Optional
 
-from sqlalchemy import Column
+from sqlalchemy import Column, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -28,6 +28,23 @@ class Config(SQLModel, table=True):
     group: str = Field(index=True)
     name: str = Field(index=True)
     value: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SearchUsage(SQLModel, table=True):
+    __tablename__ = "search_usage"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", "date", name="uq_search_usage_user_provider_date"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, foreign_key="user.id")
+    provider: str = Field(index=True)
+    date: dt_date = Field(index=True)
+    requests_count: int = Field(default=0)
+    results_count: int = Field(default=0)
+    cost_usd_estimate: float = Field(default=0.0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -80,6 +97,31 @@ class Provider(SQLModel, table=True):
     encrypted_config: dict | None = Field(default=None, sa_column=Column(JSONB))
     prefer: bool = Field(default=False)
     is_valid: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProviderFeatureFlags(SQLModel, table=True):
+    __tablename__ = "provider_feature_flags"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "provider_id",
+            "model",
+            name="uq_provider_feature_flags_user_provider_model",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, foreign_key="user.id")
+    provider_id: int = Field(index=True, foreign_key="provider.id")
+    model: str = Field(index=True)
+    native_web_search_enabled: bool = Field(default=False)
+    image_generation_enabled: bool = Field(default=False)
+    audio_enabled: bool = Field(default=False)
+    tool_use_enabled: bool = Field(default=False)
+    browser_enabled: bool = Field(default=False)
+    extra_params_json: dict | None = Field(default=None, sa_column=Column(JSONB))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

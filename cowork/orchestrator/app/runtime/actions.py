@@ -4,6 +4,15 @@ from typing import Union
 from pydantic import BaseModel
 
 
+class AttachmentPayload(BaseModel):
+    id: str | None = None
+    name: str
+    path: str
+    content_type: str | None = None
+    size: int | None = None
+    url: str | None = None
+
+
 class ActionType(StrEnum):
     improve = "improve"
     stop = "stop"
@@ -28,6 +37,8 @@ class ActionImprove(BaseModel):
     project_id: str
     task_id: str
     question: str
+    search_enabled: bool | None = None
+    attachments: list[AttachmentPayload] | None = None
     auth_token: str | None = None
     provider_id: int | None = None
     model_provider: str | None = None

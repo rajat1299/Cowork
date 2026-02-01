@@ -6,12 +6,14 @@ import logging
 import threading
 from typing import Any, Iterable
 
+import httpx
 from camel.toolkits import FunctionTool
 from camel.toolkits.code_execution import CodeExecutionToolkit
 from camel.toolkits.file_toolkit import FileToolkit
 from camel.toolkits.search_toolkit import SearchToolkit
 from camel.toolkits.terminal_toolkit import TerminalToolkit
 
+from app.config import settings
 from app.clients.core_api import search_chat_messages
 from app.runtime.events import StepEvent
 from app.runtime.tool_context import (
@@ -84,6 +86,46 @@ async def search_past_chats(
         limit=resolved_limit,
     )
     return {"results": results, "count": len(results)}
+
+
+async def search_exa(
+    query: str,
+    num_results: int = 3,
+    search_type: str = "auto",
+    category: str | None = None,
+    include_text: list[str] | None = None,
+    exclude_text: list[str] | None = None,
+    use_autoprompt: bool | None = True,
+) -> dict[str, Any]:
+    """Search the web using server-paid Exa fallback."""
+    auth_token = current_auth_token.get()
+    if not auth_token:
+        return {"results": [], "count": 0, "error": "Missing auth token"}
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return {"results": [], "count": 0, "error": "Missing core API URL"}
+    capped_results = min(max(int(num_results), 1), 3)
+    headers = {"Authorization": auth_token}
+    if settings.core_api_internal_key:
+        headers["X-Internal-Key"] = settings.core_api_internal_key
+    payload = {
+        "query": query,
+        "search_type": search_type,
+        "category": category,
+        "num_results": capped_results,
+        "include_text": include_text,
+        "exclude_text": exclude_text,
+        "use_autoprompt": use_autoprompt,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(f"{base_url}/search/exa", json=payload, headers=headers)
+            if resp.status_code in (402, 429):
+                return {"results": [], "count": 0, "error": resp.json().get("detail")}
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPError as exc:
+        return {"results": [], "count": 0, "error": str(exc)}
 
 
 @auto_listen_toolkit(SearchToolkit)
@@ -420,16 +462,25 @@ def build_agent_tools(
     agent_name: str,
     working_directory: str,
     mcp_tools: list[FunctionTool] | None = None,
+    search_backend: str | None = None,
 ) -> list[FunctionTool]:
     tools: list[FunctionTool] = []
     expanded = _normalize_tool_names(tool_names)
 
     if "search" in expanded:
-        try:
-            toolkit = SearchToolkitWithEvents(event_stream, agent_name=agent_name)
-            _safe_extend(tools, toolkit.get_tools())
-        except Exception as exc:
-            logger.warning("Search toolkit unavailable: %s", exc)
+        if search_backend == "exa":
+            try:
+                tool = FunctionTool(search_exa)
+                wrapped = _wrap_function_tool(tool, event_stream, agent_name, "search")
+                _safe_extend(tools, [wrapped])
+            except Exception as exc:
+                logger.warning("Exa search toolkit unavailable: %s", exc)
+        else:
+            try:
+                toolkit = SearchToolkitWithEvents(event_stream, agent_name=agent_name)
+                _safe_extend(tools, toolkit.get_tools())
+            except Exception as exc:
+                logger.warning("Search toolkit unavailable: %s", exc)
 
     if "memory_search" in expanded:
         try:

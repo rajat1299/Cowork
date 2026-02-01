@@ -38,6 +38,7 @@ from app.clients.core_api import (
     fetch_memory_notes,
     fetch_mcp_users,
     fetch_provider,
+    fetch_provider_features,
     fetch_task_summary,
     fetch_thread_summary,
     upsert_task_summary,
@@ -449,6 +450,57 @@ def _resolve_workdir(project_id: str) -> Path:
     return workdir
 
 
+def _normalize_attachments(
+    attachments: list[object] | None,
+    workdir: Path,
+) -> list[dict[str, object]]:
+    if not attachments:
+        return []
+    safe: list[dict[str, object]] = []
+    for attachment in attachments:
+        payload: dict[str, object] | None = None
+        if isinstance(attachment, dict):
+            payload = attachment
+        elif hasattr(attachment, "model_dump"):
+            payload = attachment.model_dump()  # type: ignore[attr-defined]
+        elif hasattr(attachment, "dict"):
+            payload = attachment.dict()  # type: ignore[attr-defined]
+        if not payload:
+            continue
+        raw_path = payload.get("path")
+        if not isinstance(raw_path, str) or not raw_path:
+            continue
+        try:
+            resolved = Path(raw_path).expanduser().resolve()
+        except Exception:
+            continue
+        if workdir not in resolved.parents and resolved != workdir:
+            continue
+        normalized = dict(payload)
+        normalized["path"] = str(resolved)
+        safe.append(normalized)
+    return safe
+
+
+def _attachments_context(attachments: list[dict[str, object]]) -> str:
+    if not attachments:
+        return ""
+    lines = ["", "User attached files:"]
+    for attachment in attachments:
+        name = attachment.get("name") or "attachment"
+        path = attachment.get("path") or ""
+        content_type = attachment.get("content_type")
+        size = attachment.get("size")
+        meta_parts = []
+        if isinstance(content_type, str) and content_type:
+            meta_parts.append(content_type)
+        if isinstance(size, int) and size > 0:
+            meta_parts.append(f"{size} bytes")
+        meta = f" ({', '.join(meta_parts)})" if meta_parts else ""
+        lines.append(f"- {name}{meta}: {path}")
+    return "\n".join(lines) + "\n"
+
+
 async def _load_tool_env(auth_token: str | None) -> dict[str, str]:
     configs = await fetch_configs(auth_token)
     env_vars: dict[str, str] = {}
@@ -648,6 +700,35 @@ def _resolve_model_url(provider: ProviderConfig) -> str | None:
     return None
 
 
+def _build_native_search_params(provider: ProviderConfig) -> dict[str, Any] | None:
+    normalized = _normalize_provider_name(provider.provider_name)
+    if normalized in _ANTHROPIC_NAMES:
+        return {
+            "tools": [
+                {
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": 5,
+                }
+            ]
+        }
+    if normalized == "openrouter":
+        return {
+            "plugins": [
+                {
+                    "id": "web",
+                    "engine": "native",
+                    "max_results": 3,
+                }
+            ]
+        }
+    if normalized in {"gemini", "google"}:
+        return {"tools": [{"google_search": {}}]}
+    if normalized == "openai":
+        return {"tools": [{"type": "web_search"}], "tool_choice": "auto"}
+    return None
+
+
 async def _is_complex_task(provider: ProviderConfig, question: str, context: str) -> tuple[bool, int]:
     prompt = build_complexity_prompt(question, context)
     messages = [
@@ -661,6 +742,37 @@ async def _is_complex_task(provider: ProviderConfig, question: str, context: str
     if normalized.startswith("yes"):
         return True, _usage_total(usage)
     return True, _usage_total(usage)
+
+
+def _strip_search_tools(tools: list[str], include_browser: bool) -> list[str]:
+    blocked = {
+        "search",
+        "search_toolkit",
+    }
+    if include_browser:
+        blocked.update(
+            {
+                "browser",
+                "browser_toolkit",
+                "hybrid_browser",
+                "hybrid_browser_toolkit",
+                "hybrid_browser_toolkit_py",
+                "async_browser_toolkit",
+            }
+        )
+    return [tool for tool in tools if tool not in blocked]
+
+
+_SEARCH_INTENT_PATTERN = re.compile(
+    r"\b(web\s+search|search the web|search online|search for|look up|lookup|google|bing|browse the web|find sources|latest news|recent news)\b",
+    re.IGNORECASE,
+)
+
+
+def _detect_search_intent(question: str) -> bool:
+    if not question:
+        return False
+    return bool(_SEARCH_INTENT_PATTERN.search(question))
 
 
 async def _extract_response(response) -> tuple[str, dict | None]:
@@ -983,6 +1095,7 @@ def _build_agent(
     agent_id: str,
     stream: bool = False,
     tools: list | None = None,
+    extra_params: dict[str, Any] | None = None,
 ) -> ChatAgent:
     model_config: dict[str, Any] = {}
     if stream:
@@ -996,6 +1109,10 @@ def _build_agent(
             model_config.update(encrypted_config)
     if not model_config:
         model_config = None
+    if extra_params:
+        if model_config is None:
+            model_config = {}
+        model_config.update(extra_params)
     model = ModelFactory.create(
         model_platform=provider.provider_name,
         model_type=provider.model_type,
@@ -1012,6 +1129,9 @@ async def _run_camel_complex(
     task_lock: TaskLock,
     action,
     provider: ProviderConfig,
+    extra_params: dict[str, Any] | None,
+    search_enabled: bool,
+    native_search_enabled: bool,
     history_id: int | None,
     token_tracker: TokenTracker,
     event_stream: EventStream,
@@ -1029,7 +1149,11 @@ async def _run_camel_complex(
             {"role": "user", "content": decompose_prompt},
         ]
         try:
-            async for chunk, usage_update in stream_chat(provider, decompose_messages):
+            async for chunk, usage_update in stream_chat(
+                provider,
+                decompose_messages,
+                extra_params=extra_params,
+            ):
                 if task_lock.stop_requested:
                     break
                 if chunk:
@@ -1078,6 +1202,7 @@ async def _run_camel_complex(
                 {"role": "user", "content": summary_prompt},
             ],
             temperature=0.2,
+            extra_params=extra_params,
         )
         token_tracker.add(summary_usage)
         project_name, summary = _parse_summary(summary_text)
@@ -1112,6 +1237,7 @@ async def _run_camel_complex(
             provider,
             "You are a coordinating agent that routes work to specialists. Keep decisions concise.",
             str(uuid.uuid4()),
+            extra_params=extra_params if native_search_enabled else None,
         )
         coordinator_agent.agent_name = "coordinator_agent"
         task_agent = _build_agent(
@@ -1119,6 +1245,7 @@ async def _run_camel_complex(
             "You are a task planning agent that decomposes complex work into clear, self-contained tasks.",
             str(uuid.uuid4()),
             stream=True,
+            extra_params=extra_params if native_search_enabled else None,
         )
         task_agent.agent_name = "task_agent"
 
@@ -1133,9 +1260,16 @@ async def _run_camel_complex(
         task_lock.workforce = workforce
 
         agent_specs = _merge_agent_specs(build_default_agents(), action.agents)
+        if not search_enabled:
+            for spec in agent_specs:
+                spec.tools = _strip_search_tools(spec.tools, include_browser=True)
+        elif native_search_enabled:
+            for spec in agent_specs:
+                spec.tools = _strip_search_tools(spec.tools, include_browser=False)
         if memory_search_enabled:
             _ensure_tool(agent_specs, "memory_search")
         global_base_context = _build_global_base_context(str(workdir), action.project_id)
+        search_backend = "exa" if search_enabled and not native_search_enabled else None
         for spec in agent_specs:
             tools = build_agent_tools(
                 spec.tools or [],
@@ -1143,9 +1277,16 @@ async def _run_camel_complex(
                 spec.name,
                 str(workdir),
                 mcp_tools=mcp_tools,
+                search_backend=search_backend,
             )
             full_system_prompt = global_base_context + spec.system_prompt
-            agent = _build_agent(provider, full_system_prompt, spec.agent_id, tools=tools)
+            agent = _build_agent(
+                provider,
+                full_system_prompt,
+                spec.agent_id,
+                tools=tools,
+                extra_params=extra_params if native_search_enabled else None,
+            )
             agent.agent_name = spec.name
             workforce.add_single_agent_worker(spec.description, agent, spec.tools)
 
@@ -1195,6 +1336,7 @@ async def _run_camel_complex(
                     {"role": "user", "content": results_prompt},
                 ],
                 temperature=0.2,
+                extra_params=extra_params,
             )
             token_tracker.add(results_usage)
             if summary_result:
@@ -1304,6 +1446,31 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 )
                 task_lock.status = TaskStatus.done
                 continue
+
+            feature_flags = None
+            if provider.id:
+                feature_flags = await fetch_provider_features(
+                    action.auth_token,
+                    provider.id,
+                    provider.model_type,
+                )
+            if action.search_enabled is None:
+                search_enabled = _detect_search_intent(action.question)
+            else:
+                search_enabled = bool(action.search_enabled)
+            native_search_enabled = bool(
+                search_enabled
+                and feature_flags
+                and feature_flags.native_web_search_enabled
+                and provider.api_key
+            )
+            extra_params = None
+            if native_search_enabled:
+                extra_params = feature_flags.extra_params_json or _build_native_search_params(provider)
+            if search_enabled and not native_search_enabled and not feature_flags and _build_native_search_params(provider):
+                native_search_enabled = True
+                extra_params = _build_native_search_params(provider)
+            exa_fallback_enabled = search_enabled and not native_search_enabled
             memory_configs = await fetch_configs(action.auth_token, group="memory")
             memory_generate_enabled = _config_flag(
                 memory_configs,
@@ -1362,7 +1529,11 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 history_id = history.get("id")
 
             total_tokens = 0
+            workdir = _resolve_workdir(action.project_id)
+            attachments = _normalize_attachments(action.attachments, workdir)
+            attachments_text = _attachments_context(attachments)
             context = _build_context(task_lock)
+            context_with_attachments = f"{context}{attachments_text}" if attachments_text else context
             await _persist_message(
                 action.auth_token,
                 action.project_id,
@@ -1370,21 +1541,41 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 "user",
                 action.question,
                 "user",
+                metadata={"attachments": attachments} if attachments else None,
             )
-            task_lock.add_conversation("user", action.question)
-            is_complex, complexity_tokens = await _is_complex_task(provider, action.question, context)
+            conversation_text = action.question
+            if attachments_text:
+                conversation_text = f"{conversation_text}\n{attachments_text.strip()}"
+            task_lock.add_conversation("user", conversation_text)
+            is_complex, complexity_tokens = await _is_complex_task(
+                provider,
+                action.question,
+                context_with_attachments,
+            )
             total_tokens += complexity_tokens
+            if exa_fallback_enabled:
+                is_complex = True
 
             if not is_complex:
                 content_parts: list[str] = []
                 usage: dict | None = None
                 try:
-                    prompt = (
-                        f"{context}User Query: {action.question}\n\n"
-                        "Provide a direct, helpful answer to this simple question. Do not call tools."
-                    )
+                    if native_search_enabled:
+                        prompt = (
+                            f"{context_with_attachments}User Query: {action.question}\n\n"
+                            "Provide a direct, helpful answer. Use web search if it helps."
+                        )
+                    else:
+                        prompt = (
+                            f"{context_with_attachments}User Query: {action.question}\n\n"
+                            "Provide a direct, helpful answer to this simple question. Do not call tools."
+                        )
                     messages = [{"role": "user", "content": prompt}]
-                    async for chunk, usage_update in stream_chat(provider, messages):
+                    async for chunk, usage_update in stream_chat(
+                        provider,
+                        messages,
+                        extra_params=extra_params,
+                    ):
                         if task_lock.stop_requested:
                             break
                         if chunk:
@@ -1456,10 +1647,13 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                     task_lock,
                     action,
                     provider,
+                    extra_params,
+                    search_enabled,
+                    native_search_enabled,
                     history_id,
                     token_tracker,
                     event_stream,
-                    context,
+                    context_with_attachments,
                     memory_generate_enabled,
                 )
             )

@@ -78,10 +78,146 @@ def _should_retry_without_stream_options(error_text: str) -> bool:
     return any(hint in lowered for hint in _STREAM_OPTIONS_RETRY_HINTS)
 
 
+def _merge_extra_params(
+    payload: dict[str, Any],
+    extra_params: dict[str, Any] | None,
+    protected_keys: set[str] | None = None,
+) -> dict[str, Any]:
+    if not extra_params:
+        return payload
+    blocked = protected_keys or {"model", "messages", "stream"}
+    for key, value in extra_params.items():
+        if key in blocked:
+            continue
+        payload[key] = value
+    return payload
+
+
+def _messages_to_text(messages: list[dict[str, str]]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        role = message.get("role") or "user"
+        content = message.get("content") or ""
+        parts.append(f"{role}: {content}")
+    return "\n".join(parts).strip()
+
+
+def _messages_to_gemini_contents(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+    contents: list[dict[str, Any]] = []
+    system_parts: list[str] = []
+    for message in messages:
+        role = message.get("role") or "user"
+        content = message.get("content") or ""
+        if role == "system":
+            system_parts.append(content)
+            continue
+        gemini_role = "model" if role == "assistant" else "user"
+        contents.append({"role": gemini_role, "parts": [{"text": content}]})
+    if system_parts:
+        system_text = "\n".join(system_parts).strip()
+        if contents and contents[0]["role"] == "user":
+            contents[0]["parts"][0]["text"] = f"{system_text}\n\n{contents[0]['parts'][0]['text']}"
+        else:
+            contents.insert(0, {"role": "user", "parts": [{"text": system_text}]})
+    return contents
+
+
+def _should_use_openai_responses(extra_params: dict[str, Any] | None) -> bool:
+    if not extra_params:
+        return False
+    tools = extra_params.get("tools")
+    if isinstance(tools, list):
+        for tool in tools:
+            if isinstance(tool, dict) and tool.get("type") == "web_search":
+                return True
+    return False
+
+
+def _resolve_openai_responses_url(endpoint_url: str | None) -> str:
+    if not endpoint_url:
+        return "https://api.openai.com/v1/responses"
+    base = endpoint_url.rstrip("/")
+    if base.endswith("/responses"):
+        return base
+    if base.endswith("/v1"):
+        return f"{base}/responses"
+    return f"{base}/v1/responses"
+
+
+def _resolve_gemini_url(endpoint_url: str | None, model_type: str) -> str:
+    if not endpoint_url:
+        return f"https://generativelanguage.googleapis.com/v1beta/models/{model_type}:generateContent"
+    base = endpoint_url.rstrip("/")
+    if ":generateContent" in base:
+        return base
+    if base.endswith("/v1beta"):
+        return f"{base}/models/{model_type}:generateContent"
+    if base.endswith("/models"):
+        return f"{base}/{model_type}:generateContent"
+    return f"{base}/models/{model_type}:generateContent"
+
+
+def _extract_openai_responses_text(payload: dict[str, Any]) -> str:
+    if isinstance(payload.get("output_text"), str):
+        return payload["output_text"]
+    output = payload.get("output")
+    if isinstance(output, list):
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "message":
+                continue
+            content = item.get("content") or []
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        return text
+    return ""
+
+
+def _extract_gemini_text(payload: dict[str, Any]) -> str:
+    candidates = payload.get("candidates") or []
+    if not isinstance(candidates, list):
+        return ""
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content") or {}
+        parts = content.get("parts") or []
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                return part["text"]
+    return ""
+
+
+def _extract_gemini_usage(payload: dict[str, Any]) -> dict[str, Any] | None:
+    usage = payload.get("usageMetadata") or {}
+    if not isinstance(usage, dict):
+        return None
+    prompt_tokens = usage.get("promptTokenCount")
+    completion_tokens = usage.get("candidatesTokenCount")
+    total_tokens = usage.get("totalTokenCount")
+    if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+        total_tokens = prompt_tokens + completion_tokens
+    if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+        return None
+    return {
+        "prompt_tokens": prompt_tokens or 0,
+        "completion_tokens": completion_tokens or 0,
+        "total_tokens": total_tokens or 0,
+    }
+
+
 async def stream_openai_chat(
     provider: ProviderConfig,
     messages: list[dict[str, str]],
     temperature: float = 0.2,
+    extra_params: dict[str, Any] | None = None,
 ) -> AsyncIterator[tuple[str | None, dict[str, Any] | None]]:
     base = _resolve_openai_base(provider)
     if not base:
@@ -98,6 +234,7 @@ async def stream_openai_chat(
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    payload = _merge_extra_params(payload, extra_params)
     async with httpx.AsyncClient(timeout=60) as client:
         for attempt in range(2):
             async with client.stream("POST", url, json=payload, headers=headers) as response:
@@ -140,6 +277,7 @@ async def stream_anthropic_chat(
     messages: list[dict[str, str]],
     temperature: float = 0.2,
     max_tokens: int = 1024,
+    extra_params: dict[str, Any] | None = None,
 ) -> AsyncIterator[tuple[str | None, dict[str, Any] | None]]:
     url = _resolve_anthropic_url(provider.endpoint_url)
     headers = {
@@ -156,6 +294,7 @@ async def stream_anthropic_chat(
     }
     input_tokens: int | None = None
     output_tokens: int | None = None
+    payload = _merge_extra_params(payload, extra_params)
     async with httpx.AsyncClient(timeout=60) as client:
         async with client.stream("POST", url, json=payload, headers=headers) as response:
             response.raise_for_status()
@@ -200,18 +339,105 @@ async def stream_anthropic_chat(
                         }
 
 
+async def stream_openai_responses(
+    provider: ProviderConfig,
+    messages: list[dict[str, str]],
+    temperature: float = 0.2,
+    extra_params: dict[str, Any] | None = None,
+) -> AsyncIterator[tuple[str | None, dict[str, Any] | None]]:
+    base = _resolve_openai_base(provider)
+    if not base:
+        raise RuntimeError("Endpoint URL required for OpenAI-compatible provider")
+    url = _resolve_openai_responses_url(base)
+    headers = {
+        "Authorization": f"Bearer {provider.api_key}",
+        "Content-Type": "application/json",
+    }
+    payload: dict[str, Any] = {
+        "model": provider.model_type,
+        "input": _messages_to_text(messages),
+        "temperature": temperature,
+    }
+    payload = _merge_extra_params(payload, extra_params, protected_keys={"model", "input"})
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+    text = _extract_openai_responses_text(data)
+    if text:
+        yield text, data.get("usage")
+    else:
+        yield "", data.get("usage")
+
+
+async def stream_gemini_chat(
+    provider: ProviderConfig,
+    messages: list[dict[str, str]],
+    temperature: float = 0.2,
+    extra_params: dict[str, Any] | None = None,
+) -> AsyncIterator[tuple[str | None, dict[str, Any] | None]]:
+    url = _resolve_gemini_url(provider.endpoint_url, provider.model_type)
+    headers = {
+        "x-goog-api-key": provider.api_key,
+        "Content-Type": "application/json",
+    }
+    payload: dict[str, Any] = {"contents": _messages_to_gemini_contents(messages)}
+    if temperature is not None:
+        payload["generationConfig"] = {"temperature": temperature}
+    payload = _merge_extra_params(payload, extra_params, protected_keys={"contents"})
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+    text = _extract_gemini_text(data)
+    usage = _extract_gemini_usage(data)
+    if text:
+        yield text, usage
+    else:
+        yield "", usage
+
+
 async def stream_chat(
     provider: ProviderConfig,
     messages: list[dict[str, str]],
     temperature: float = 0.2,
+    extra_params: dict[str, Any] | None = None,
 ) -> AsyncIterator[tuple[str | None, dict[str, Any] | None]]:
     normalized = _normalize_provider_name(provider.provider_name)
     if normalized in _ANTHROPIC_NAMES:
-        async for chunk, usage in stream_anthropic_chat(provider, messages, temperature=temperature):
+        async for chunk, usage in stream_anthropic_chat(
+            provider,
+            messages,
+            temperature=temperature,
+            extra_params=extra_params,
+        ):
             yield chunk, usage
-    else:
-        async for chunk, usage in stream_openai_chat(provider, messages, temperature=temperature):
+        return
+    if normalized in {"gemini", "google"}:
+        async for chunk, usage in stream_gemini_chat(
+            provider,
+            messages,
+            temperature=temperature,
+            extra_params=extra_params,
+        ):
             yield chunk, usage
+        return
+    if normalized == "openai" and _should_use_openai_responses(extra_params):
+        async for chunk, usage in stream_openai_responses(
+            provider,
+            messages,
+            temperature=temperature,
+            extra_params=extra_params,
+        ):
+            yield chunk, usage
+        return
+    async for chunk, usage in stream_openai_chat(
+        provider,
+        messages,
+        temperature=temperature,
+        extra_params=extra_params,
+    ):
+        yield chunk, usage
 
 
 async def collect_chat_completion(
@@ -219,10 +445,16 @@ async def collect_chat_completion(
     messages: list[dict[str, str]],
     temperature: float = 0.2,
     on_chunk: Callable[[str], None] | None = None,
+    extra_params: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     content_parts: list[str] = []
     usage: dict[str, Any] | None = None
-    async for chunk, usage_update in stream_chat(provider, messages, temperature=temperature):
+    async for chunk, usage_update in stream_chat(
+        provider,
+        messages,
+        temperature=temperature,
+        extra_params=extra_params,
+    ):
         if chunk:
             content_parts.append(chunk)
             if on_chunk:
