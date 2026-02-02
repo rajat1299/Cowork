@@ -1327,18 +1327,53 @@ async def _run_camel_complex(
         final_result = "\n".join(
             f"- {task.content}\n  {task.result}" for task in camel_subtasks if task.result
         ).strip()
+        summary_result = ""
+        summary_streamed = False
         if len(camel_subtasks) > 1:
             results_prompt = build_results_summary_prompt(action.question, task_nodes)
-            summary_result, results_usage = await collect_chat_completion(
-                provider,
-                [
-                    {"role": "system", "content": "You summarize results."},
-                    {"role": "user", "content": results_prompt},
-                ],
-                temperature=0.2,
-                extra_params=extra_params,
-            )
+            results_usage: dict | None = None
+            summary_parts: list[str] = []
+            try:
+                async for chunk, usage_update in stream_chat(
+                    provider,
+                    [
+                        {"role": "system", "content": "You summarize results."},
+                        {"role": "user", "content": results_prompt},
+                    ],
+                    temperature=0.2,
+                    extra_params=extra_params,
+                ):
+                    if task_lock.stop_requested:
+                        break
+                    if chunk:
+                        summary_streamed = True
+                        summary_parts.append(chunk)
+                        event_stream.emit(StepEvent.streaming, {"chunk": chunk})
+                    if usage_update:
+                        results_usage = usage_update
+            except Exception as exc:
+                event_stream.emit(StepEvent.error, {"error": str(exc)})
+                event_stream.emit(
+                    StepEvent.end,
+                    {"result": "error", "reason": "Result summary failed"},
+                )
+                if history_id is not None:
+                    await update_history(action.auth_token, history_id, {"status": 3})
+                task_lock.status = TaskStatus.done
+                return
+
+            if task_lock.stop_requested:
+                event_stream.emit(
+                    StepEvent.end,
+                    {"result": "stopped", "reason": "user_stop"},
+                )
+                if history_id is not None:
+                    await update_history(action.auth_token, history_id, {"status": 3})
+                task_lock.status = TaskStatus.stopped
+                return
+
             token_tracker.add(results_usage)
+            summary_result = "".join(summary_parts).strip()
             if summary_result:
                 final_result = summary_result
         if not task_lock.last_task_summary and final_result:
@@ -1352,6 +1387,9 @@ async def _run_camel_complex(
 
         if not final_result:
             final_result = "Task completed."
+
+        if final_result and (not summary_streamed or not summary_result):
+            event_stream.emit(StepEvent.streaming, {"chunk": final_result})
 
         if history_id is not None:
             await update_history(
