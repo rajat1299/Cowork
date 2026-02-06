@@ -33,7 +33,9 @@ export type StepType =
   | 'error'               // Error occurred
   // User interaction
   | 'ask'                 // Agent asks user a question
+  | 'ask_user'            // Agent asks user a question (normalized)
   | 'wait_confirm'        // Waiting for user confirmation
+  | 'turn_cancelled'      // Turn cancelled
   // System
   | 'notice'              // System notice
   | 'context_too_long'    // Context limit exceeded
@@ -47,8 +49,17 @@ export type StepType =
 export interface SSEEvent<T = Record<string, unknown>> {
   task_id: string
   step: StepType
-  data: T
+  data: T & { agent_event?: AgentEvent }
   timestamp: number
+}
+
+export interface AgentEvent {
+  type: string
+  payload?: Record<string, unknown>
+  timestamp_ms?: number
+  turn_id?: string
+  session_id?: string
+  event_id?: string
 }
 
 /**
@@ -314,7 +325,9 @@ export function getStepLabel(step: StepType): string {
     end: 'Completed',
     error: 'Error',
     ask: 'Asking question',
+    ask_user: 'Asking question',
     wait_confirm: 'Waiting for confirmation',
+    turn_cancelled: 'Cancelled',
     notice: 'Notice',
     context_too_long: 'Context limit exceeded',
     budget_not_enough: 'Budget exhausted',

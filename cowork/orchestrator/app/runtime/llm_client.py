@@ -157,25 +157,42 @@ def _resolve_gemini_url(endpoint_url: str | None, model_type: str) -> str:
     return f"{base}/models/{model_type}:generateContent"
 
 
-def _extract_openai_responses_text(payload: dict[str, Any]) -> str:
-    if isinstance(payload.get("output_text"), str):
-        return payload["output_text"]
-    output = payload.get("output")
-    if isinstance(output, list):
-        for item in output:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") != "message":
-                continue
-            content = item.get("content") or []
-            if not isinstance(content, list):
-                continue
+def _extract_openai_responses_stream_text(event: dict[str, Any]) -> str | None:
+    delta = event.get("delta")
+    if isinstance(delta, str):
+        return delta
+    if isinstance(delta, dict):
+        text = delta.get("text")
+        if isinstance(text, str):
+            return text
+    if isinstance(event.get("text"), str):
+        return event["text"]
+    if isinstance(event.get("output_text"), str):
+        return event["output_text"]
+    item = event.get("output_item") or event.get("item") or {}
+    if isinstance(item, dict):
+        content = item.get("content") or []
+        if isinstance(content, list):
+            parts: list[str] = []
             for part in content:
-                if isinstance(part, dict):
-                    text = part.get("text")
-                    if isinstance(text, str):
-                        return text
-    return ""
+                if not isinstance(part, dict):
+                    continue
+                text = part.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            if parts:
+                return "".join(parts)
+    return None
+
+
+def _extract_openai_responses_stream_usage(event: dict[str, Any]) -> dict[str, Any] | None:
+    usage = event.get("usage")
+    if isinstance(usage, dict):
+        return usage
+    response = event.get("response")
+    if isinstance(response, dict) and isinstance(response.get("usage"), dict):
+        return response["usage"]
+    return None
 
 
 def _extract_gemini_text(payload: dict[str, Any]) -> str:
@@ -357,17 +374,31 @@ async def stream_openai_responses(
         "model": provider.model_type,
         "input": _messages_to_text(messages),
         "temperature": temperature,
+        "stream": True,
     }
     payload = _merge_extra_params(payload, extra_params, protected_keys={"model", "input"})
+    payload["stream"] = True
     async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-    text = _extract_openai_responses_text(data)
-    if text:
-        yield text, data.get("usage")
-    else:
-        yield "", data.get("usage")
+        async with client.stream("POST", url, json=payload, headers=headers) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line.split(":", 1)[1].strip()
+                if not data or data == "[DONE]":
+                    continue
+                event = json.loads(data)
+                event_type = event.get("type")
+                if event_type in {"error", "response.failed"}:
+                    error_detail = event.get("error") or {}
+                    message = error_detail.get("message") if isinstance(error_detail, dict) else None
+                    raise RuntimeError(message or "LLM error")
+                text = _extract_openai_responses_stream_text(event)
+                if text:
+                    yield text, None
+                usage = _extract_openai_responses_stream_usage(event)
+                if usage:
+                    yield None, usage
 
 
 async def stream_gemini_chat(

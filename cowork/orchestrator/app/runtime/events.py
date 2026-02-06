@@ -15,6 +15,8 @@ class StepEvent(StrEnum):
     streaming = "streaming"
     artifact = "artifact"
     notice = "notice"
+    ask_user = "ask_user"
+    turn_cancelled = "turn_cancelled"
     end = "end"
     error = "error"
     context_too_long = "context_too_long"

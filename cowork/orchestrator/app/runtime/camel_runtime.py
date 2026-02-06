@@ -48,6 +48,7 @@ from app.clients.core_api import (
 from app.runtime.actions import ActionType, AgentSpec, TaskStatus
 from app.runtime.events import StepEvent
 from app.runtime.llm_client import (
+    _ANTHROPIC_NAMES,
     _OPENAI_COMPAT_DEFAULTS,
     _OPENAI_COMPAT_REQUIRES_ENDPOINT,
     _normalize_provider_name,
@@ -73,10 +74,11 @@ from app.runtime.workforce import (
     build_summary_prompt,
     parse_subtasks,
 )
-from shared.schemas import ArtifactEvent, StepEvent as StepEventModel
+from shared.schemas import AgentEvent, ArtifactEvent, StepEvent as StepEventModel
 
 
 logger = logging.getLogger(__name__)
+_TRACE_LOGGER: logging.Logger | None = None
 
 _MAX_CONTEXT_LENGTH = 100000
 _COMPACTION_TRIGGER = 80000
@@ -91,17 +93,171 @@ GLOBAL_MEMORY_CATEGORIES = {
 }
 
 
+def _get_trace_logger() -> logging.Logger:
+    global _TRACE_LOGGER
+    if _TRACE_LOGGER is not None:
+        return _TRACE_LOGGER
+
+    log_path = os.environ.get("COWORK_RUNTIME_LOG_PATH")
+    if not log_path:
+        log_path = os.path.expanduser("~/.cowork/logs/runtime.log")
+
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    trace_logger = logging.getLogger("cowork.runtime.trace")
+    trace_logger.setLevel(logging.INFO)
+    trace_logger.propagate = False
+    if not trace_logger.handlers:
+        handler = logging.FileHandler(log_path)
+        formatter = logging.Formatter("%(message)s")
+        handler.setFormatter(formatter)
+        trace_logger.addHandler(handler)
+    _TRACE_LOGGER = trace_logger
+    return trace_logger
+
+
+def _trace_log(event: str, payload: dict[str, Any]) -> None:
+    logger = _get_trace_logger()
+    payload = {**payload, "event": event, "ts": datetime.utcnow().isoformat() + "Z"}
+    logger.info(json.dumps(payload))
+
+
+def _trace_step(task_id: str, step: StepEvent, data: dict) -> None:
+    if step in {StepEvent.streaming, StepEvent.decompose_text}:
+        chunk = data.get("chunk") if step == StepEvent.streaming else data.get("content")
+        if isinstance(chunk, str):
+            preview = chunk[:200]
+            _trace_log(
+                "step",
+                {
+                    "task_id": task_id,
+                    "step": step.value,
+                    "chunk_len": len(chunk),
+                    "chunk_preview": preview,
+                },
+            )
+            return
+    data_preview = repr(data)
+    if len(data_preview) > 2000:
+        data_preview = data_preview[:2000] + "...(truncated)"
+    _trace_log(
+        "step",
+        {
+            "task_id": task_id,
+            "step": step.value,
+            "data": data_preview,
+        },
+    )
+
+
 def _emit(task_id: str, step: StepEvent, data: dict) -> StepEventModel:
     if step == StepEvent.deactivate_toolkit:
         _maybe_store_tool_output(task_id, data)
+    _trace_step(task_id, step, data)
+    payload = _attach_agent_event(task_id, step, data)
     event = StepEventModel(
         task_id=task_id,
         step=step,
-        data=data,
+        data=payload,
         timestamp=time.time(),
     )
     fire_and_forget(event)
     return event
+
+
+def _attach_agent_event(task_id: str, step: StepEvent, data: dict) -> dict:
+    if not isinstance(data, dict):
+        return data
+    if "agent_event" in data:
+        return data
+    agent_event = _build_agent_event(task_id, step, data)
+    if agent_event is None:
+        return data
+    return {**data, "agent_event": agent_event}
+
+
+def _build_agent_event(task_id: str, step: StepEvent, data: dict) -> dict | None:
+    event_type = _map_step_to_agent_event(step)
+    if event_type is None:
+        return None
+    payload = _agent_event_payload(step, data)
+    timestamp_ms = int(time.time() * 1000)
+    session_id = data.get("project_id") or current_project_id.get(None)
+    event = AgentEvent(
+        type=event_type,
+        payload=payload,
+        timestamp_ms=timestamp_ms,
+        turn_id=task_id,
+        session_id=session_id,
+    )
+    return event.model_dump(exclude_none=True)
+
+
+def _map_step_to_agent_event(step: StepEvent) -> str | None:
+    if step == StepEvent.confirmed:
+        return "message_start"
+    if step == StepEvent.streaming:
+        return "text_delta"
+    if step == StepEvent.decompose_text:
+        return "text_delta"
+    if step == StepEvent.end:
+        return "message_end"
+    if step == StepEvent.activate_toolkit:
+        return "tool_exec_start"
+    if step == StepEvent.deactivate_toolkit:
+        return "tool_exec_end"
+    if step == StepEvent.error:
+        return "error"
+    if step == StepEvent.notice:
+        return "notice"
+    if step == StepEvent.ask_user:
+        return "ask_user"
+    if step == StepEvent.turn_cancelled:
+        return "turn_cancelled"
+    if step in {
+        StepEvent.context_too_long,
+        StepEvent.to_sub_tasks,
+        StepEvent.assign_task,
+        StepEvent.task_state,
+        StepEvent.create_agent,
+        StepEvent.activate_agent,
+        StepEvent.deactivate_agent,
+    }:
+        return "state_boundary"
+    return None
+
+
+def _agent_event_payload(step: StepEvent, data: dict) -> dict:
+    if step == StepEvent.streaming:
+        return {"text": data.get("chunk", "")}
+    if step == StepEvent.decompose_text:
+        return {"text": data.get("content", ""), "channel": "decompose"}
+    if step == StepEvent.confirmed:
+        return {"question": data.get("question")}
+    if step == StepEvent.activate_toolkit:
+        return {
+            "toolkit": data.get("toolkit_name"),
+            "method": data.get("method_name"),
+            "agent_name": data.get("agent_name"),
+            "process_task_id": data.get("process_task_id"),
+            "args": data.get("message"),
+        }
+    if step == StepEvent.deactivate_toolkit:
+        return {
+            "toolkit": data.get("toolkit_name"),
+            "method": data.get("method_name"),
+            "agent_name": data.get("agent_name"),
+            "process_task_id": data.get("process_task_id"),
+            "result": data.get("message"),
+        }
+    if step == StepEvent.error:
+        return {"message": data.get("error") or data.get("message")}
+    if step == StepEvent.ask_user:
+        return data
+    if step == StepEvent.turn_cancelled:
+        return {"reason": data.get("reason")}
+    if step == StepEvent.end:
+        return data
+    return {"kind": step.value, "data": data}
 
 
 def _maybe_store_tool_output(task_id: str, data: dict) -> None:
@@ -713,6 +869,8 @@ def _build_native_search_params(provider: ProviderConfig) -> dict[str, Any] | No
             ]
         }
     if normalized == "openrouter":
+        if not _openrouter_supports_native_web(provider.model_type):
+            return None
         return {
             "plugins": [
                 {
@@ -727,6 +885,21 @@ def _build_native_search_params(provider: ProviderConfig) -> dict[str, Any] | No
     if normalized == "openai":
         return {"tools": [{"type": "web_search"}], "tool_choice": "auto"}
     return None
+
+
+def _openrouter_supports_native_web(model_type: str | None) -> bool:
+    if not model_type:
+        return False
+    base = model_type.strip().lower().split(":", 1)[0]
+    return base.startswith(
+        (
+            "openai/",
+            "anthropic/",
+            "perplexity/",
+            "x-ai/",
+            "xai/",
+        )
+    )
 
 
 async def _is_complex_task(provider: ProviderConfig, question: str, context: str) -> tuple[bool, int]:
@@ -1182,6 +1355,7 @@ async def _run_camel_complex(
         token_tracker.add(decompose_usage)
 
         if task_lock.stop_requested:
+            event_stream.emit(StepEvent.turn_cancelled, {"reason": "user_stop"})
             event_stream.emit(
                 StepEvent.end,
                 {"result": "stopped", "reason": "user_stop"},
@@ -1310,6 +1484,7 @@ async def _run_camel_complex(
         await run_task
 
         if task_lock.stop_requested:
+            event_stream.emit(StepEvent.turn_cancelled, {"reason": "user_stop"})
             event_stream.emit(
                 StepEvent.end,
                 {"result": "stopped", "reason": "user_stop"},
@@ -1363,6 +1538,7 @@ async def _run_camel_complex(
                 return
 
             if task_lock.stop_requested:
+                event_stream.emit(StepEvent.turn_cancelled, {"reason": "user_stop"})
                 event_stream.emit(
                     StepEvent.end,
                     {"result": "stopped", "reason": "user_stop"},
@@ -1451,6 +1627,18 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
         if action.type == ActionType.improve:
             current_auth_token.set(action.auth_token)
             current_project_id.set(action.project_id)
+            _trace_log(
+                "action_received",
+                {
+                    "task_id": action.task_id,
+                    "project_id": action.project_id,
+                    "question_preview": action.question[:200],
+                    "search_enabled": action.search_enabled,
+                    "provider_id": action.provider_id,
+                    "model_provider": action.model_provider,
+                    "model_type": action.model_type,
+                },
+            )
             task_lock.stop_requested = False
             task_lock.status = TaskStatus.processing
             task_lock.current_task_id = action.task_id
@@ -1485,6 +1673,18 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 task_lock.status = TaskStatus.done
                 continue
 
+            _trace_log(
+                "provider_resolved",
+                {
+                    "task_id": action.task_id,
+                    "provider_id": provider.id,
+                    "provider_name": provider.provider_name,
+                    "model_type": provider.model_type,
+                    "endpoint_url": provider.endpoint_url,
+                    "prefer": provider.prefer,
+                },
+            )
+
             feature_flags = None
             if provider.id:
                 feature_flags = await fetch_provider_features(
@@ -1496,18 +1696,35 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 search_enabled = _detect_search_intent(action.question)
             else:
                 search_enabled = bool(action.search_enabled)
+            native_search_params = _build_native_search_params(provider)
             native_search_enabled = bool(
                 search_enabled
                 and feature_flags
                 and feature_flags.native_web_search_enabled
                 and provider.api_key
+                and native_search_params
+            )
+            _trace_log(
+                "search_routing",
+                {
+                    "task_id": action.task_id,
+                    "search_enabled": search_enabled,
+                    "native_search_enabled": native_search_enabled,
+                    "feature_flags": bool(feature_flags),
+                    "native_params": bool(native_search_params),
+                },
             )
             extra_params = None
             if native_search_enabled:
-                extra_params = feature_flags.extra_params_json or _build_native_search_params(provider)
-            if search_enabled and not native_search_enabled and not feature_flags and _build_native_search_params(provider):
+                extra_params = feature_flags.extra_params_json or native_search_params
+            if (
+                search_enabled
+                and not native_search_enabled
+                and provider.id == 0
+                and native_search_params
+            ):
                 native_search_enabled = True
-                extra_params = _build_native_search_params(provider)
+                extra_params = native_search_params
             exa_fallback_enabled = search_enabled and not native_search_enabled
             memory_configs = await fetch_configs(action.auth_token, group="memory")
             memory_generate_enabled = _config_flag(
@@ -1636,6 +1853,11 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 if task_lock.stop_requested:
                     yield _emit(
                         action.task_id,
+                        StepEvent.turn_cancelled,
+                        {"reason": "user_stop"},
+                    )
+                    yield _emit(
+                        action.task_id,
                         StepEvent.end,
                         {"result": "stopped", "reason": "user_stop"},
                     )
@@ -1707,6 +1929,11 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 except Exception:
                     pass
             task_lock.status = TaskStatus.stopped
+            yield _emit(
+                task_lock.current_task_id or "unknown",
+                StepEvent.turn_cancelled,
+                {"reason": action.reason},
+            )
             yield _emit(
                 task_lock.current_task_id or "unknown",
                 StepEvent.end,

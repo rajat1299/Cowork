@@ -29,6 +29,7 @@ import type {
   ErrorData,
   TaskStateData,
   ContextTooLongData,
+  AgentEvent,
 } from '../types/chat'
 import { createMessage, generateId } from '../types/chat'
 
@@ -97,6 +98,11 @@ function asContextTooLongData(data: unknown): ContextTooLongData | null {
   return data as unknown as ContextTooLongData
 }
 
+function asAgentEvent(data: unknown): AgentEvent | null {
+  if (!isRecord(data) || typeof data.type !== 'string') return null
+  return data as AgentEvent
+}
+
 // ============ SSE Connection Options ============
 
 interface SSEConnectionOptions {
@@ -122,6 +128,13 @@ function handleSSEEvent(taskId: string, event: SSEEvent): void {
   const { step, data } = event
 
   console.log(`[SSE] Step: ${step}`, data)
+
+  if (isRecord(data) && data.agent_event) {
+    const agentEvent = asAgentEvent(data.agent_event)
+    if (agentEvent && handleAgentEvent(taskId, agentEvent, data)) {
+      return
+    }
+  }
 
   switch (step) {
     case 'confirmed': {
@@ -205,11 +218,16 @@ function handleSSEEvent(taskId: string, event: SSEEvent): void {
     }
 
     case 'ask':
+    case 'ask_user':
       handleAsk(taskId, data as Record<string, unknown>)
       break
 
     case 'notice':
       handleNotice(taskId, data as Record<string, unknown>)
+      break
+
+    case 'turn_cancelled':
+      handleTurnCancelled(taskId, data as Record<string, unknown>)
       break
 
     default:
@@ -322,13 +340,19 @@ function handleToolkitActivate(taskId: string, data: ToolkitData): void {
   addProgressStepFromEvent(taskId, 'activate_toolkit', 'active', {
     toolkit: data.toolkit_name,
     method: data.method_name,
+    agent: data.agent_name,
+    process_task_id: data.process_task_id,
+    message: data.message,
   })
 }
 
 function handleToolkitDeactivate(taskId: string, data: ToolkitData): void {
   addProgressStepFromEvent(taskId, 'deactivate_toolkit', 'completed', {
     toolkit: data.toolkit_name,
-    result: data.result,
+    method: data.method_name,
+    agent: data.agent_name,
+    process_task_id: data.process_task_id,
+    result: data.result ?? data.message,
   })
 }
 
@@ -422,6 +446,146 @@ function handleContextTooLong(taskId: string, data: ContextTooLongData): void {
   )
 
   addProgressStepFromEvent(taskId, 'context_too_long', 'failed', data as unknown as Record<string, unknown>)
+}
+
+function handleTurnCancelled(taskId: string, data: Record<string, unknown>): void {
+  const store = useChatStore.getState()
+  const task = store.getTask(taskId)
+  const lastMessage = task?.messages[task.messages.length - 1]
+  if (lastMessage?.role === 'system' && lastMessage.content.startsWith('Cancelled:')) {
+    return
+  }
+  const reason = typeof data.reason === 'string' ? data.reason : 'cancelled'
+  store.setTaskStatus(taskId, 'completed')
+  store.addMessage(taskId, createMessage('system', `Cancelled: ${reason}`))
+  addProgressStepFromEvent(taskId, 'turn_cancelled', 'failed', data)
+  removeSSEController(taskId)
+}
+
+function handleAgentEvent(
+  taskId: string,
+  agentEvent: AgentEvent,
+  rawData: Record<string, unknown>
+): boolean {
+  const payload = (agentEvent.payload || {}) as Record<string, unknown>
+
+  switch (agentEvent.type) {
+    case 'message_start': {
+      const question = typeof payload.question === 'string' ? payload.question : ''
+      handleConfirmed(taskId, { question })
+      return true
+    }
+    case 'text_delta': {
+      const text = typeof payload.text === 'string' ? payload.text : ''
+      if (payload.channel === 'decompose') {
+        handleDecomposeText(taskId, { content: text })
+      } else {
+        handleStreaming(taskId, { chunk: text })
+      }
+      return true
+    }
+    case 'message_end': {
+      handleEnd(taskId, rawData as EndData)
+      return true
+    }
+    case 'tool_exec_start': {
+      handleToolkitActivate(taskId, mapToolPayload(payload))
+      return true
+    }
+    case 'tool_exec_end': {
+      handleToolkitDeactivate(taskId, mapToolPayload(payload))
+      return true
+    }
+    case 'tool_result': {
+      handleToolkitDeactivate(taskId, mapToolPayload(payload))
+      return true
+    }
+    case 'ask_user': {
+      handleAsk(taskId, payload)
+      return true
+    }
+    case 'turn_cancelled': {
+      handleTurnCancelled(taskId, payload)
+      return true
+    }
+    case 'error': {
+      const message = typeof payload.message === 'string' ? payload.message : 'An error occurred'
+      handleError(taskId, { message })
+      return true
+    }
+    case 'notice': {
+      handleNotice(taskId, payload)
+      return true
+    }
+    case 'state_boundary': {
+      return handleStateBoundary(taskId, payload)
+    }
+    default:
+      return false
+  }
+}
+
+function handleStateBoundary(taskId: string, payload: Record<string, unknown>): boolean {
+  const kind = payload.kind as StepType | undefined
+  const data = payload.data
+  if (!kind) return false
+
+  switch (kind) {
+    case 'to_sub_tasks': {
+      const typedData = asSubTasksData(data)
+      if (typedData) handleSubTasks(taskId, typedData)
+      return true
+    }
+    case 'task_state': {
+      const typedData = asTaskStateData(data)
+      if (typedData) handleTaskState(taskId, typedData)
+      return true
+    }
+    case 'create_agent':
+    case 'activate_agent': {
+      const typedData = asAgentData(data)
+      if (typedData) handleAgentActivate(taskId, typedData, kind)
+      return true
+    }
+    case 'deactivate_agent': {
+      const typedData = asAgentData(data)
+      if (typedData) handleAgentDeactivate(taskId, typedData)
+      return true
+    }
+    case 'context_too_long': {
+      const typedData = asContextTooLongData(data)
+      if (typedData) handleContextTooLong(taskId, typedData)
+      return true
+    }
+    default:
+      if (isRecord(data)) {
+        addProgressStepFromEvent(taskId, kind, 'active', data)
+        return true
+      }
+      addProgressStepFromEvent(taskId, kind, 'active')
+      return true
+  }
+}
+
+function mapToolPayload(payload: Record<string, unknown>): ToolkitData {
+  const toolkit_name = typeof payload.toolkit === 'string' ? payload.toolkit : 'tool'
+  const method_name = typeof payload.method === 'string' ? payload.method : 'tool'
+  const agent_name = typeof payload.agent_name === 'string' ? payload.agent_name : 'agent'
+  const process_task_id =
+    typeof payload.process_task_id === 'string' ? payload.process_task_id : ''
+  const message =
+    typeof payload.args === 'string'
+      ? payload.args
+      : typeof payload.result === 'string'
+      ? payload.result
+      : ''
+  return {
+    toolkit_name,
+    method_name,
+    agent_name,
+    process_task_id,
+    message,
+  }
 }
 
 function handleAsk(taskId: string, data: Record<string, unknown>): void {
@@ -579,6 +743,12 @@ export async function startSSEConnection(options: SSEConnectionOptions): Promise
  * Stop an active SSE connection
  */
 export function stopSSEConnection(taskId: string): void {
+  const store = useChatStore.getState()
+  const task = store.getTask(taskId)
+  const projectId = task?.projectId || store.activeProjectId
+  if (projectId) {
+    void requestStop(projectId)
+  }
   removeSSEController(taskId)
   useChatStore.getState().stopTask(taskId)
 }
@@ -620,5 +790,19 @@ export async function sendImproveMessage(
   } catch (error) {
     console.error('[SSE] Improve error:', error)
     throw error
+  }
+}
+
+async function requestStop(projectId: string): Promise<void> {
+  const { accessToken } = useAuthStore.getState()
+  try {
+    await fetch(`${ORCHESTRATOR_URL}/chat/${projectId}`, {
+      method: 'DELETE',
+      headers: {
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+    })
+  } catch (error) {
+    console.warn('[SSE] Failed to stop task:', error)
   }
 }

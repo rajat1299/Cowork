@@ -22,3 +22,12 @@ class ArtifactEvent(BaseModel):
     name: str
     content_url: str | None = None
     created_at: float | None = None
+
+
+class AgentEvent(BaseModel):
+    type: str
+    payload: Any | None = None
+    timestamp_ms: int | None = None
+    turn_id: str | None = None
+    session_id: str | None = None
+    event_id: str | None = None

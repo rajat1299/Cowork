@@ -11,16 +11,19 @@
  * - Expanded: Full agent cards with details
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { cn } from '@/lib/utils'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { WorkFlowProps } from './types'
 import { AgentCard } from './AgentCard'
 import { getAgentDisplayName, getAgentAccentClass } from './types'
+import type { ProgressStep } from '@/types/chat'
+import { getStepLabel } from '@/types/chat'
 
 interface WorkFlowPanelProps extends WorkFlowProps {
   /** Whether the panel should be visible */
   isVisible: boolean
+  timeline?: ProgressStep[]
 }
 
 export function WorkFlowPanel({
@@ -31,9 +34,23 @@ export function WorkFlowPanel({
   status,
   onAgentSelect,
   isVisible,
+  timeline,
   className,
 }: WorkFlowPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false)
+
+  const timelineItems = useMemo(() => {
+    if (!timeline?.length) return []
+    const filtered = timeline.filter((step) => step.step !== 'streaming' && step.step !== 'decompose_text')
+    const recent = filtered.slice(-12).reverse()
+    return recent.map((step, index) => ({
+      id: `${step.timestamp ?? index}-${step.step}`,
+      title: formatTimelineTitle(step),
+      detail: formatTimelineDetail(step),
+      status: step.status,
+      time: formatTimelineTime(step.timestamp),
+    }))
+  }, [timeline])
   
   // Auto-expand when first agent is created, collapse when done
   useEffect(() => {
@@ -118,7 +135,7 @@ export function WorkFlowPanel({
               isExpanded ? 'max-h-[400px] opacity-100' : 'max-h-0 opacity-0'
             )}
           >
-            <div className="px-4 pb-4 pt-1">
+            <div className="px-4 pb-4 pt-1 space-y-4">
               <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
                 {agents.map((agent, index) => (
                   <div
@@ -136,6 +153,10 @@ export function WorkFlowPanel({
                   </div>
                 ))}
               </div>
+
+              {timelineItems.length > 0 && (
+                <TimelineSection items={timelineItems} />
+              )}
             </div>
           </div>
         </>
@@ -227,6 +248,101 @@ function DecomposeBar({ text }: { text: string }) {
   )
 }
 
+function TimelineSection({ items }: { items: Array<{ id: string; title: string; detail?: string; status: string; time?: string }> }) {
+  return (
+    <div className="rounded-xl border border-border/30 bg-muted/10">
+      <div className="flex items-center justify-between px-3 pt-3">
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Event timeline
+        </span>
+      </div>
+      <div className="px-3 pb-3 pt-2 space-y-2">
+        {items.map((item) => (
+          <div key={item.id} className="flex items-start gap-2">
+            <span
+              className={cn(
+                'mt-1.5 h-2 w-2 rounded-full',
+                item.status === 'active' && 'bg-[hsl(var(--status-active))]',
+                item.status === 'completed' && 'bg-[hsl(var(--status-done))]',
+                item.status === 'failed' && 'bg-destructive',
+                item.status === 'pending' && 'bg-muted-foreground/40'
+              )}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-foreground truncate">{item.title}</span>
+                {item.time && (
+                  <span className="text-[10px] text-muted-foreground">{item.time}</span>
+                )}
+              </div>
+              {item.detail && (
+                <div className="text-[11px] text-muted-foreground truncate">{item.detail}</div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function formatTimelineTitle(step: ProgressStep): string {
+  if (step.step === 'activate_toolkit' || step.step === 'deactivate_toolkit') {
+    const data = step.data || {}
+    const toolkit = typeof data.toolkit === 'string' ? data.toolkit : ''
+    const method = typeof data.method === 'string' ? data.method : ''
+    const label = [toolkit, method].filter(Boolean).join(' · ')
+    return label ? `Tool ${label}` : getStepLabel(step.step)
+  }
+  if (step.step === 'activate_agent' || step.step === 'deactivate_agent' || step.step === 'create_agent') {
+    const data = step.data || {}
+    const agent = typeof data.agent === 'string' ? data.agent : ''
+    return agent ? `${getStepLabel(step.step)} · ${agent}` : getStepLabel(step.step)
+  }
+  if (step.step === 'assign_task') {
+    const data = step.data || {}
+    const content = typeof data.content === 'string' ? data.content : ''
+    return content ? `Assign task · ${content}` : getStepLabel(step.step)
+  }
+  if (step.step === 'task_state') {
+    const data = step.data || {}
+    const state = typeof data.state === 'string' ? data.state : ''
+    const content = typeof data.content === 'string' ? data.content : ''
+    return content && state ? `${content} · ${state}` : getStepLabel(step.step)
+  }
+  if (step.step === 'artifact') {
+    const data = step.data || {}
+    const name = typeof data.name === 'string' ? data.name : ''
+    return name ? `Artifact · ${name}` : getStepLabel(step.step)
+  }
+  return getStepLabel(step.step)
+}
+
+function formatTimelineDetail(step: ProgressStep): string | undefined {
+  const data = step.data || {}
+  if (step.step === 'activate_toolkit' || step.step === 'deactivate_toolkit') {
+    const agent = typeof data.agent === 'string' ? data.agent : ''
+    const message = typeof data.message === 'string' ? data.message : ''
+    const result = typeof data.result === 'string' ? data.result : ''
+    const detail = message || result
+    return agent && detail ? `${agent} · ${detail}` : agent || detail || undefined
+  }
+  if (step.step === 'notice' || step.step === 'context_too_long') {
+    const message = typeof data.message === 'string' ? data.message : ''
+    return message || undefined
+  }
+  if (step.step === 'error') {
+    const message = typeof data.message === 'string' ? data.message : ''
+    return message || undefined
+  }
+  return undefined
+}
+
+function formatTimelineTime(timestamp?: number): string | undefined {
+  if (!timestamp) return undefined
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
 /**
  * Get status text for header
  */
@@ -258,4 +374,3 @@ function getStatusText(
 }
 
 export default WorkFlowPanel
-

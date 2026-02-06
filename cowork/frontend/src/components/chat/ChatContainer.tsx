@@ -20,6 +20,7 @@ export function ChatContainer() {
     sendMessage,
     sendFollowUp,
     stopTask,
+    progressSteps,
   } = useChat()
 
   // Workflow state for the panel
@@ -80,6 +81,7 @@ export function ChatContainer() {
         decomposeText={decomposeText}
         status={workflowStatus}
         isVisible={workflowStatus !== 'idle'}
+        timeline={progressSteps}
       />
 
       {/* Messages or Welcome Screen */}
