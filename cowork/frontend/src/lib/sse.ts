@@ -8,6 +8,7 @@ import { ORCHESTRATOR_URL } from '../api/client'
 import { useAuthStore } from '../stores/authStore'
 import {
   useChatStore,
+  getSSEController,
   setSSEController,
   removeSSEController,
   updateStreamingTextThrottled,
@@ -100,7 +101,7 @@ function asContextTooLongData(data: unknown): ContextTooLongData | null {
 
 function asAgentEvent(data: unknown): AgentEvent | null {
   if (!isRecord(data) || typeof data.type !== 'string') return null
-  return data as AgentEvent
+  return data as unknown as AgentEvent
 }
 
 // ============ SSE Connection Options ============
@@ -358,15 +359,22 @@ function handleToolkitDeactivate(taskId: string, data: ToolkitData): void {
 
 function handleArtifact(taskId: string, data: ArtifactData): void {
   const store = useChatStore.getState()
-
-  store.addArtifact(taskId, {
+  const artifact = {
     id: data.id || generateId(),
     type: data.type || 'file',
     name: data.name,
     contentUrl: data.content_url,
-  })
+    path: data.path,
+  }
 
-  addProgressStepFromEvent(taskId, 'artifact', 'completed', { name: data.name })
+  store.addArtifact(taskId, artifact)
+  store.addArtifactToLatestAssistant(taskId, artifact)
+
+  addProgressStepFromEvent(taskId, 'artifact', 'completed', {
+    name: data.name,
+    content_url: data.content_url,
+    path: data.path,
+  })
 }
 
 function handleTaskState(taskId: string, data: TaskStateData): void {
@@ -579,12 +587,14 @@ function mapToolPayload(payload: Record<string, unknown>): ToolkitData {
       : typeof payload.result === 'string'
       ? payload.result
       : ''
+  const result = typeof payload.result === 'string' ? payload.result : undefined
   return {
     toolkit_name,
     method_name,
     agent_name,
     process_task_id,
     message,
+    result,
   }
 }
 
@@ -644,12 +654,25 @@ export async function startSSEConnection(options: SSEConnectionOptions): Promise
   const store = useChatStore.getState()
   const { accessToken } = useAuthStore.getState()
 
+  const existingController = getSSEController(taskId)
+  if (existingController) {
+    try {
+      existingController.abort()
+    } catch (error) {
+      console.warn('[SSE] Failed to abort existing controller:', error)
+    }
+  }
+
   // Create abort controller for this connection
   const abortController = new AbortController()
   setSSEController(taskId, abortController)
 
   // Set connecting state
   store.setConnecting(true)
+  store.setTaskStatus(taskId, 'pending')
+  store.setTaskError(taskId, undefined)
+  store.clearStreamingDecomposeText(taskId)
+  store.setNotice(taskId, null)
 
   const requestBody: StartChatRequest = {
     project_id: projectId,

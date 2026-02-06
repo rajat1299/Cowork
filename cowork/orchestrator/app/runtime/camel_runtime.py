@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
+from urllib.parse import quote
 
 from camel.agents import ChatAgent
 from camel.agents.chat_agent import AsyncStreamingChatAgentResponse
@@ -150,8 +151,9 @@ def _trace_step(task_id: str, step: StepEvent, data: dict) -> None:
 
 
 def _emit(task_id: str, step: StepEvent, data: dict) -> StepEventModel:
+    artifact_payload: dict[str, Any] | None = None
     if step == StepEvent.deactivate_toolkit:
-        _maybe_store_tool_output(task_id, data)
+        artifact_payload = _maybe_store_tool_output(task_id, data)
     _trace_step(task_id, step, data)
     payload = _attach_agent_event(task_id, step, data)
     event = StepEventModel(
@@ -161,6 +163,8 @@ def _emit(task_id: str, step: StepEvent, data: dict) -> StepEventModel:
         timestamp=time.time(),
     )
     fire_and_forget(event)
+    if artifact_payload:
+        _emit(task_id, StepEvent.artifact, artifact_payload)
     return event
 
 
@@ -260,12 +264,12 @@ def _agent_event_payload(step: StepEvent, data: dict) -> dict:
     return {"kind": step.value, "data": data}
 
 
-def _maybe_store_tool_output(task_id: str, data: dict) -> None:
+def _maybe_store_tool_output(task_id: str, data: dict) -> dict[str, Any] | None:
     message = data.get("message")
     if not isinstance(message, str):
-        return
+        return None
     if len(message) < _TOOL_OUTPUT_ARTIFACT_THRESHOLD:
-        return
+        return None
     workdir = os.environ.get("CAMEL_WORKDIR")
     if workdir:
         base_path = Path(workdir)
@@ -279,19 +283,31 @@ def _maybe_store_tool_output(task_id: str, data: dict) -> None:
     try:
         path.write_text(message, encoding="utf-8")
     except Exception:
-        return
+        return None
     data["message"] = f"Stored tool output in artifact: {filename}"
     data["artifact_name"] = filename
     data["artifact_path"] = str(path)
+    project_id = current_project_id.get(None)
+    content_url = None
+    if project_id:
+        relative_path = path.relative_to(base_path)
+        content_url = f"/files/generated/{project_id}/download?path={quote(str(relative_path))}"
     fire_and_forget_artifact(
         ArtifactEvent(
             task_id=task_id,
             artifact_type="tool_output",
             name=filename,
-            content_url=str(path),
+            content_url=content_url or str(path),
             created_at=time.time(),
         )
     )
+    return {
+        "id": f"artifact-{timestamp}",
+        "type": "file",
+        "name": filename,
+        "content_url": content_url,
+        "path": str(path),
+    }
 
 
 def _usage_total(usage: dict | None) -> int:

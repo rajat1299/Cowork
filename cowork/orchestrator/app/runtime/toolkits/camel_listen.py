@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import copy_context
 import inspect
 import json
 import logging
@@ -23,21 +24,23 @@ def _run_async_in_sync(coro):
     try:
         loop = asyncio.get_running_loop()
         # There's a running loop but we're in a sync function
+        ctx = copy_context()
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, coro)
+            future = pool.submit(lambda: ctx.run(asyncio.run, coro))
             return future.result(timeout=60)
     except RuntimeError:
         # No running event loop
+        ctx = copy_context()
         if not hasattr(_thread_local, "loop") or _thread_local.loop.is_closed():
             _thread_local.loop = asyncio.new_event_loop()
         loop = _thread_local.loop
         try:
-            return loop.run_until_complete(coro)
+            return ctx.run(loop.run_until_complete, coro)
         except Exception:
             loop = asyncio.new_event_loop()
             _thread_local.loop = loop
-            return loop.run_until_complete(coro)
+            return ctx.run(loop.run_until_complete, coro)
 
 
 EXCLUDED_METHODS = {

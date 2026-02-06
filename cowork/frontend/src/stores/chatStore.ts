@@ -97,6 +97,7 @@ interface ChatState {
 
   // Actions - Artifacts
   addArtifact: (taskId: string, artifact: ArtifactInfo) => void
+  addArtifactToLatestAssistant: (taskId: string, artifact: ArtifactInfo) => void
 
   // Actions - Error & Metadata
   setTaskError: (taskId: string, error: string | undefined) => void
@@ -182,7 +183,8 @@ export const useChatStore = create<ChatState>()(
         }
 
         set((state) => {
-          const { [taskId]: removed, ...remaining } = state.tasks
+          const remaining = { ...state.tasks }
+          delete remaining[taskId]
           return {
             tasks: remaining,
             activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
@@ -450,12 +452,56 @@ export const useChatStore = create<ChatState>()(
           const task = state.tasks[taskId]
           if (!task) return state
 
+          const alreadyExists = task.artifacts.some((item) => item.id === artifact.id)
+          if (alreadyExists) return state
+
           return {
             tasks: {
               ...state.tasks,
               [taskId]: {
                 ...task,
                 artifacts: [...task.artifacts, artifact],
+              },
+            },
+          }
+        })
+      },
+
+      addArtifactToLatestAssistant: (taskId, artifact) => {
+        set((state) => {
+          const task = state.tasks[taskId]
+          if (!task) return state
+
+          const messages = [...task.messages]
+          for (let i = messages.length - 1; i >= 0; i -= 1) {
+            const message = messages[i]
+            if (message.role !== 'assistant') continue
+            const artifacts = message.artifacts || []
+            if (artifacts.some((item) => item.id === artifact.id)) return state
+            messages[i] = {
+              ...message,
+              artifacts: [...artifacts, artifact],
+            }
+            return {
+              tasks: {
+                ...state.tasks,
+                [taskId]: {
+                  ...task,
+                  messages,
+                },
+              },
+            }
+          }
+
+          return {
+            tasks: {
+              ...state.tasks,
+              [taskId]: {
+                ...task,
+                messages: [
+                  ...messages,
+                  createMessage('assistant', 'Generated artifact.', { artifacts: [artifact] }),
+                ],
               },
             },
           }

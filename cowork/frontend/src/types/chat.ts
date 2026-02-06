@@ -113,6 +113,7 @@ export interface ArtifactData {
   type: 'file' | 'code' | 'image'
   name: string
   content_url?: string
+  path?: string
 }
 
 export interface EndData {
@@ -171,6 +172,8 @@ export interface ArtifactInfo {
   type: 'file' | 'code' | 'image' | 'viewed' | 'created'
   name: string
   contentUrl?: string
+  path?: string
+  createdAt?: number
   action?: 'created' | 'viewed' | 'modified'
 }
 

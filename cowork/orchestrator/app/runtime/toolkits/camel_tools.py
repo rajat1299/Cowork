@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import copy_context
 import inspect
 import logging
 import threading
@@ -20,6 +21,7 @@ from app.runtime.tool_context import (
     current_agent_name,
     current_auth_token,
     current_process_task_id,
+    current_project_id,
 )
 from app.runtime.toolkits.camel_listen import auto_listen_toolkit
 
@@ -40,23 +42,25 @@ def _run_async_in_sync(coro):
         loop = asyncio.get_running_loop()
         # If we're here, there's a running loop but we're in a sync function
         # This shouldn't happen often, but handle it gracefully
+        ctx = copy_context()
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, coro)
+            future = pool.submit(lambda: ctx.run(asyncio.run, coro))
             return future.result(timeout=60)
     except RuntimeError:
         # No running event loop - this is the normal case for sync wrappers
         # Use thread-local event loop for better performance
+        ctx = copy_context()
         if not hasattr(_thread_local, "loop") or _thread_local.loop.is_closed():
             _thread_local.loop = asyncio.new_event_loop()
         loop = _thread_local.loop
         try:
-            return loop.run_until_complete(coro)
+            return ctx.run(loop.run_until_complete, coro)
         except Exception:
             # If the loop is problematic, create a fresh one
             loop = asyncio.new_event_loop()
             _thread_local.loop = loop
-            return loop.run_until_complete(coro)
+            return ctx.run(loop.run_until_complete, coro)
 
 
 def _coerce_limit(value: int | None, default: int = 5, max_limit: int = 20) -> int:
@@ -249,10 +253,30 @@ def _wrap_function_tool(
         resolved_toolkit, method_name = function_name.split("__", 1)
     if not resolved_toolkit:
         resolved_toolkit = "mcp"
+    fallback_auth_token = current_auth_token.get()
+    fallback_project_id = current_project_id.get()
+
+    def _apply_fallback_context() -> tuple[object | None, object | None]:
+        auth_token = current_auth_token.get()
+        project_id = current_project_id.get()
+        auth_ctx = None
+        project_ctx = None
+        if auth_token is None and fallback_auth_token is not None:
+            auth_ctx = current_auth_token.set(fallback_auth_token)
+        if project_id is None and fallback_project_id is not None:
+            project_ctx = current_project_id.set(fallback_project_id)
+        return auth_ctx, project_ctx
+
+    def _reset_fallback_context(auth_ctx: object | None, project_ctx: object | None) -> None:
+        if auth_ctx is not None:
+            current_auth_token.reset(auth_ctx)
+        if project_ctx is not None:
+            current_project_id.reset(project_ctx)
 
     async def _async_wrapper(*args, **kwargs):
         resolved_agent = agent_name or current_agent_name.get("")
         process_task_id = current_process_task_id.get("")
+        auth_ctx, project_ctx = _apply_fallback_context()
         _emit_tool_event(
             event_stream,
             StepEvent.activate_toolkit,
@@ -287,10 +311,13 @@ def _wrap_function_tool(
                 str(exc),
             )
             raise
+        finally:
+            _reset_fallback_context(auth_ctx, project_ctx)
 
     def _sync_wrapper(*args, **kwargs):
         resolved_agent = agent_name or current_agent_name.get("")
         process_task_id = current_process_task_id.get("")
+        auth_ctx, project_ctx = _apply_fallback_context()
         _emit_tool_event(
             event_stream,
             StepEvent.activate_toolkit,
@@ -327,6 +354,8 @@ def _wrap_function_tool(
                 str(exc),
             )
             raise
+        finally:
+            _reset_fallback_context(auth_ctx, project_ctx)
 
     # Always use _sync_wrapper since it can handle both sync and async functions
     # This ensures tools work regardless of how CAMEL invokes them

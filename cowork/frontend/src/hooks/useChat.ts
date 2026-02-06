@@ -1,8 +1,9 @@
 import { useCallback, useMemo } from 'react'
 import { useChatStore } from '../stores/chatStore'
-import { startSSEConnection, stopSSEConnection, sendImproveMessage } from '../lib/sse'
+import { startSSEConnection, stopSSEConnection } from '../lib/sse'
+import { buildTurnExecutionView, mapBackendStepToProgressStep } from '../lib/execution'
 import { generateId, createMessage } from '../types/chat'
-import { history, chatMessages } from '../api/coreApi'
+import { history, chatMessages, steps, artifacts as artifactsApi } from '../api/coreApi'
 import { files as orchestratorFiles } from '../api/orchestrator'
 import { ORCHESTRATOR_URL } from '../api/client'
 import type {
@@ -203,9 +204,36 @@ export function useChat(): UseChatReturn {
       })
 
       try {
-        await sendImproveMessage(activeProjectId, message, activeTaskId, {
-          ...options,
+        useChatStore.setState((state) => {
+          const task = state.tasks[activeTaskId]
+          if (!task) return state
+          return {
+            tasks: {
+              ...state.tasks,
+              [activeTaskId]: {
+                ...task,
+                status: 'pending',
+                currentStep: null,
+                error: undefined,
+                notice: null,
+                streamingDecomposeText: '',
+                subtasks: [],
+                activeAgents: [],
+              },
+            },
+          }
+        })
+
+        await startSSEConnection({
+          projectId: activeProjectId,
+          taskId: activeTaskId,
+          question: message,
+          searchEnabled: options?.searchEnabled,
+          agents: options?.agents,
           attachments: attachmentPayloads,
+          onError: (err) => {
+            console.error('[useChat] Follow-up SSE error:', err)
+          },
         })
       } catch (err) {
         console.error('[useChat] Failed to send follow-up:', err)
@@ -243,10 +271,20 @@ export function useChat(): UseChatReturn {
       // Fetch task metadata from backend
       const historyTask = await history.getByTaskId(taskId)
 
+      const toOrchestratorUrl = (url?: string): string | undefined => {
+        if (!url) return undefined
+        if (url.startsWith('http://') || url.startsWith('https://')) return url
+        return `${ORCHESTRATOR_URL}${url.startsWith('/') ? '' : '/'}${url}`
+      }
+
       // Fetch full conversation messages from /chat/messages endpoint
       let messages: Message[] = []
       try {
-        const chatMsgs = await chatMessages.listByProject(historyTask.project_id)
+        let chatMsgs = await chatMessages.listByTask(taskId)
+        if (chatMsgs.length === 0) {
+          chatMsgs = await chatMessages.listByProject(historyTask.project_id)
+            .then((rows) => rows.filter((row) => row.task_id === taskId))
+        }
 
         const mapAttachments = (metadata: Record<string, unknown> | null | undefined) => {
           const raw = metadata?.attachments
@@ -262,7 +300,7 @@ export function useChat(): UseChatReturn {
                 name: String(data.name || 'attachment'),
                 size: typeof data.size === 'number' ? data.size : 0,
                 contentType,
-                url: url ? `${ORCHESTRATOR_URL}${url}` : undefined,
+                url: toOrchestratorUrl(url),
                 path: typeof data.path === 'string' ? data.path : undefined,
                 kind: contentType?.startsWith('image/') ? 'image' : 'file',
               } as AttachmentInfo
@@ -271,14 +309,16 @@ export function useChat(): UseChatReturn {
         }
 
         // Convert backend messages to frontend Message format
-        messages = chatMsgs.map((msg) => ({
-          id: String(msg.id),
-          role: msg.role as 'user' | 'assistant' | 'system',
-          content: msg.content,
-          timestamp: new Date(msg.created_at).getTime(),
-          agentName: msg.metadata?.agent_name as string | undefined,
-          attachments: mapAttachments(msg.metadata),
-        }))
+        messages = chatMsgs
+          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+          .map((msg) => ({
+            id: String(msg.id),
+            role: msg.role as 'user' | 'assistant' | 'system',
+            content: msg.content,
+            timestamp: new Date(msg.created_at).getTime(),
+            agentName: msg.metadata?.agent_name as string | undefined,
+            attachments: mapAttachments(msg.metadata),
+          }))
       } catch (msgError) {
         console.warn('Failed to fetch chat messages, falling back to summary:', msgError)
         // Fallback: use question + summary if messages endpoint fails
@@ -288,21 +328,81 @@ export function useChat(): UseChatReturn {
         ]
       }
 
+      const [stepsResult, artifactsResult] = await Promise.allSettled([
+        steps.list(taskId),
+        artifactsApi.list(taskId),
+      ])
+
+      const progressSteps = stepsResult.status === 'fulfilled'
+        ? stepsResult.value
+            .sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0))
+            .map(mapBackendStepToProgressStep)
+        : []
+
+      const artifactsFromApi = artifactsResult.status === 'fulfilled'
+        ? artifactsResult.value.map((artifact) => ({
+            id: artifact.id,
+            type: (artifact.type as ArtifactInfo['type']) || 'file',
+            name: artifact.name,
+            contentUrl: toOrchestratorUrl(artifact.content_url),
+            createdAt: new Date(artifact.created_at).getTime(),
+          }))
+        : []
+
+      const artifactsFromSteps = progressSteps
+        .filter((step) => step.step === 'artifact')
+        .map((step, index) => {
+          const data = step.data || {}
+          const stepId = typeof data.id === 'string' ? data.id : `artifact-step-${index}`
+          const contentUrl = typeof data.content_url === 'string' ? data.content_url : undefined
+          const path = typeof data.path === 'string' ? data.path : undefined
+          return {
+            id: stepId,
+            type: 'file' as const,
+            name: typeof data.name === 'string' ? data.name : `artifact-${index + 1}`,
+            contentUrl: toOrchestratorUrl(contentUrl),
+            path,
+            createdAt: step.timestamp,
+          }
+        })
+
+      const artifactMap = new Map<string, ArtifactInfo>()
+      ;[...artifactsFromApi, ...artifactsFromSteps].forEach((artifact) => {
+        artifactMap.set(artifact.id, artifact)
+      })
+      const mergedArtifacts = [...artifactMap.values()].sort(
+        (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
+      )
+
+      const executionView = buildTurnExecutionView(progressSteps)
+      const lastStep = progressSteps[progressSteps.length - 1]?.step
+      const status =
+        historyTask.status === 2 || lastStep === 'end'
+          ? 'completed'
+          : lastStep === 'error' || lastStep === 'context_too_long'
+          ? 'failed'
+          : 'running'
+
       // Create task in store with the fetched data
       const newTask: ChatTask = {
         id: taskId,
         projectId: historyTask.project_id,
         messages,
-        status: historyTask.status === 2 ? 'completed' : 'running',
-        subtasks: [],
+        status,
+        subtasks: executionView.subtasks,
         streamingDecomposeText: '',
         activeAgents: [],
-        currentStep: null,
-        progressSteps: [],
-        artifacts: [],
+        currentStep: progressSteps[progressSteps.length - 1]?.step || null,
+        progressSteps,
+        artifacts: mergedArtifacts,
         tokens: historyTask.tokens || 0,
         startTime: historyTask.created_at ? new Date(historyTask.created_at).getTime() : Date.now(),
-        endTime: historyTask.status === 2 ? (historyTask.updated_at ? new Date(historyTask.updated_at).getTime() : Date.now()) : undefined,
+        endTime:
+          status === 'completed' || status === 'failed'
+            ? historyTask.updated_at
+              ? new Date(historyTask.updated_at).getTime()
+              : Date.now()
+            : undefined,
       }
 
       // Add task to store using internal method

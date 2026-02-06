@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -140,4 +140,23 @@ def download_file(project_id: str, file_id: str) -> FileResponse:
         file_path,
         filename=meta.get("name") or file_path.name,
         media_type=meta.get("content_type") or "application/octet-stream",
+    )
+
+
+@router.get("/generated/{project_id}/download")
+def download_generated_file(project_id: str, path: str = Query(...)) -> FileResponse:
+    workdir = _resolve_workdir(project_id)
+    requested = Path(path)
+    if requested.is_absolute():
+        file_path = requested.resolve()
+    else:
+        file_path = (workdir / requested).resolve()
+    if workdir not in file_path.parents and file_path != workdir:
+        raise HTTPException(status_code=403, detail="Invalid file path")
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(
+        file_path,
+        filename=file_path.name,
+        media_type="application/octet-stream",
     )
