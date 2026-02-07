@@ -2,37 +2,42 @@ import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { FileText, Image as ImageIcon, ExternalLink, Download, Clipboard } from 'lucide-react'
-import { ORCHESTRATOR_URL } from '../../api/client'
+import { canPreviewArtifact, resolveArtifactUrl } from '../../lib/artifacts'
 import { cn } from '../../lib/utils'
+import { useViewerStore } from '../../stores/viewerStore'
 import type { Message, AttachmentInfo, ArtifactInfo } from '../../types/chat'
 
 interface ChatMessageProps {
   message: Message
 }
 
-function resolveUrl(url?: string): string | undefined {
-  if (!url) return undefined
-  if (url.startsWith('http://') || url.startsWith('https://')) return url
-  return `${ORCHESTRATOR_URL}${url.startsWith('/') ? '' : '/'}${url}`
-}
-
 function ArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
-  const url = resolveUrl(artifact.contentUrl)
+  const openArtifact = useViewerStore((state) => state.openArtifact)
+  const url = resolveArtifactUrl(artifact.contentUrl, artifact.path)
+  const previewable = canPreviewArtifact(artifact)
+
+  const handleOpen = () => {
+    if (!url) return
+    if (previewable) {
+      openArtifact(artifact)
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
   return (
     <div className="rounded-lg border border-border/70 bg-secondary/30 p-2.5">
       <p className="text-[13px] font-medium text-foreground truncate">{artifact.name}</p>
       {artifact.path ? <p className="text-[11px] text-muted-foreground truncate mt-0.5">{artifact.path}</p> : null}
       <div className="mt-2 flex items-center gap-1.5">
         {url ? (
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            onClick={handleOpen}
             className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
           >
             <ExternalLink size={12} />
             Open
-          </a>
+          </button>
         ) : null}
         {url ? (
           <a
@@ -98,7 +103,7 @@ export const ChatMessage = memo(function ChatMessage({ message }: ChatMessagePro
                 ) : null}
               </p>
             ) : (
-              <div className="prose prose-invert max-w-none text-[15px] leading-7">
+              <div className="max-w-none text-[15px] leading-7">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{

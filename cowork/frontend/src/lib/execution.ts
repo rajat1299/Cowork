@@ -17,6 +17,7 @@ export interface SearchEvidenceResult {
 
 export interface EvidenceBlock {
   id: string
+  timestamp: number
   summary: string
   status: 'running' | 'done' | 'error'
   toolkit?: string
@@ -282,6 +283,7 @@ function deriveEvidence(turnSteps: ProgressStep[]): EvidenceBlock[] {
     if (step.step === 'activate_toolkit') {
       const block: EvidenceBlock = {
         id: `evidence-${step.timestamp ?? index}`,
+        timestamp: step.timestamp ?? index,
         summary: summarizeToolkitAction(toolkit, method, ''),
         status: 'running',
         toolkit,
@@ -308,6 +310,7 @@ function deriveEvidence(turnSteps: ProgressStep[]): EvidenceBlock[] {
 
     evidence.push({
       id: `evidence-${step.timestamp ?? index}`,
+      timestamp: step.timestamp ?? index,
       summary: nextSummary,
       status: /error|failed|exception/i.test(resultText) ? 'error' : 'done',
       toolkit,

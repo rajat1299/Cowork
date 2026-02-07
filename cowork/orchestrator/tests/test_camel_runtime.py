@@ -1,5 +1,6 @@
 import asyncio
 import types
+from pathlib import Path
 
 import pytest
 from camel.tasks.task import TaskState
@@ -9,6 +10,7 @@ from app.runtime import camel_runtime as cr
 from app.runtime.actions import ActionImprove
 from app.runtime.events import StepEvent
 from app.runtime.task_lock import TaskLock
+from app.runtime.tool_context import current_project_id
 
 
 @pytest.mark.asyncio
@@ -26,17 +28,59 @@ async def test_event_stream_round_trip():
 
 
 @pytest.mark.asyncio
+async def test_event_stream_emits_artifact_after_tool_deactivation(monkeypatch, tmp_path: Path):
+    loop = asyncio.get_running_loop()
+    stream = cr.EventStream("task-artifact-stream", loop)
+
+    project_token = current_project_id.set("proj-artifact-stream")
+    monkeypatch.setenv("CAMEL_WORKDIR", str(tmp_path))
+    monkeypatch.setattr(cr, "fire_and_forget", lambda event: None)
+    monkeypatch.setattr(cr, "fire_and_forget_artifact", lambda event: None)
+
+    output_path = tmp_path / "outputs" / "summary.md"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("artifact content", encoding="utf-8")
+
+    try:
+        cr._cleanup_artifact_cache("task-artifact-stream")
+        stream.emit(
+            StepEvent.deactivate_toolkit,
+            {
+                "agent_name": "document_agent",
+                "process_task_id": "step-1",
+                "toolkit_name": "FileToolkitWithEvents",
+                "method_name": "write to file",
+                "message": f"Content successfully written to file: {output_path}",
+            },
+        )
+        stream.close()
+        events = [event async for event in stream.stream()]
+    finally:
+        current_project_id.reset(project_token)
+
+    assert [event.step for event in events] == [
+        StepEvent.deactivate_toolkit.value,
+        StepEvent.artifact.value,
+    ]
+    artifact_data = events[1].data
+    assert artifact_data["name"] == "summary.md"
+    assert str(artifact_data["content_url"]).startswith(
+        "/files/generated/proj-artifact-stream/download?path="
+    )
+
+
+@pytest.mark.asyncio
 async def test_camel_complex_flow_emits_expected_steps(monkeypatch):
     async def fake_is_complex(provider, question, context):
         return True, 1
 
-    async def fake_stream_chat(provider, messages, temperature=0.2):
+    async def fake_stream_chat(provider, messages, temperature=0.2, extra_params=None):
         payload = '[{"id":"t1","content":"First task"},{"id":"t2","content":"Second task"}]'
         yield payload, {"total_tokens": 2}
 
     call_index = {"count": 0}
 
-    async def fake_collect(provider, messages, temperature=0.2, on_chunk=None):
+    async def fake_collect(provider, messages, temperature=0.2, on_chunk=None, extra_params=None):
         call_index["count"] += 1
         if call_index["count"] == 1:
             return "Demo|Summary", {"total_tokens": 5}
@@ -54,7 +98,7 @@ async def test_camel_complex_flow_emits_expected_steps(monkeypatch):
     async def fake_fetch_mcp_users(auth_header):
         return []
 
-    def fake_build_agent(provider, system_prompt, agent_id, stream=False, tools=None):
+    def fake_build_agent(provider, system_prompt, agent_id, stream=False, tools=None, extra_params=None):
         return types.SimpleNamespace(agent_id=agent_id, agent_name="agent")
 
     class FakeWorkforce:
@@ -156,6 +200,7 @@ async def test_camel_complex_flow_emits_expected_steps(monkeypatch):
     monkeypatch.setattr(cr, "build_agent_tools", lambda *args, **kwargs: [])
     monkeypatch.setattr(cr, "_build_agent", fake_build_agent)
     monkeypatch.setattr(cr, "CoworkWorkforce", FakeWorkforce)
+    monkeypatch.setattr(cr, "fire_and_forget", lambda event: None)
 
     task_lock = TaskLock(project_id="proj-1")
     await task_lock.put(
@@ -190,3 +235,83 @@ async def test_camel_complex_flow_emits_expected_steps(monkeypatch):
     assert StepEvent.task_state.value in steps
     assert steps[-1] == StepEvent.end.value
     assert updates and any("tokens" in payload for payload in updates)
+
+
+def test_extract_file_artifact_from_write_file_result(monkeypatch, tmp_path: Path):
+    task_id = "task-artifact-file"
+    project_ctx = current_project_id.set("proj-artifacts")
+    try:
+        monkeypatch.setenv("CAMEL_WORKDIR", str(tmp_path))
+
+        captured_events = []
+        monkeypatch.setattr(cr, "fire_and_forget_artifact", lambda event: captured_events.append(event))
+
+        output_path = tmp_path / "outputs" / "summary.md"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("hello", encoding="utf-8")
+
+        cr._cleanup_artifact_cache(task_id)
+        payloads = cr._extract_file_artifacts(
+            task_id,
+            {"message": f"Content successfully written to file: {output_path}"},
+        )
+
+        assert len(payloads) == 1
+        payload = payloads[0]
+        assert payload["name"] == "summary.md"
+        assert payload["type"] == "file"
+        assert payload["path"] == str(output_path)
+        assert payload["content_url"].startswith("/files/generated/proj-artifacts/download?path=")
+        assert captured_events and captured_events[0].name == "summary.md"
+
+        duplicate = cr._extract_file_artifacts(
+            task_id,
+            {"message": f"Content successfully written to file: {output_path}"},
+        )
+        assert duplicate == []
+    finally:
+        current_project_id.reset(project_ctx)
+
+
+def test_collect_tool_artifacts_skips_large_raw_tool_output(monkeypatch, tmp_path: Path):
+    task_id = "task-skip-tool-output"
+    monkeypatch.setenv("CAMEL_WORKDIR", str(tmp_path))
+    captured_events = []
+    monkeypatch.setattr(cr, "fire_and_forget_artifact", lambda event: captured_events.append(event))
+
+    cr._cleanup_artifact_cache(task_id)
+    payloads = cr._collect_tool_artifacts(task_id, {"message": "x" * 10000})
+
+    assert payloads == []
+    assert captured_events == []
+
+
+def test_build_generated_file_url_infers_project_id_from_workdir_path(tmp_path: Path):
+    workdir = tmp_path / ".cowork" / "workdir" / "project-123"
+    workdir.mkdir(parents=True, exist_ok=True)
+    output_path = workdir / "reports" / "summary.md"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("hello", encoding="utf-8")
+
+    project_ctx = current_project_id.set(None)
+    try:
+        url = cr._build_generated_file_url(workdir, output_path)
+    finally:
+        current_project_id.reset(project_ctx)
+
+    assert url == "/files/generated/project-123/download?path=reports/summary.md"
+
+
+def test_runtime_skills_force_complex_and_upgrade_tools():
+    question = "Create a detailed .xlsx spreadsheet with formulas and save it as an output file"
+    active_skills = cr.detect_runtime_skills(question, attachments=None)
+
+    assert any(skill.name == "xlsx" for skill in active_skills)
+    assert cr.requires_complex_execution(question, active_skills) is True
+
+    agent_specs = cr._merge_agent_specs(cr.build_default_agents(), None)
+    cr.apply_runtime_skills(agent_specs, active_skills)
+    document_agent = next(agent for agent in agent_specs if agent.name == "document_agent")
+
+    assert "excel" in document_agent.tools
+    assert "terminal" in document_agent.tools

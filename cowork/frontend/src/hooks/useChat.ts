@@ -2,10 +2,12 @@ import { useCallback, useMemo } from 'react'
 import { useChatStore } from '../stores/chatStore'
 import { startSSEConnection, stopSSEConnection } from '../lib/sse'
 import { buildTurnExecutionView, mapBackendStepToProgressStep } from '../lib/execution'
+import { normalizeArtifactUrl } from '../lib/artifacts'
 import { generateId, createMessage } from '../types/chat'
 import { history, chatMessages, steps, artifacts as artifactsApi } from '../api/coreApi'
 import { files as orchestratorFiles } from '../api/orchestrator'
 import { ORCHESTRATOR_URL } from '../api/client'
+import { useSessionStore } from '../stores/sessionStore'
 import type {
   ChatTask,
   Message,
@@ -156,6 +158,8 @@ export function useChat(): UseChatReturn {
       }
 
       createTask(pid, message, attachments, taskId)
+      useSessionStore.getState().syncLocalSessions()
+      void useSessionStore.getState().refreshSessionsBackground()
 
       try {
         await startSSEConnection({
@@ -202,6 +206,8 @@ export function useChat(): UseChatReturn {
         timestamp: Date.now(),
         attachments,
       })
+      useSessionStore.getState().syncLocalSessions()
+      void useSessionStore.getState().refreshSessionsBackground()
 
       try {
         useChatStore.setState((state) => {
@@ -344,7 +350,7 @@ export function useChat(): UseChatReturn {
             id: artifact.id,
             type: (artifact.type as ArtifactInfo['type']) || 'file',
             name: artifact.name,
-            contentUrl: toOrchestratorUrl(artifact.content_url),
+            contentUrl: normalizeArtifactUrl(artifact.content_url),
             createdAt: new Date(artifact.created_at).getTime(),
           }))
         : []
@@ -360,7 +366,7 @@ export function useChat(): UseChatReturn {
             id: stepId,
             type: 'file' as const,
             name: typeof data.name === 'string' ? data.name : `artifact-${index + 1}`,
-            contentUrl: toOrchestratorUrl(contentUrl),
+            contentUrl: normalizeArtifactUrl(contentUrl, path),
             path,
             createdAt: step.timestamp,
           }
@@ -410,6 +416,8 @@ export function useChat(): UseChatReturn {
         tasks: { ...state.tasks, [taskId]: newTask },
         activeProjectId: historyTask.project_id, // Set active project for follow-ups
       }))
+      useSessionStore.getState().syncLocalSessions()
+      void useSessionStore.getState().refreshSessionsBackground()
 
       return true
     } catch (error) {
@@ -426,6 +434,7 @@ export function useChat(): UseChatReturn {
         await loadTask(taskId)
       }
       setActiveTask(taskId)
+      useSessionStore.getState().syncLocalSessions()
     },
     [tasks, loadTask, setActiveTask]
   )

@@ -14,20 +14,15 @@ import {
   Download,
   Clipboard,
 } from 'lucide-react'
-import { ORCHESTRATOR_URL } from '../../api/client'
 import { buildTurnExecutionView, type TurnCheckpoint } from '../../lib/execution'
+import { canPreviewArtifact, resolveArtifactUrl } from '../../lib/artifacts'
 import { cn } from '../../lib/utils'
 import { useChatStore } from '../../stores/chatStore'
+import { useViewerStore } from '../../stores/viewerStore'
 import type { ArtifactInfo } from '../../types/chat'
 
 interface RightSidebarProps {
   className?: string
-}
-
-function resolveArtifactUrl(url?: string): string | undefined {
-  if (!url) return undefined
-  if (url.startsWith('http://') || url.startsWith('https://')) return url
-  return `${ORCHESTRATOR_URL}${url.startsWith('/') ? '' : '/'}${url}`
 }
 
 function renderArtifactIcon(type: ArtifactInfo['type']) {
@@ -78,7 +73,18 @@ function CollapsibleSection({
 }
 
 function ArtifactRow({ artifact }: { artifact: ArtifactInfo }) {
-  const url = resolveArtifactUrl(artifact.contentUrl)
+  const openArtifact = useViewerStore((state) => state.openArtifact)
+  const url = resolveArtifactUrl(artifact.contentUrl, artifact.path)
+  const previewable = canPreviewArtifact(artifact)
+
+  const handleOpen = () => {
+    if (!url) return
+    if (previewable) {
+      openArtifact(artifact)
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
 
   return (
     <div className="rounded-lg border border-border/70 bg-secondary/30 p-2.5">
@@ -96,15 +102,13 @@ function ArtifactRow({ artifact }: { artifact: ArtifactInfo }) {
 
       <div className="mt-2 flex items-center gap-1.5">
         {url ? (
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            onClick={handleOpen}
             className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
           >
             <ExternalLink size={12} />
             Open
-          </a>
+          </button>
         ) : null}
         {url ? (
           <a

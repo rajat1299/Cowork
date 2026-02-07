@@ -6,6 +6,7 @@ import logging
 import os
 import platform
 import re
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -56,6 +57,14 @@ from app.runtime.llm_client import (
     collect_chat_completion,
     stream_chat,
 )
+from app.runtime.skills import (
+    RuntimeSkill,
+    apply_runtime_skills,
+    build_runtime_skill_context,
+    detect_runtime_skills,
+    requires_complex_execution,
+    skill_names,
+)
 from app.runtime.sync import fire_and_forget, fire_and_forget_artifact
 from app.runtime.task_lock import TaskLock
 from app.runtime.tool_context import (
@@ -84,7 +93,26 @@ _TRACE_LOGGER: logging.Logger | None = None
 _MAX_CONTEXT_LENGTH = 100000
 _COMPACTION_TRIGGER = 80000
 _COMPACTION_KEEP_LAST = 12
-_TOOL_OUTPUT_ARTIFACT_THRESHOLD = 2000
+_FILE_ARTIFACT_PATTERNS = (
+    re.compile(
+        r"(?:content\s+successfully\s+)?(?:written|saved|created)\s+to\s+file\s*:\s*(?P<path>[^\n]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:output|artifact|file)\s*:\s*(?P<path>[^\n]+?\.[a-z0-9]{1,8})",
+        re.IGNORECASE,
+    ),
+)
+_ABSOLUTE_FILE_PATTERN = re.compile(r"(/[^\s'\"`]+\.[a-z0-9]{1,8})", re.IGNORECASE)
+_ARTIFACT_TYPE_BY_EXTENSION = {
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".gif": "image",
+    ".webp": "image",
+}
+_ARTIFACT_DEDUPE: dict[str, set[str]] = {}
+_ARTIFACT_DEDUPE_LOCK = threading.Lock()
 GLOBAL_USER_CONTEXT = "GLOBAL_USER_CONTEXT"
 GLOBAL_MEMORY_CATEGORIES = {
     "work_context",
@@ -151,9 +179,9 @@ def _trace_step(task_id: str, step: StepEvent, data: dict) -> None:
 
 
 def _emit(task_id: str, step: StepEvent, data: dict) -> StepEventModel:
-    artifact_payload: dict[str, Any] | None = None
+    artifact_payloads: list[dict[str, Any]] = []
     if step == StepEvent.deactivate_toolkit:
-        artifact_payload = _maybe_store_tool_output(task_id, data)
+        artifact_payloads = _collect_tool_artifacts(task_id, data)
     _trace_step(task_id, step, data)
     payload = _attach_agent_event(task_id, step, data)
     event = StepEventModel(
@@ -163,7 +191,7 @@ def _emit(task_id: str, step: StepEvent, data: dict) -> StepEventModel:
         timestamp=time.time(),
     )
     fire_and_forget(event)
-    if artifact_payload:
+    for artifact_payload in artifact_payloads:
         _emit(task_id, StepEvent.artifact, artifact_payload)
     return event
 
@@ -264,50 +292,136 @@ def _agent_event_payload(step: StepEvent, data: dict) -> dict:
     return {"kind": step.value, "data": data}
 
 
-def _maybe_store_tool_output(task_id: str, data: dict) -> dict[str, Any] | None:
-    message = data.get("message")
-    if not isinstance(message, str):
-        return None
-    if len(message) < _TOOL_OUTPUT_ARTIFACT_THRESHOLD:
-        return None
+def _collect_tool_artifacts(task_id: str, data: dict) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    payloads.extend(_extract_file_artifacts(task_id, data))
+    return payloads
+
+
+def _artifact_type_from_suffix(path: Path) -> str:
+    return _ARTIFACT_TYPE_BY_EXTENSION.get(path.suffix.lower(), "file")
+
+
+def _resolve_runtime_base_path(task_id: str) -> Path:
     workdir = os.environ.get("CAMEL_WORKDIR")
     if workdir:
-        base_path = Path(workdir)
-    else:
-        base_path = _resolve_workdir(task_id)
-    artifacts_dir = base_path / "artifacts"
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = int(time.time() * 1000)
-    filename = f"tool_output_{timestamp}.txt"
-    path = artifacts_dir / filename
+        return Path(workdir)
+    project_id = current_project_id.get(None) or task_id
+    return _resolve_workdir(project_id)
+
+
+def _build_generated_file_url(base_path: Path, file_path: Path) -> str | None:
+    project_id = (
+        current_project_id.get(None)
+        or _infer_project_id_from_workdir(base_path)
+        or _infer_project_id_from_workdir(file_path)
+    )
+    if not project_id:
+        return None
     try:
-        path.write_text(message, encoding="utf-8")
+        relative_path = file_path.relative_to(base_path)
+    except ValueError:
+        return None
+    return f"/files/generated/{project_id}/download?path={quote(str(relative_path))}"
+
+
+def _infer_project_id_from_workdir(path: Path) -> str | None:
+    try:
+        resolved = path.resolve()
     except Exception:
         return None
-    data["message"] = f"Stored tool output in artifact: {filename}"
-    data["artifact_name"] = filename
-    data["artifact_path"] = str(path)
-    project_id = current_project_id.get(None)
-    content_url = None
-    if project_id:
-        relative_path = path.relative_to(base_path)
-        content_url = f"/files/generated/{project_id}/download?path={quote(str(relative_path))}"
-    fire_and_forget_artifact(
-        ArtifactEvent(
-            task_id=task_id,
-            artifact_type="tool_output",
-            name=filename,
-            content_url=content_url or str(path),
-            created_at=time.time(),
+    parts = resolved.parts
+    for index, value in enumerate(parts[:-1]):
+        if value == "workdir" and index + 1 < len(parts):
+            candidate = parts[index + 1]
+            if candidate:
+                return candidate
+    return None
+
+
+def _mark_artifact_emitted(task_id: str, key: str) -> bool:
+    with _ARTIFACT_DEDUPE_LOCK:
+        emitted = _ARTIFACT_DEDUPE.setdefault(task_id, set())
+        if key in emitted:
+            return False
+        emitted.add(key)
+        return True
+
+
+def _cleanup_artifact_cache(task_id: str) -> None:
+    with _ARTIFACT_DEDUPE_LOCK:
+        _ARTIFACT_DEDUPE.pop(task_id, None)
+
+
+def _normalize_result_path(raw_path: str, base_path: Path) -> Path | None:
+    value = raw_path.strip().strip("`'\"")
+    value = value.rstrip(".,;")
+    if not value:
+        return None
+    try:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = (base_path / candidate).resolve()
+        else:
+            candidate = candidate.resolve()
+    except Exception:
+        return None
+    return candidate
+
+
+def _candidate_paths_from_message(message: str) -> list[str]:
+    candidates: list[str] = []
+    for pattern in _FILE_ARTIFACT_PATTERNS:
+        for match in pattern.finditer(message):
+            path_value = match.groupdict().get("path")
+            if path_value:
+                candidates.append(path_value.strip())
+    if not candidates:
+        for match in _ABSOLUTE_FILE_PATTERN.finditer(message):
+            candidates.append(match.group(1))
+    return candidates
+
+
+def _extract_file_artifacts(task_id: str, data: dict) -> list[dict[str, Any]]:
+    message = data.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return []
+
+    base_path = _resolve_runtime_base_path(task_id)
+    now = time.time()
+    artifact_payloads: list[dict[str, Any]] = []
+
+    for raw_path in _candidate_paths_from_message(message):
+        resolved = _normalize_result_path(raw_path, base_path)
+        if resolved is None or not resolved.exists() or not resolved.is_file():
+            continue
+
+        path_key = str(resolved)
+        if not _mark_artifact_emitted(task_id, path_key):
+            continue
+
+        content_url = _build_generated_file_url(base_path, resolved)
+        artifact_type = _artifact_type_from_suffix(resolved)
+        fire_and_forget_artifact(
+            ArtifactEvent(
+                task_id=task_id,
+                artifact_type=artifact_type,
+                name=resolved.name,
+                content_url=content_url or str(resolved),
+                created_at=now,
+            )
         )
-    )
-    return {
-        "id": f"artifact-{timestamp}",
-        "type": "file",
-        "name": filename,
-        "content_url": content_url,
-        "path": str(path),
-    }
+        artifact_payloads.append(
+            {
+                "id": f"artifact-file-{abs(hash((task_id, path_key, int(now * 1000))))}",
+                "type": artifact_type,
+                "name": resolved.name,
+                "content_url": content_url or str(resolved),
+                "path": str(resolved),
+            }
+        )
+
+    return artifact_payloads
 
 
 def _usage_total(usage: dict | None) -> int:
@@ -1019,11 +1133,23 @@ class EventStream:
         self.queue: asyncio.Queue[StepEventModel | None] = asyncio.Queue()
 
     def emit(self, step: StepEvent, data: dict) -> None:
+        artifact_payloads: list[dict[str, Any]] = []
+        if step == StepEvent.deactivate_toolkit:
+            # Collect artifacts once so they can be persisted and streamed live.
+            artifact_payloads = _collect_tool_artifacts(self.task_id, data)
         event = _emit(self.task_id, step, data)
+        events: list[StepEventModel] = [event]
+        for artifact_payload in artifact_payloads:
+            events.append(_emit(self.task_id, StepEvent.artifact, artifact_payload))
+
+        def _enqueue() -> None:
+            for queued in events:
+                self.queue.put_nowait(queued)
+
         if self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.queue.put_nowait, event)
+            self.loop.call_soon_threadsafe(_enqueue)
         else:
-            self.queue.put_nowait(event)
+            _enqueue()
 
     def close(self) -> None:
         if self.loop.is_running():
@@ -1326,6 +1452,7 @@ async def _run_camel_complex(
     event_stream: EventStream,
     context: str,
     memory_generate_enabled: bool,
+    active_skills: list[RuntimeSkill],
 ) -> None:
     env_snapshot: dict[str, str | None] | None = None
     mcp_toolkit: MCPToolkit | None = None
@@ -1458,7 +1585,11 @@ async def _run_camel_complex(
                 spec.tools = _strip_search_tools(spec.tools, include_browser=False)
         if memory_search_enabled:
             _ensure_tool(agent_specs, "memory_search")
+        apply_runtime_skills(agent_specs, active_skills)
         global_base_context = _build_global_base_context(str(workdir), action.project_id)
+        skill_context = build_runtime_skill_context(active_skills)
+        if skill_context:
+            global_base_context = f"{global_base_context}{skill_context}"
         search_backend = "exa" if search_enabled and not native_search_enabled else None
         for spec in agent_specs:
             tools = build_agent_tools(
@@ -1658,6 +1789,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             task_lock.stop_requested = False
             task_lock.status = TaskStatus.processing
             task_lock.current_task_id = action.task_id
+            _cleanup_artifact_cache(action.task_id)
             await _hydrate_conversation_history(task_lock, action.auth_token, action.project_id)
             await _hydrate_thread_summary(task_lock, action.auth_token, action.project_id)
 
@@ -1805,6 +1937,24 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             attachments_text = _attachments_context(attachments)
             context = _build_context(task_lock)
             context_with_attachments = f"{context}{attachments_text}" if attachments_text else context
+            active_skills = detect_runtime_skills(action.question, attachments)
+            skills_context = build_runtime_skill_context(active_skills)
+            context_with_skills = (
+                f"{context_with_attachments}{skills_context}" if skills_context else context_with_attachments
+            )
+            if active_skills:
+                _trace_log(
+                    "runtime_skills",
+                    {
+                        "task_id": action.task_id,
+                        "skills": skill_names(active_skills),
+                    },
+                )
+                yield _emit(
+                    action.task_id,
+                    StepEvent.notice,
+                    {"message": f"Activated skills: {', '.join(skill_names(active_skills))}"},
+                )
             await _persist_message(
                 action.auth_token,
                 action.project_id,
@@ -1821,10 +1971,12 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             is_complex, complexity_tokens = await _is_complex_task(
                 provider,
                 action.question,
-                context_with_attachments,
+                context_with_skills,
             )
             total_tokens += complexity_tokens
             if exa_fallback_enabled:
+                is_complex = True
+            if requires_complex_execution(action.question, active_skills):
                 is_complex = True
 
             if not is_complex:
@@ -1833,13 +1985,13 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 try:
                     if native_search_enabled:
                         prompt = (
-                            f"{context_with_attachments}User Query: {action.question}\n\n"
+                            f"{context_with_skills}User Query: {action.question}\n\n"
                             "Provide a direct, helpful answer. Use web search if it helps."
                         )
                     else:
                         prompt = (
-                            f"{context_with_attachments}User Query: {action.question}\n\n"
-                            "Provide a direct, helpful answer to this simple question. Do not call tools."
+                            f"{context_with_skills}User Query: {action.question}\n\n"
+                            "Provide a direct, helpful answer to this simple question."
                         )
                     messages = [{"role": "user", "content": prompt}]
                     async for chunk, usage_update in stream_chat(
@@ -1929,8 +2081,9 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                     history_id,
                     token_tracker,
                     event_stream,
-                    context_with_attachments,
+                    context_with_skills,
                     memory_generate_enabled,
+                    active_skills,
                 )
             )
             task_lock.add_background_task(run_task)

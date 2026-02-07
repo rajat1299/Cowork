@@ -33,6 +33,7 @@ import type {
   AgentEvent,
 } from '../types/chat'
 import { createMessage, generateId } from '../types/chat'
+import { normalizeArtifactUrl } from './artifacts'
 
 // ============ Type Guards ============
 
@@ -337,7 +338,18 @@ function handleAgentDeactivate(taskId: string, data: AgentData): void {
   addProgressStepFromEvent(taskId, 'deactivate_agent', 'completed', { agent: data.agent_name })
 }
 
+function closeStreamingAssistantMessage(taskId: string): void {
+  const store = useChatStore.getState()
+  const task = store.getTask(taskId)
+  if (!task || task.messages.length === 0) return
+  const lastMessage = task.messages[task.messages.length - 1]
+  if (lastMessage.role === 'assistant' && lastMessage.isStreaming) {
+    store.updateMessage(taskId, lastMessage.id, { isStreaming: false })
+  }
+}
+
 function handleToolkitActivate(taskId: string, data: ToolkitData): void {
+  closeStreamingAssistantMessage(taskId)
   addProgressStepFromEvent(taskId, 'activate_toolkit', 'active', {
     toolkit: data.toolkit_name,
     method: data.method_name,
@@ -363,7 +375,7 @@ function handleArtifact(taskId: string, data: ArtifactData): void {
     id: data.id || generateId(),
     type: data.type || 'file',
     name: data.name,
-    contentUrl: data.content_url,
+    contentUrl: normalizeArtifactUrl(data.content_url, data.path),
     path: data.path,
   }
 

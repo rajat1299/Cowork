@@ -14,6 +14,7 @@ import {
 import { cn } from '../../lib/utils'
 import { useAuthStore } from '../../stores/authStore'
 import { useSessionStore, formatRelativeTime } from '../../stores/sessionStore'
+import { useChatStore } from '../../stores/chatStore'
 import { useChat } from '../../hooks'
 
 interface SidebarProps {
@@ -28,6 +29,16 @@ const tabs = [
   { id: 'code', label: 'Code' },
 ]
 
+function buildRecentsFingerprint(state: ReturnType<typeof useChatStore.getState>): string {
+  const taskBits = Object.values(state.tasks)
+    .map((task) => {
+      const userTurns = task.messages.filter((message) => message.role === 'user').length
+      return `${task.id}:${task.status}:${userTurns}:${task.endTime || 0}`
+    })
+    .sort()
+  return `${state.activeTaskId || 'none'}|${taskBits.join('|')}`
+}
+
 export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const navigate = useNavigate()
   // Use individual selectors to avoid unnecessary re-renders
@@ -36,6 +47,8 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const sessions = useSessionStore((s) => s.sessions)
   const isLoading = useSessionStore((s) => s.isLoading)
   const fetchSessions = useSessionStore((s) => s.fetchSessions)
+  const syncLocalSessions = useSessionStore((s) => s.syncLocalSessions)
+  const refreshSessionsBackground = useSessionStore((s) => s.refreshSessionsBackground)
   const { switchTask, activeTask, resetActiveChat } = useChat()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [activeTab, setActiveTab] = useState('cowork')
@@ -47,6 +60,19 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   useEffect(() => {
     fetchSessions()
   }, [fetchSessions])
+
+  useEffect(() => {
+    let previousFingerprint = buildRecentsFingerprint(useChatStore.getState())
+    const unsubscribe = useChatStore.subscribe((state) => {
+      const nextFingerprint = buildRecentsFingerprint(state)
+      if (nextFingerprint === previousFingerprint) return
+      previousFingerprint = nextFingerprint
+      syncLocalSessions()
+      void refreshSessionsBackground()
+    })
+
+    return () => unsubscribe()
+  }, [refreshSessionsBackground, syncLocalSessions])
 
   const handleLogout = () => {
     logout()

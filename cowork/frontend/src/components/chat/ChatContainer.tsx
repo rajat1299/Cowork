@@ -2,12 +2,12 @@ import { useRef, useEffect, useCallback, useMemo, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
-  ExternalLink,
-  Download,
-  Clipboard,
   Check,
   Loader2,
   AlertCircle,
+  ExternalLink,
+  Download,
+  Clipboard,
 } from 'lucide-react'
 import { ChatMessage } from './ChatMessage'
 import { ChatInput } from './ChatInput'
@@ -18,76 +18,93 @@ import { useChat } from '../../hooks'
 import type { ChatMessageOptions } from '../../hooks/useChat'
 import { useChatStore } from '../../stores/chatStore'
 import { StopCircle } from 'lucide-react'
-import { ORCHESTRATOR_URL } from '../../api/client'
 import { buildTurnExecutionView, type EvidenceBlock } from '../../lib/execution'
+import { canPreviewArtifact, resolveArtifactUrl } from '../../lib/artifacts'
 import { cn } from '../../lib/utils'
-import type { ArtifactInfo } from '../../types/chat'
+import { useViewerStore } from '../../stores/viewerStore'
+import type { ArtifactInfo, Message } from '../../types/chat'
 
-function resolveArtifactUrl(url?: string): string | undefined {
-  if (!url) return undefined
-  if (url.startsWith('http://') || url.startsWith('https://')) return url
-  return `${ORCHESTRATOR_URL}${url.startsWith('/') ? '' : '/'}${url}`
-}
+type TimelineItem =
+  | { kind: 'message'; id: string; timestamp: number; order: number; message: Message }
+  | { kind: 'evidence'; id: string; timestamp: number; order: number; evidence: EvidenceBlock }
+  | { kind: 'artifact'; id: string; timestamp: number; order: number; artifact: ArtifactInfo }
 
-function EvidenceTimeline({ evidence }: { evidence: EvidenceBlock[] }) {
-  const [open, setOpen] = useState<Record<string, boolean>>({})
+function EvidenceRow({ item }: { item: EvidenceBlock }) {
+  const [expanded, setExpanded] = useState(false)
 
-  if (evidence.length === 0) return null
+  const statusIcon =
+    item.status === 'done' ? (
+      <Check size={12} className="text-foreground" />
+    ) : item.status === 'running' ? (
+      <Loader2 size={12} className="text-burnt animate-spin" />
+    ) : (
+      <AlertCircle size={12} className="text-destructive" />
+    )
 
   return (
-    <div className="space-y-2">
-      {evidence.map((item) => {
-        const expanded = open[item.id] || false
-        return (
-          <div key={item.id} className="rounded-lg border border-border/70 bg-secondary/30 overflow-hidden">
-            <button
-              onClick={() => setOpen((prev) => ({ ...prev, [item.id]: !expanded }))}
-              className="w-full px-3 py-2 text-left flex items-center justify-between gap-3"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <span
-                  className={cn(
-                    'w-5 h-5 rounded-full border flex items-center justify-center',
-                    item.status === 'done' && 'bg-foreground/10 border-transparent',
-                    item.status === 'running' && 'bg-burnt/10 border-burnt/40',
-                    item.status === 'error' && 'bg-destructive/10 border-destructive/40'
-                  )}
-                >
-                  {item.status === 'done' ? (
-                    <Check size={12} className="text-foreground" />
-                  ) : item.status === 'running' ? (
-                    <Loader2 size={12} className="text-burnt animate-spin" />
-                  ) : (
-                    <AlertCircle size={12} className="text-destructive" />
-                  )}
-                </span>
-                <span className="text-[13px] text-foreground truncate">{item.summary}</span>
-              </div>
-              {expanded ? (
-                <ChevronDown size={14} className="text-muted-foreground" />
-              ) : (
-                <ChevronRight size={14} className="text-muted-foreground" />
-              )}
-            </button>
+    <div className="ml-1 rounded-md border border-border/55 bg-secondary/15 overflow-hidden animate-fade-in">
+      <button
+        onClick={() => setExpanded((prev) => !prev)}
+        className="w-full px-2.5 py-2 text-left flex items-center justify-between gap-2"
+      >
+        <div className="min-w-0 flex items-center gap-2">
+          <span
+            className={cn(
+              'w-4 h-4 rounded-full border flex items-center justify-center',
+              item.status === 'done' && 'bg-foreground/10 border-transparent',
+              item.status === 'running' && 'bg-burnt/10 border-burnt/40',
+              item.status === 'error' && 'bg-destructive/10 border-destructive/40'
+            )}
+          >
+            {statusIcon}
+          </span>
+          <span className="text-[13px] text-muted-foreground truncate">{item.summary}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {item.searchResults?.length ? (
+            <span className="text-[11px] text-muted-foreground/80">{item.searchResults.length} results</span>
+          ) : null}
+          {expanded ? (
+            <ChevronDown size={14} className="text-muted-foreground" />
+          ) : (
+            <ChevronRight size={14} className="text-muted-foreground" />
+          )}
+        </div>
+      </button>
 
-            {expanded ? (
-              <div className="px-3 pb-3 pt-1 border-t border-border/60 space-y-2">
-                {item.request ? (
-                  <div>
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Request</p>
-                    <pre className="text-[12px] text-muted-foreground whitespace-pre-wrap break-words bg-background/40 rounded-md p-2 border border-border/60">
-                      {item.request}
-                    </pre>
-                  </div>
-                ) : null}
+      {expanded ? (
+        <div className="px-2.5 pb-2.5 pt-1 border-t border-border/50 space-y-2">
+          {item.request ? (
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Request</p>
+              <pre className="text-[12px] text-muted-foreground whitespace-pre-wrap break-words bg-background/40 rounded-md p-2 border border-border/60">
+                {item.request}
+              </pre>
+            </div>
+          ) : null}
 
-                {item.searchResults && item.searchResults.length > 0 ? (
-                  <div className="space-y-1.5">
-                    {item.searchResults.map((result, index) => (
-                      <div
-                        key={`${item.id}-result-${index}`}
-                        className="rounded-md border border-border/60 bg-background/30 px-2.5 py-2"
-                      >
+          {item.searchResults && item.searchResults.length > 0 ? (
+            <div className="space-y-1.5">
+              {item.searchResults.map((result, index) => {
+                const faviconHost = result.domain || result.url || ''
+                const faviconUrl = faviconHost
+                  ? `https://www.google.com/s2/favicons?sz=32&domain_url=${encodeURIComponent(faviconHost)}`
+                  : undefined
+                return (
+                  <div
+                    key={`${item.id}-result-${index}`}
+                    className="rounded-md border border-border/60 bg-background/30 px-2.5 py-2"
+                  >
+                    <div className="flex items-start gap-2">
+                      {faviconUrl ? (
+                        <img
+                          src={faviconUrl}
+                          alt=""
+                          className="w-4 h-4 mt-0.5 rounded-sm shrink-0"
+                          loading="lazy"
+                        />
+                      ) : null}
+                      <div className="min-w-0">
                         {result.url ? (
                           <a
                             href={result.url}
@@ -107,74 +124,74 @@ function EvidenceTimeline({ evidence }: { evidence: EvidenceBlock[] }) {
                           <p className="text-[11px] text-destructive mt-0.5">{result.error}</p>
                         ) : null}
                       </div>
-                    ))}
+                    </div>
                   </div>
-                ) : item.result ? (
-                  <div>
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Result</p>
-                    <pre className="text-[12px] text-muted-foreground whitespace-pre-wrap break-words bg-background/40 rounded-md p-2 border border-border/60">
-                      {item.result}
-                    </pre>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        )
-      })}
+                )
+              })}
+            </div>
+          ) : item.result ? (
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Result</p>
+              <pre className="text-[12px] text-muted-foreground whitespace-pre-wrap break-words bg-background/40 rounded-md p-2 border border-border/60">
+                {item.result}
+              </pre>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }
 
-function ArtifactCards({ artifacts }: { artifacts: ArtifactInfo[] }) {
-  if (artifacts.length === 0) return null
+function InlineArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
+  const openArtifact = useViewerStore((state) => state.openArtifact)
+  const url = resolveArtifactUrl(artifact.contentUrl, artifact.path)
+  const previewable = canPreviewArtifact(artifact)
+
+  const handleOpen = () => {
+    if (!url) return
+    if (previewable) {
+      openArtifact(artifact)
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
 
   return (
-    <div className="space-y-2">
-      {artifacts.map((artifact) => {
-        const url = resolveArtifactUrl(artifact.contentUrl)
-        return (
-          <div key={artifact.id} className="rounded-lg border border-border/70 bg-secondary/30 p-3">
-            <p className="text-[13px] font-medium text-foreground truncate">{artifact.name}</p>
-            {artifact.path ? (
-              <p className="text-[11px] text-muted-foreground truncate mt-0.5">{artifact.path}</p>
-            ) : null}
+    <div className="rounded-lg border border-border/70 bg-secondary/25 p-3 animate-fade-in">
+      <p className="text-[13px] font-medium text-foreground truncate">{artifact.name}</p>
+      {artifact.path ? <p className="text-[11px] text-muted-foreground truncate mt-0.5">{artifact.path}</p> : null}
 
-            <div className="mt-2 flex items-center gap-1.5">
-              {url ? (
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
-                >
-                  <ExternalLink size={12} />
-                  Open
-                </a>
-              ) : null}
-              {url ? (
-                <a
-                  href={url}
-                  download={artifact.name}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
-                >
-                  <Download size={12} />
-                  Download
-                </a>
-              ) : null}
-              {artifact.path ? (
-                <button
-                  onClick={() => void navigator.clipboard.writeText(artifact.path || '')}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
-                >
-                  <Clipboard size={12} />
-                  Copy path
-                </button>
-              ) : null}
-            </div>
-          </div>
-        )
-      })}
+      <div className="mt-2 flex items-center gap-1.5">
+        {url ? (
+          <button
+            onClick={handleOpen}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            <ExternalLink size={12} />
+            Open
+          </button>
+        ) : null}
+        {url ? (
+          <a
+            href={url}
+            download={artifact.name}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            <Download size={12} />
+            Download
+          </a>
+        ) : null}
+        {artifact.path ? (
+          <button
+            onClick={() => void navigator.clipboard.writeText(artifact.path || '')}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            <Clipboard size={12} />
+            Copy path
+          </button>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -194,13 +211,58 @@ export function ChatContainer() {
 
   const executionView = useMemo(() => buildTurnExecutionView(progressSteps), [progressSteps])
 
-  const inlineArtifacts = useMemo(() => {
-    const attached = new Set<string>()
+  const timeline = useMemo(() => {
+    const attachedArtifacts = new Set<string>()
+    const fallbackBaseTimestamp =
+      executionView.turnSteps[0]?.timestamp ||
+      messages[messages.length - 1]?.timestamp ||
+      0
     messages.forEach((message) => {
-      message.artifacts?.forEach((artifact) => attached.add(artifact.id))
+      message.artifacts?.forEach((artifact) => attachedArtifacts.add(artifact.id))
     })
-    return artifacts.filter((artifact) => !attached.has(artifact.id))
-  }, [artifacts, messages])
+
+    const items: TimelineItem[] = []
+
+    messages.forEach((message, index) => {
+      items.push({
+        kind: 'message',
+        id: message.id,
+        timestamp: message.timestamp || 0,
+        order: index,
+        message,
+      })
+    })
+
+    executionView.evidence.forEach((evidence, index) => {
+      items.push({
+        kind: 'evidence',
+        id: evidence.id,
+        timestamp: evidence.timestamp || fallbackBaseTimestamp + index + 1,
+        order: 1000 + index,
+        evidence,
+      })
+    })
+
+    artifacts
+      .filter((artifact) => !attachedArtifacts.has(artifact.id))
+      .forEach((artifact, index) => {
+        items.push({
+          kind: 'artifact',
+          id: artifact.id,
+          timestamp: artifact.createdAt || fallbackBaseTimestamp + 1000 + index,
+          order: 2000 + index,
+          artifact,
+        })
+      })
+
+    items.sort((a, b) => {
+      if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp
+      return a.order - b.order
+    })
+
+    return items
+  }, [artifacts, executionView.evidence, executionView.turnSteps, messages])
+
   const hasStreamingAssistant = useMemo(
     () => messages.some((message) => message.role === 'assistant' && message.isStreaming),
     [messages]
@@ -217,17 +279,15 @@ export function ChatContainer() {
   // Auto-scroll on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isConnecting, isRunning, progressSteps])
+  }, [messages, isConnecting, isRunning, progressSteps, timeline.length])
 
   // Handle sending messages
   const handleSend = useCallback(
     async (content: string, options?: ChatMessageOptions) => {
       try {
         if (messages.length === 0) {
-          // Start new conversation
           await sendMessage(content, options)
         } else {
-          // Send follow-up
           await sendFollowUp(content, options)
         }
       } catch (err) {
@@ -253,15 +313,15 @@ export function ChatContainer() {
           <WelcomeScreen onPromptSelect={handleSend} />
         ) : (
           <div className="max-w-2xl mx-auto px-5 py-6 space-y-4">
-            {messages.map((message) => (
-              <ChatMessage key={message.id} message={message} />
-            ))}
-
-            {executionView.evidence.length > 0 ? (
-              <EvidenceTimeline evidence={executionView.evidence} />
-            ) : null}
-
-            {inlineArtifacts.length > 0 ? <ArtifactCards artifacts={inlineArtifacts.slice(-6)} /> : null}
+            {timeline.map((item) => {
+              if (item.kind === 'message') {
+                return <ChatMessage key={item.id} message={item.message} />
+              }
+              if (item.kind === 'evidence') {
+                return <EvidenceRow key={item.id} item={item.evidence} />
+              }
+              return <InlineArtifactCard key={item.id} artifact={item.artifact} />
+            })}
 
             {/* Compacting notice when backend is summarizing history */}
             {activeTaskNotice && (

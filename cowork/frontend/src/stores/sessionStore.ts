@@ -34,6 +34,8 @@ interface SessionState {
   fetchSessions: () => Promise<void>
   fetchMoreSessions: () => Promise<void>
   refreshSessions: () => Promise<void>
+  refreshSessionsBackground: () => Promise<void>
+  syncLocalSessions: () => void
   deleteSession: (sessionId: string) => Promise<void>
   clearError: () => void
 }
@@ -128,6 +130,27 @@ function mergeSessions(local: SessionItem[], remote: SessionItem[]): SessionItem
   )
 }
 
+async function fetchRemoteSessions(limit: number = 20, offset: number = 0): Promise<SessionItem[]> {
+  if (offset > 0) {
+    const listResponse = await history.list(limit, offset)
+    if (!Array.isArray(listResponse)) return []
+    return listResponse.map(historyTaskToSession)
+  }
+
+  try {
+    const groupedResponse = await history.listGrouped(false)
+    if (groupedResponse.projects) {
+      return groupedResponse.projects.map(projectGroupToSession)
+    }
+  } catch {
+    // Fall back to flat list
+  }
+
+  const listResponse = await history.list(limit, offset)
+  if (!Array.isArray(listResponse)) return []
+  return listResponse.map(historyTaskToSession)
+}
+
 // ============ Request Deduplication ============
 
 let fetchSessionsPromise: Promise<void> | null = null
@@ -151,30 +174,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     fetchSessionsPromise = (async () => {
       try {
-        // Get local sessions first
         const localSessions = getLocalSessions()
-
-        // Try to fetch from backend (silently fail if not available)
         let remoteSessions: SessionItem[] = []
         try {
-          // Try grouped endpoint first for better UX
-          const groupedResponse = await history.listGrouped(false)
-          if (groupedResponse.projects) {
-            remoteSessions = groupedResponse.projects.map(projectGroupToSession)
-          }
+          remoteSessions = await fetchRemoteSessions(20, 0)
         } catch {
-          // Fall back to flat list
-          try {
-            const listResponse = await history.list(20, 0)
-            if (Array.isArray(listResponse)) {
-              remoteSessions = listResponse.map(historyTaskToSession)
-            }
-          } catch {
-            // Backend not available - silently use local only
-          }
+          // Backend not available - silently use local only
         }
-
-        // Merge local and remote
         const mergedSessions = mergeSessions(localSessions, remoteSessions)
 
         set({
@@ -236,6 +242,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   refreshSessions: async () => {
     set({ page: 1, hasMore: true })
     await get().fetchSessions()
+  },
+
+  refreshSessionsBackground: async () => {
+    const localSessions = getLocalSessions()
+    try {
+      const remoteSessions = await fetchRemoteSessions(20, 0)
+      set((state) => ({
+        sessions: mergeSessions(localSessions, remoteSessions),
+        hasMore: remoteSessions.length >= 20,
+        page: 1,
+        error: null,
+        isLoading: state.isLoading,
+      }))
+    } catch (error) {
+      console.warn('Background session refresh failed:', error)
+      set((state) => ({
+        sessions: mergeSessions(localSessions, state.sessions.filter((session) => !session.isLocal)),
+      }))
+    }
+  },
+
+  syncLocalSessions: () => {
+    const localSessions = getLocalSessions()
+    set((state) => ({
+      sessions: mergeSessions(localSessions, state.sessions.filter((session) => !session.isLocal)),
+    }))
   },
 
   deleteSession: async (sessionId) => {
