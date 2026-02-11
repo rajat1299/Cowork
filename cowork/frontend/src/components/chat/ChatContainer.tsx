@@ -19,7 +19,13 @@ import type { ChatMessageOptions } from '../../hooks/useChat'
 import { useChatStore } from '../../stores/chatStore'
 import { StopCircle } from 'lucide-react'
 import { buildTurnExecutionView, type EvidenceBlock } from '../../lib/execution'
-import { canPreviewArtifact, resolveArtifactUrl } from '../../lib/artifacts'
+import {
+  artifactFamilyKey,
+  canPreviewArtifact,
+  dedupeArtifactsByCanonicalName,
+  filterUserArtifacts,
+  resolveArtifactUrl,
+} from '../../lib/artifacts'
 import { cn } from '../../lib/utils'
 import { useViewerStore } from '../../stores/viewerStore'
 import type { ArtifactInfo, Message } from '../../types/chat'
@@ -212,13 +218,15 @@ export function ChatContainer() {
   const executionView = useMemo(() => buildTurnExecutionView(progressSteps), [progressSteps])
 
   const timeline = useMemo(() => {
-    const attachedArtifacts = new Set<string>()
+    const attachedArtifactKeys = new Set<string>()
     const fallbackBaseTimestamp =
       executionView.turnSteps[0]?.timestamp ||
       messages[messages.length - 1]?.timestamp ||
       0
     messages.forEach((message) => {
-      message.artifacts?.forEach((artifact) => attachedArtifacts.add(artifact.id))
+      dedupeArtifactsByCanonicalName(filterUserArtifacts(message.artifacts || [])).forEach((artifact) => {
+        attachedArtifactKeys.add(artifactFamilyKey(artifact))
+      })
     })
 
     const items: TimelineItem[] = []
@@ -243,8 +251,8 @@ export function ChatContainer() {
       })
     })
 
-    artifacts
-      .filter((artifact) => !attachedArtifacts.has(artifact.id))
+    dedupeArtifactsByCanonicalName(artifacts)
+      .filter((artifact) => !attachedArtifactKeys.has(artifactFamilyKey(artifact)))
       .forEach((artifact, index) => {
         items.push({
           kind: 'artifact',

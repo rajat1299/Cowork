@@ -13,6 +13,7 @@ import type {
   AttachmentInfo,
 } from '../types/chat'
 import { generateId, createMessage, getStepLabel } from '../types/chat'
+import { isBlockedArtifact } from '../lib/artifacts'
 
 // ============ Active SSE Controllers ============
 // Track active SSE connections per task for cleanup
@@ -451,16 +452,22 @@ export const useChatStore = create<ChatState>()(
         set((state) => {
           const task = state.tasks[taskId]
           if (!task) return state
+          if (isBlockedArtifact(artifact)) return state
 
-          const alreadyExists = task.artifacts.some((item) => item.id === artifact.id)
-          if (alreadyExists) return state
+          const existingIndex = task.artifacts.findIndex((item) => item.id === artifact.id)
+          const nextArtifacts =
+            existingIndex >= 0
+              ? task.artifacts.map((item, index) =>
+                  index === existingIndex ? { ...item, ...artifact } : item
+                )
+              : [...task.artifacts, artifact]
 
           return {
             tasks: {
               ...state.tasks,
               [taskId]: {
                 ...task,
-                artifacts: [...task.artifacts, artifact],
+                artifacts: nextArtifacts,
               },
             },
           }
@@ -471,16 +478,23 @@ export const useChatStore = create<ChatState>()(
         set((state) => {
           const task = state.tasks[taskId]
           if (!task) return state
+          if (isBlockedArtifact(artifact)) return state
 
           const messages = [...task.messages]
           for (let i = messages.length - 1; i >= 0; i -= 1) {
             const message = messages[i]
             if (message.role !== 'assistant') continue
             const artifacts = message.artifacts || []
-            if (artifacts.some((item) => item.id === artifact.id)) return state
+            const existingIndex = artifacts.findIndex((item) => item.id === artifact.id)
+            const nextArtifacts =
+              existingIndex >= 0
+                ? artifacts.map((item, index) =>
+                    index === existingIndex ? { ...item, ...artifact } : item
+                  )
+                : [...artifacts, artifact]
             messages[i] = {
               ...message,
-              artifacts: [...artifacts, artifact],
+              artifacts: nextArtifacts,
             }
             return {
               tasks: {

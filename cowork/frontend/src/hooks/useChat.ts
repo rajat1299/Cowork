@@ -2,7 +2,8 @@ import { useCallback, useMemo } from 'react'
 import { useChatStore } from '../stores/chatStore'
 import { startSSEConnection, stopSSEConnection } from '../lib/sse'
 import { buildTurnExecutionView, mapBackendStepToProgressStep } from '../lib/execution'
-import { normalizeArtifactUrl } from '../lib/artifacts'
+import { dedupeArtifactsByCanonicalName, filterUserArtifacts, normalizeArtifactUrl } from '../lib/artifacts'
+import { emitTelemetryEvent } from '../lib/telemetry'
 import { generateId, createMessage } from '../types/chat'
 import { history, chatMessages, steps, artifacts as artifactsApi } from '../api/coreApi'
 import { files as orchestratorFiles } from '../api/orchestrator'
@@ -86,7 +87,7 @@ export function useChat(): UseChatReturn {
   }, [activeTask])
 
   const artifacts = useMemo(() => {
-    return activeTask?.artifacts || []
+    return dedupeArtifactsByCanonicalName(filterUserArtifacts(activeTask?.artifacts || []))
   }, [activeTask])
 
   const currentStep = useMemo(() => {
@@ -136,17 +137,23 @@ export function useChat(): UseChatReturn {
   // Create a new chat/task
   const createNewChat = useCallback(
     (projectId?: string, question?: string): string => {
-      const pid = projectId || activeProjectId || generateId()
+      const pid = projectId || generateId()
       const q = question || ''
       return createTask(pid, q)
     },
-    [activeProjectId, createTask]
+    [createTask]
   )
 
   // Send a new message (starts SSE connection)
   const sendMessage = useCallback(
     async (message: string, options?: ChatMessageOptions & { projectId?: string }): Promise<void> => {
-      const pid = options?.projectId || activeProjectId || generateId()
+      if (!options?.projectId && !activeTaskId && activeProjectId) {
+        emitTelemetryEvent('welcome_send_ignored_stale_project_id', {
+          stale_project_id: activeProjectId,
+        })
+      }
+
+      const pid = options?.projectId || generateId()
       const taskId = generateId()
       let attachments: AttachmentInfo[] = []
       let attachmentPayloads: AttachmentPayload[] = []
@@ -178,7 +185,7 @@ export function useChat(): UseChatReturn {
         throw err
       }
     },
-    [activeProjectId, createTask, uploadChatFiles]
+    [activeProjectId, activeTaskId, createTask, uploadChatFiles]
   )
 
   // Send a follow-up message to existing conversation
@@ -346,13 +353,17 @@ export function useChat(): UseChatReturn {
         : []
 
       const artifactsFromApi = artifactsResult.status === 'fulfilled'
-        ? artifactsResult.value.map((artifact) => ({
-            id: artifact.id,
-            type: (artifact.type as ArtifactInfo['type']) || 'file',
-            name: artifact.name,
-            contentUrl: normalizeArtifactUrl(artifact.content_url),
-            createdAt: new Date(artifact.created_at).getTime(),
-          }))
+        ? dedupeArtifactsByCanonicalName(
+            filterUserArtifacts(
+            artifactsResult.value.map((artifact) => ({
+              id: artifact.id,
+              type: (artifact.type as ArtifactInfo['type']) || 'file',
+              name: artifact.name,
+              contentUrl: normalizeArtifactUrl(artifact.content_url),
+              createdAt: new Date(artifact.created_at).getTime(),
+            }))
+            )
+          )
         : []
 
       const artifactsFromSteps = progressSteps
@@ -364,21 +375,21 @@ export function useChat(): UseChatReturn {
           const path = typeof data.path === 'string' ? data.path : undefined
           return {
             id: stepId,
-            type: 'file' as const,
+            type: (typeof data.type === 'string' ? data.type : 'file') as ArtifactInfo['type'],
             name: typeof data.name === 'string' ? data.name : `artifact-${index + 1}`,
             contentUrl: normalizeArtifactUrl(contentUrl, path),
             path,
             createdAt: step.timestamp,
+            action: (typeof data.action === 'string' ? data.action : 'created') as ArtifactInfo['action'],
           }
         })
-
-      const artifactMap = new Map<string, ArtifactInfo>()
-      ;[...artifactsFromApi, ...artifactsFromSteps].forEach((artifact) => {
-        artifactMap.set(artifact.id, artifact)
-      })
-      const mergedArtifacts = [...artifactMap.values()].sort(
-        (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
+      const filteredArtifactsFromSteps = dedupeArtifactsByCanonicalName(
+        filterUserArtifacts(artifactsFromSteps)
       )
+      const mergedArtifacts = dedupeArtifactsByCanonicalName([
+        ...artifactsFromApi,
+        ...filteredArtifactsFromSteps,
+      ])
 
       const executionView = buildTurnExecutionView(progressSteps)
       const lastStep = progressSteps[progressSteps.length - 1]?.step
@@ -505,6 +516,6 @@ export function useChatArtifacts() {
 
   return useMemo(() => {
     if (!activeTaskId) return []
-    return tasks[activeTaskId]?.artifacts || []
+    return dedupeArtifactsByCanonicalName(filterUserArtifacts(tasks[activeTaskId]?.artifacts || []))
   }, [activeTaskId, tasks])
 }

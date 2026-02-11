@@ -78,9 +78,20 @@ export interface DecomposeTextData {
   content: string
 }
 
+export interface SubTaskPayload {
+  id?: string
+  content?: string
+  title?: string
+  state?: string
+  status?: string
+  assignee?: string
+}
+
 export interface SubTasksData {
-  sub_tasks: TaskInfo[]
+  sub_tasks: SubTaskPayload[]
+  delta_sub_tasks?: SubTaskPayload[]
   summary_task?: string
+  is_final?: boolean
 }
 
 export interface AgentData {
@@ -114,6 +125,7 @@ export interface ArtifactData {
   name: string
   content_url?: string
   path?: string
+  action?: 'created' | 'modified'
 }
 
 export interface EndData {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { 
   User, 
@@ -99,17 +99,31 @@ export default function SettingsPage() {
  * General/Profile settings - default view
  */
 function GeneralSettings() {
-  const { user } = useAuthStore()
+  const { user, updateUserName } = useAuthStore()
   const { mode, setMode } = useThemeStore()
-  
+
   // Get user display info
   const userEmail = user?.email || ''
-  const userName = userEmail.split('@')[0] || ''
-  const userInitial = userName.charAt(0).toUpperCase() || 'U'
-  
-  // Local state for form fields (would be persisted to backend in real app)
-  const [fullName, setFullName] = useState(userName)
-  const [nickname, setNickname] = useState(userName.split('.')[0] || userName)
+  const defaultName = userEmail.split('@')[0] || ''
+  const savedName = user?.name || defaultName
+  const userInitial = (savedName || defaultName).charAt(0).toUpperCase() || 'U'
+
+  // Local state for form fields
+  const [fullName, setFullName] = useState(savedName)
+  const [nickname, setNickname] = useState(savedName.split('.')[0] || savedName)
+
+  // Sync local state when store hydrates from localStorage
+  useEffect(() => {
+    setFullName(savedName)
+    setNickname(savedName.split('.')[0] || savedName)
+  }, [savedName])
+
+  // Save name when input loses focus
+  const handleNameBlur = () => {
+    if (fullName.trim() && fullName !== user?.name) {
+      updateUserName(fullName.trim())
+    }
+  }
   
   return (
     <div className="max-w-2xl mx-auto p-8">
@@ -129,6 +143,7 @@ function GeneralSettings() {
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
+                onBlur={handleNameBlur}
                 placeholder="Your name"
                 className={cn(
                   'flex-1 px-3 py-2.5 rounded-xl',

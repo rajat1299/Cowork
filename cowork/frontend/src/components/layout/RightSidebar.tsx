@@ -15,7 +15,12 @@ import {
   Clipboard,
 } from 'lucide-react'
 import { buildTurnExecutionView, type TurnCheckpoint } from '../../lib/execution'
-import { canPreviewArtifact, resolveArtifactUrl } from '../../lib/artifacts'
+import {
+  canPreviewArtifact,
+  dedupeArtifactsByCanonicalName,
+  filterUserArtifacts,
+  resolveArtifactUrl,
+} from '../../lib/artifacts'
 import { cn } from '../../lib/utils'
 import { useChatStore } from '../../stores/chatStore'
 import { useViewerStore } from '../../stores/viewerStore'
@@ -174,7 +179,7 @@ export function RightSidebar({ className }: RightSidebarProps) {
 
   const artifacts = useMemo(() => {
     if (!activeTask) return []
-    return [...activeTask.artifacts].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    return dedupeArtifactsByCanonicalName(filterUserArtifacts([...activeTask.artifacts]))
   }, [activeTask])
 
   return (
@@ -207,6 +212,7 @@ export function RightSidebar({ className }: RightSidebarProps) {
                       {checkpointIcon(checkpoint)}
                     </div>
                     <span
+                      title={checkpoint.fullLabel || checkpoint.label}
                       className={cn(
                         'text-[13px] leading-5',
                         checkpoint.status === 'completed' && 'text-muted-foreground line-through',

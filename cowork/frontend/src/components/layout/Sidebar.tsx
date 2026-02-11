@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, useCallback } from 'react'
+import { useState, useEffect, memo, useCallback, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import {
   Plus,
@@ -7,9 +7,13 @@ import {
   Settings,
   Clock,
   LogOut,
-  User,
-  MessageSquare,
   Loader2,
+  MoreHorizontal,
+  Star,
+  Pencil,
+  Trash2,
+  HelpCircle,
+  ExternalLink,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useAuthStore } from '../../stores/authStore'
@@ -53,8 +57,22 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [activeTab, setActiveTab] = useState('cowork')
   const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null)
+  const userMenuRef = useRef<HTMLDivElement>(null)
 
   const activeTaskId = activeTask?.id ?? null
+
+  // Close user menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false)
+      }
+    }
+    if (showUserMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showUserMenu])
 
   // Fetch sessions on mount
   useEffect(() => {
@@ -95,8 +113,8 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
     }
   }, [switchTask, navigate])
 
-  const userInitial = user?.email?.charAt(0).toUpperCase() || 'U'
-  const userName = user?.email?.split('@')[0] || 'User'
+  const userName = user?.name || user?.email?.split('@')[0] || 'User'
+  const userInitial = userName.charAt(0).toUpperCase()
 
   return (
     <aside
@@ -210,7 +228,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
       </nav>
 
       {/* Bottom: User */}
-      <div className="relative p-3">
+      <div ref={userMenuRef} className="relative p-3">
         <button
           onClick={() => setShowUserMenu(!showUserMenu)}
           className={cn(
@@ -241,10 +259,12 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
               'py-1 animate-scale-in origin-bottom'
             )}
           >
-            <MenuItem icon={User} label="Profile" to="/settings" />
-            <MenuItem icon={Clock} label="History" to="/history" />
             <MenuItem icon={Settings} label="Settings" to="/settings" />
-            <div className="h-px bg-border my-1" />
+            <MenuItem icon={Clock} label="History" to="/history" />
+            <div className="h-px bg-border my-1 mx-3" />
+            <MenuItem icon={HelpCircle} label="Get help" to="/help" />
+            <MenuItem icon={ExternalLink} label="Learn more" to="/about" />
+            <div className="h-px bg-border my-1 mx-3" />
             <MenuItem icon={LogOut} label="Sign out" onClick={handleLogout} />
           </div>
         )}
@@ -261,26 +281,30 @@ interface MenuItemProps {
 }
 
 function MenuItem({ icon: Icon, label, onClick, to }: MenuItemProps) {
+  const baseClasses = cn(
+    'w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md',
+    'text-muted-foreground hover:text-foreground hover:bg-accent',
+    'transition-colors duration-150'
+  )
+
   if (to) {
     return (
-      <Link
-        to={to}
-        className="w-full flex items-center gap-3 px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-      >
-        <Icon size={15} strokeWidth={1.5} />
-        <span className="text-[13px]">{label}</span>
-      </Link>
+      <div className="px-1.5">
+        <Link to={to} className={baseClasses}>
+          <Icon size={15} strokeWidth={1.5} />
+          <span className="text-[13px]">{label}</span>
+        </Link>
+      </div>
     )
   }
 
   return (
-    <button
-      onClick={onClick}
-      className="w-full flex items-center gap-3 px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-    >
-      <Icon size={15} strokeWidth={1.5} />
-      <span className="text-[13px]">{label}</span>
-    </button>
+    <div className="px-1.5">
+      <button onClick={onClick} className={baseClasses}>
+        <Icon size={15} strokeWidth={1.5} />
+        <span className="text-[13px]">{label}</span>
+      </button>
+    </div>
   )
 }
 
@@ -300,41 +324,157 @@ interface SessionItemProps {
 }
 
 const SessionItem = memo(function SessionItem({ session, isActive, isLoading, onClick }: SessionItemProps) {
+  const [isHovered, setIsHovered] = useState(false)
+  const [showMenu, setShowMenu] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowMenu(false)
+      }
+    }
+    if (showMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showMenu])
+
+  const handleMenuClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setShowMenu(!showMenu)
+  }
+
+  const handleAction = (action: 'star' | 'rename' | 'delete', e: React.MouseEvent) => {
+    e.stopPropagation()
+    setShowMenu(false)
+    // TODO: Implement actions
+    console.log(`${action} session:`, session.id)
+  }
+
+  const showMenuButton = isHovered || isActive || showMenu
+
   return (
-    <button
-      onClick={onClick}
-      disabled={isLoading}
-      className={cn(
-        'w-full flex items-start gap-2 px-2 py-2 rounded-lg text-left',
-        'transition-all duration-200',
-        isActive
-          ? 'bg-secondary text-foreground'
-          : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50',
-        isLoading && 'opacity-70'
-      )}
+    <div
+      className="relative"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => {
+        setIsHovered(false)
+        if (!showMenu) setShowMenu(false)
+      }}
     >
-      {isLoading ? (
-        <Loader2
-          size={14}
-          strokeWidth={1.5}
-          className="mt-0.5 flex-shrink-0 animate-spin text-burnt"
-        />
-      ) : (
-        <MessageSquare
-          size={14}
-          strokeWidth={1.5}
+      <button
+        onClick={onClick}
+        disabled={isLoading}
+        className={cn(
+          'w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left',
+          'transition-all duration-200',
+          isActive
+            ? 'bg-secondary text-foreground'
+            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50',
+          isLoading && 'opacity-70'
+        )}
+      >
+        {isLoading && (
+          <Loader2
+            size={14}
+            strokeWidth={1.5}
+            className="flex-shrink-0 animate-spin text-burnt"
+          />
+        )}
+        <div className="flex-1 min-w-0">
+          <p className="text-[13px] font-medium truncate">{session.title}</p>
+          <p className="text-[11px] text-muted-foreground truncate">
+            {formatRelativeTime(session.updatedAt)}
+          </p>
+        </div>
+
+        {/* More options button */}
+        <div
           className={cn(
-            'mt-0.5 flex-shrink-0',
-            session.status === 'ongoing' ? 'text-burnt' : 'text-muted-foreground'
+            'flex-shrink-0 transition-opacity duration-150',
+            showMenuButton ? 'opacity-100' : 'opacity-0'
           )}
-        />
+        >
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={handleMenuClick}
+            onKeyDown={(e) => e.key === 'Enter' && handleMenuClick(e as unknown as React.MouseEvent)}
+            className={cn(
+              'w-6 h-6 flex items-center justify-center rounded-md',
+              'hover:bg-accent',
+              'transition-colors duration-150',
+              showMenu && 'bg-accent'
+            )}
+          >
+            <MoreHorizontal size={14} strokeWidth={1.5} />
+          </div>
+        </div>
+      </button>
+
+      {/* Dropdown menu */}
+      {showMenu && (
+        <div
+          ref={menuRef}
+          className={cn(
+            'absolute right-0 top-full mt-1 z-50',
+            'min-w-[140px] py-1',
+            'bg-popover border border-border rounded-lg',
+            'shadow-lg shadow-black/20',
+            'animate-scale-in'
+          )}
+        >
+          <SessionMenuItem
+            icon={Star}
+            label="Star"
+            onClick={(e) => handleAction('star', e)}
+          />
+          <SessionMenuItem
+            icon={Pencil}
+            label="Rename"
+            onClick={(e) => handleAction('rename', e)}
+          />
+          <div className="h-px bg-border my-1 mx-3" />
+          <SessionMenuItem
+            icon={Trash2}
+            label="Delete"
+            onClick={(e) => handleAction('delete', e)}
+            variant="destructive"
+          />
+        </div>
       )}
-      <div className="flex-1 min-w-0">
-        <p className="text-[13px] font-medium truncate">{session.title}</p>
-        <p className="text-[11px] text-muted-foreground truncate">
-          {formatRelativeTime(session.updatedAt)}
-        </p>
-      </div>
-    </button>
+    </div>
   )
 })
+
+// ============ Session Menu Item Component ============
+
+interface SessionMenuItemProps {
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>
+  label: string
+  onClick: (e: React.MouseEvent) => void
+  variant?: 'default' | 'destructive'
+}
+
+function SessionMenuItem({ icon: Icon, label, onClick, variant = 'default' }: SessionMenuItemProps) {
+  return (
+    <div className="px-1.5">
+      <button
+        onClick={onClick}
+        className={cn(
+          'w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md',
+          'text-[13px] text-left',
+          'transition-colors duration-150',
+          variant === 'destructive'
+            ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
+            : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+        )}
+      >
+        <Icon size={14} strokeWidth={1.5} className="flex-shrink-0" />
+        <span>{label}</span>
+      </button>
+    </div>
+  )
+}

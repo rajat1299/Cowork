@@ -5,6 +5,7 @@ export type CheckpointStatus = 'pending' | 'active' | 'completed' | 'failed'
 export interface TurnCheckpoint {
   id: string
   label: string
+  fullLabel?: string
   status: CheckpointStatus
 }
 
@@ -38,6 +39,7 @@ export interface TurnExecutionView {
 }
 
 const SECRET_KEY_PATTERN = /(token|api[_-]?key|secret|password|authorization|cookie|bearer)/i
+const MAX_CONDENSED_LABEL_CHARS = 165
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -95,6 +97,55 @@ function normalizeTaskStatus(raw: unknown): TaskInfo['status'] {
   if (value === 'failed') return 'failed'
   if (value === 'paused') return 'paused'
   return 'pending'
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function clipAtNaturalBoundary(value: string, max: number): string {
+  if (value.length <= max) return value
+  const candidate = value.slice(0, max)
+  const boundary = Math.max(
+    candidate.lastIndexOf('. '),
+    candidate.lastIndexOf('; '),
+    candidate.lastIndexOf(': '),
+    candidate.lastIndexOf(', ')
+  )
+  if (boundary > Math.floor(max * 0.55)) {
+    return candidate.slice(0, boundary).trim()
+  }
+  return candidate.trim()
+}
+
+function findDeliverableFilename(value: string): string | undefined {
+  const fileRegex = /([A-Za-z0-9 _-]+\.(?:md|txt|csv|json|pdf|docx|pptx|xlsx))/gi
+  const matches = [...value.matchAll(fileRegex)]
+  if (matches.length === 0) return undefined
+  return matches[matches.length - 1]?.[1]
+}
+
+function condenseCheckpointLabel(fullText: string): string {
+  const normalized = normalizeWhitespace(fullText)
+  if (!normalized) return 'Subtask'
+
+  const firstSentence = normalized.split(/(?<=[.?!])\s+/)[0] || normalized
+  let condensed = firstSentence
+    .replace(/^(please|kindly)\s+/i, '')
+    .replace(/\bthe document must include sections on:.*$/i, '')
+    .replace(/\bto ensure it maintains.*$/i, '')
+    .trim()
+
+  const filename = findDeliverableFilename(normalized)
+  if (filename && !condensed.toLowerCase().includes(filename.toLowerCase())) {
+    condensed = `${condensed} -> ${filename}`
+  }
+
+  condensed = clipAtNaturalBoundary(condensed, MAX_CONDENSED_LABEL_CHARS)
+  if (condensed.length < normalized.length) {
+    condensed = `${condensed}...`
+  }
+  return condensed || 'Subtask'
 }
 
 function normalizeToolName(raw: unknown): string {
@@ -177,7 +228,7 @@ function deriveSubtasks(turnSteps: ProgressStep[]): TaskInfo[] {
       subtasks.push({
         id,
         title,
-        status: normalizeTaskStatus(raw.state),
+        status: normalizeTaskStatus(raw.state ?? raw.status),
       })
     })
   }
@@ -240,7 +291,8 @@ function deriveCheckpoints(turnSteps: ProgressStep[], subtasks: TaskInfo[]): Tur
   if (subtasks.length === 0) return deriveGenericCheckpoints(turnSteps)
   return subtasks.map((task) => ({
     id: task.id,
-    label: task.title,
+    label: condenseCheckpointLabel(task.title),
+    fullLabel: normalizeWhitespace(task.title),
     status:
       task.status === 'completed'
         ? 'completed'

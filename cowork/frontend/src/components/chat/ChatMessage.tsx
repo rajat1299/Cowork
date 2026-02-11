@@ -2,7 +2,7 @@ import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { FileText, Image as ImageIcon, ExternalLink, Download, Clipboard } from 'lucide-react'
-import { canPreviewArtifact, resolveArtifactUrl } from '../../lib/artifacts'
+import { canPreviewArtifact, dedupeArtifactsByCanonicalName, filterUserArtifacts, resolveArtifactUrl } from '../../lib/artifacts'
 import { cn } from '../../lib/utils'
 import { useViewerStore } from '../../stores/viewerStore'
 import type { Message, AttachmentInfo, ArtifactInfo } from '../../types/chat'
@@ -68,7 +68,7 @@ export const ChatMessage = memo(function ChatMessage({ message }: ChatMessagePro
   const isSystem = message.role === 'system'
   const isStreaming = message.isStreaming
   const attachments = message.attachments || []
-  const artifacts = message.artifacts || []
+  const artifacts = dedupeArtifactsByCanonicalName(filterUserArtifacts(message.artifacts || []))
   const hasContent = message.content.trim().length > 0
 
   // System messages (errors, notices)

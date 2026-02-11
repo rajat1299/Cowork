@@ -33,7 +33,7 @@ import type {
   AgentEvent,
 } from '../types/chat'
 import { createMessage, generateId } from '../types/chat'
-import { normalizeArtifactUrl } from './artifacts'
+import { isBlockedArtifact, normalizeArtifactUrl } from './artifacts'
 
 // ============ Type Guards ============
 
@@ -288,6 +288,18 @@ function handleDecomposeText(taskId: string, data: DecomposeTextData): void {
   addProgressStepFromEvent(taskId, 'decompose_text', 'active')
 }
 
+function normalizeSubtaskStatus(
+  value: unknown
+): 'pending' | 'running' | 'completed' | 'failed' | 'paused' {
+  if (typeof value !== 'string') return 'pending'
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'done' || normalized === 'completed') return 'completed'
+  if (normalized === 'running' || normalized === 'processing' || normalized === 'in_progress') return 'running'
+  if (normalized === 'failed' || normalized === 'error') return 'failed'
+  if (normalized === 'paused') return 'paused'
+  return 'pending'
+}
+
 function handleSubTasks(taskId: string, data: SubTasksData): void {
   const store = useChatStore.getState()
 
@@ -295,19 +307,30 @@ function handleSubTasks(taskId: string, data: SubTasksData): void {
   store.clearStreamingDecomposeText(taskId)
 
   // Set subtasks
-  if (data.sub_tasks) {
+  if (Array.isArray(data.sub_tasks)) {
     store.setSubtasks(
       taskId,
       data.sub_tasks.map((st) => ({
         id: st.id || generateId(),
-        title: st.title,
-        status: st.status || 'pending',
-        assignee: st.assignee,
+        title:
+          (typeof st.content === 'string' && st.content.trim()) ||
+          (typeof st.title === 'string' && st.title.trim()) ||
+          'Subtask',
+        status: normalizeSubtaskStatus(st.state || st.status),
+        assignee:
+          (typeof st.assignee === 'string' && st.assignee) ||
+          ((st as Record<string, unknown>).assignee_id as string | undefined),
       }))
     )
   }
 
-  addProgressStepFromEvent(taskId, 'to_sub_tasks', 'completed', { count: data.sub_tasks?.length })
+  addProgressStepFromEvent(taskId, 'to_sub_tasks', 'completed', {
+    count: data.sub_tasks?.length,
+    sub_tasks: data.sub_tasks,
+    delta_sub_tasks: data.delta_sub_tasks,
+    summary_task: data.summary_task,
+    is_final: data.is_final,
+  })
 }
 
 function handleAgentActivate(taskId: string, data: AgentData, step: StepType): void {
@@ -377,12 +400,19 @@ function handleArtifact(taskId: string, data: ArtifactData): void {
     name: data.name,
     contentUrl: normalizeArtifactUrl(data.content_url, data.path),
     path: data.path,
+    action: data.action || 'created',
+  }
+  if (isBlockedArtifact(artifact)) {
+    console.warn('[SSE] Ignoring blocked system artifact', artifact)
+    return
   }
 
   store.addArtifact(taskId, artifact)
   store.addArtifactToLatestAssistant(taskId, artifact)
 
   addProgressStepFromEvent(taskId, 'artifact', 'completed', {
+    id: data.id,
+    action: data.action || 'created',
     name: data.name,
     content_url: data.content_url,
     path: data.path,

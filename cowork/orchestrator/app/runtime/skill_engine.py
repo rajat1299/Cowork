@@ -8,7 +8,7 @@ import os
 import re
 import time
 from typing import Any, Iterable
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from shared.schemas import ArtifactEvent
 
@@ -30,6 +30,23 @@ _FILE_DELIVERABLE_INTENT = re.compile(
     re.IGNORECASE,
 )
 _QUESTION_EXTENSION_PATTERN = re.compile(r"\.[a-zA-Z0-9]{2,8}\b")
+_BLOCKED_ARTIFACT_SEGMENTS = {
+    ".initial_env",
+    ".venv",
+    "venv",
+    "site-packages",
+    "dist-info",
+    "__pycache__",
+    ".git",
+    "node_modules",
+}
+_BLOCKED_ARTIFACT_METADATA_NAMES = {
+    "top_level.txt",
+    "entry_points.txt",
+    "dependency_links.txt",
+    "sources.txt",
+    "api_tests.txt",
+}
 
 
 @dataclass
@@ -232,8 +249,17 @@ class RuntimeSkillEngine:
                 "name": data.get("name"),
                 "content_url": data.get("content_url"),
                 "path": data.get("path"),
+                "action": data.get("action", "created"),
             }
-            run_state.artifacts.append(artifact)
+            if self._is_blocked_artifact(artifact):
+                logger.info(
+                    "skill_engine_blocked_artifact task_id=%s project_id=%s artifact=%s",
+                    run_state.task_id,
+                    run_state.project_id,
+                    artifact,
+                )
+                return
+            self._upsert_runtime_artifact(run_state, artifact)
             run_state.checkpoints.append("artifact_detected")
         elif step in {"streaming", "decompose_text"}:
             chunk = data.get("chunk") or data.get("content")
@@ -309,19 +335,11 @@ class RuntimeSkillEngine:
         repaired_artifacts: list[dict[str, Any]] = []
         notes: list[str] = []
 
-        allowed_extensions = self._collect_allowed_extensions(run_state.active_skills)
-        discovered = self._discover_artifacts(workdir, allowed_extensions)
-        for artifact in discovered:
-            if not any(existing.get("path") == artifact.get("path") for existing in run_state.artifacts):
-                run_state.artifacts.append(artifact)
-                repaired_artifacts.append(artifact)
-        if discovered:
-            notes.append("Discovered existing output artifacts in workdir.")
-
-        normalized = self._normalize_artifact_names(run_state, repaired_artifacts + list(run_state.artifacts))
+        run_state.artifacts = self._filter_user_artifacts(run_state.artifacts)
+        normalized = self._normalize_artifact_names(run_state, list(run_state.artifacts))
         for item in normalized:
             if not any(existing.get("path") == item.get("path") for existing in run_state.artifacts):
-                run_state.artifacts.append(item)
+                self._upsert_runtime_artifact(run_state, item)
                 repaired_artifacts.append(item)
 
         if any(skill.id == "doc_markdown_v1" for skill in run_state.active_skills):
@@ -329,9 +347,12 @@ class RuntimeSkillEngine:
             if not has_markdown:
                 fallback = self._repair_markdown_from_transcript(run_state, workdir)
                 if fallback:
-                    run_state.artifacts.append(fallback)
+                    self._upsert_runtime_artifact(run_state, fallback)
                     repaired_artifacts.append(fallback)
                     notes.append("Created markdown fallback artifact from transcript.")
+
+        run_state.artifacts = self._filter_user_artifacts(run_state.artifacts)
+        repaired_artifacts = self._filter_user_artifacts(repaired_artifacts)
 
         if repaired_artifacts:
             self.metrics["skill_repairs_success_total"] += 1
@@ -417,65 +438,109 @@ class RuntimeSkillEngine:
         return None
 
     @staticmethod
-    def _collect_allowed_extensions(active_skills: list[RuntimeSkill]) -> set[str]:
-        extensions: set[str] = set()
-        for skill in active_skills:
-            for extension in skill.output_contract.allowed_extensions:
-                if extension:
-                    extensions.add(extension.lower())
-        return extensions
+    def _filter_user_artifacts(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        filtered: dict[str, dict[str, Any]] = {}
+        for artifact in artifacts:
+            if RuntimeSkillEngine._is_blocked_artifact(artifact):
+                continue
+            dedupe_key = RuntimeSkillEngine._artifact_logical_key(artifact)
+            if not dedupe_key:
+                continue
+            filtered[dedupe_key] = artifact
+        return list(filtered.values())
 
     @staticmethod
-    def _merge_runtime_artifacts(run_state: SkillRunState, workdir: Path) -> list[dict[str, Any]]:
-        merged: list[dict[str, Any]] = []
-        seen_paths: set[str] = set()
-        for artifact in run_state.artifacts:
-            path = str(artifact.get("path") or "")
-            if path and path not in seen_paths:
-                merged.append(artifact)
-                seen_paths.add(path)
-
-        discovered = RuntimeSkillEngine._discover_artifacts(workdir, set())
-        for artifact in discovered:
-            path = str(artifact.get("path") or "")
-            if path and path in seen_paths:
-                continue
-            merged.append(artifact)
-            if path:
-                seen_paths.add(path)
-        return merged
+    def _artifact_logical_key(artifact: dict[str, Any]) -> str:
+        artifact_id = str(artifact.get("id") or "").strip()
+        if artifact_id:
+            return f"id:{artifact_id}"
+        path = str(artifact.get("path") or "").strip()
+        content_url = str(artifact.get("content_url") or "").strip()
+        name = str(artifact.get("name") or "").strip()
+        dedupe_key = path or content_url or name
+        return f"path:{dedupe_key}" if dedupe_key else ""
 
     @staticmethod
-    def _discover_artifacts(workdir: Path, allowed_extensions: set[str]) -> list[dict[str, Any]]:
-        if not workdir.exists():
-            return []
-        artifacts: list[dict[str, Any]] = []
-        def _mtime(path: Path) -> float:
-            try:
-                return path.stat().st_mtime if path.exists() else 0.0
-            except OSError:
-                return 0.0
+    def _upsert_runtime_artifact(run_state: SkillRunState, artifact: dict[str, Any]) -> None:
+        key = RuntimeSkillEngine._artifact_logical_key(artifact)
+        if not key:
+            return
+        for index, existing in enumerate(run_state.artifacts):
+            if RuntimeSkillEngine._artifact_logical_key(existing) == key:
+                merged = {**existing, **artifact}
+                run_state.artifacts[index] = merged
+                return
+        run_state.artifacts.append(artifact)
 
-        for file_path in sorted(workdir.rglob("*"), key=_mtime, reverse=True):
-            if not file_path.is_file():
-                continue
-            suffix = file_path.suffix.lower()
-            if allowed_extensions and suffix not in allowed_extensions:
-                continue
-            if file_path.name.startswith("."):
-                continue
-            artifacts.append(
-                {
-                    "id": f"artifact-discovered-{abs(hash(str(file_path)))}",
-                    "type": "image" if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp"} else "file",
-                    "name": file_path.name,
-                    "path": str(file_path),
-                    "content_url": RuntimeSkillEngine._build_generated_file_url(workdir, file_path),
-                }
-            )
-            if len(artifacts) >= 30:
-                break
-        return artifacts
+    @staticmethod
+    def _normalize_name_for_denylist(value: str) -> str:
+        normalized = re.sub(r"[\s-]+", "_", value.strip().lower())
+        return re.sub(r"_+", "_", normalized)
+
+    @staticmethod
+    def _metadata_name_blocked(name: str) -> bool:
+        if not name:
+            return False
+        return RuntimeSkillEngine._normalize_name_for_denylist(name) in _BLOCKED_ARTIFACT_METADATA_NAMES
+
+    @staticmethod
+    def _decode_candidate(value: str) -> str:
+        candidate = value.strip()
+        if candidate.lower().startswith("file://"):
+            candidate = candidate[7:]
+        return unquote(candidate)
+
+    @staticmethod
+    def _path_candidates_from_artifact(artifact: dict[str, Any]) -> list[str]:
+        candidates: list[str] = []
+        for key in ("path", "content_url"):
+            value = artifact.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates.append(value.strip())
+
+        content_url = artifact.get("content_url")
+        if isinstance(content_url, str) and content_url.strip():
+            parsed = urlparse(content_url)
+            path_values = parse_qs(parsed.query).get("path", [])
+            candidates.extend(path_values)
+        return candidates
+
+    @staticmethod
+    def _has_blocked_segment(path_text: str) -> bool:
+        normalized = RuntimeSkillEngine._decode_candidate(path_text)
+        normalized = normalized.split("?", 1)[0].split("#", 1)[0].replace("\\", "/")
+        segments = [segment.strip().lower() for segment in normalized.split("/") if segment.strip()]
+        for segment in segments:
+            if segment in _BLOCKED_ARTIFACT_SEGMENTS:
+                return True
+            if segment.endswith(".dist-info"):
+                return True
+            if "site-packages" in segment:
+                return True
+        return False
+
+    @staticmethod
+    def _is_blocked_artifact(artifact: dict[str, Any]) -> bool:
+        name = str(artifact.get("name") or "").strip()
+        if RuntimeSkillEngine._metadata_name_blocked(name):
+            return True
+
+        for candidate in RuntimeSkillEngine._path_candidates_from_artifact(artifact):
+            if RuntimeSkillEngine._has_blocked_segment(candidate):
+                return True
+            basename = Path(
+                RuntimeSkillEngine._decode_candidate(candidate)
+                .split("?", 1)[0]
+                .split("#", 1)[0]
+                .replace("\\", "/")
+            ).name
+            if RuntimeSkillEngine._metadata_name_blocked(basename):
+                return True
+        return False
+
+    @staticmethod
+    def _merge_runtime_artifacts(run_state: SkillRunState, _workdir: Path) -> list[dict[str, Any]]:
+        return RuntimeSkillEngine._filter_user_artifacts(run_state.artifacts)
 
     @staticmethod
     def _build_generated_file_url(workdir: Path, file_path: Path) -> str:
@@ -493,6 +558,8 @@ class RuntimeSkillEngine:
     ) -> list[dict[str, Any]]:
         renamed: list[dict[str, Any]] = []
         for artifact in artifacts:
+            if self._is_blocked_artifact(artifact):
+                continue
             path_text = artifact.get("path")
             if not isinstance(path_text, str) or not path_text:
                 continue
@@ -503,6 +570,8 @@ class RuntimeSkillEngine:
             if normalized_name == path.name:
                 continue
             target = path.with_name(normalized_name)
+            if self._is_blocked_artifact({"name": target.name, "path": str(target)}):
+                continue
             if target.exists():
                 continue
             try:
@@ -517,13 +586,15 @@ class RuntimeSkillEngine:
                 if workdir.name == run_state.project_id
                 else str(target)
             )
+            artifact_id = str(artifact.get("id") or "").strip() or f"artifact-renamed-{abs(hash(str(target)))}"
             renamed.append(
                 {
-                    "id": f"artifact-renamed-{abs(hash(str(target)))}",
+                    "id": artifact_id,
                     "type": artifact.get("type", "file"),
                     "name": target.name,
                     "path": str(target),
                     "content_url": content_url,
+                    "action": "modified",
                 }
             )
         return renamed
@@ -535,6 +606,8 @@ class RuntimeSkillEngine:
         filename = suggest_filename(run_state.question, ".md", fallback_stem="Summary")
         normalized_name = normalize_filename_for_output(filename, run_state.explicit_filenames)
         target = workdir / normalized_name
+        if self._is_blocked_artifact({"name": target.name, "path": str(target)}):
+            return None
         if target.exists():
             return None
         try:
@@ -553,6 +626,11 @@ class RuntimeSkillEngine:
     def _persist_artifacts(task_id: str, artifacts: list[dict[str, Any]]) -> None:
         now = time.time()
         for artifact in artifacts:
+            if RuntimeSkillEngine._is_blocked_artifact(artifact):
+                continue
+            action = str(artifact.get("action") or "created").lower()
+            if action == "modified":
+                continue
             fire_and_forget_artifact(
                 ArtifactEvent(
                     task_id=task_id,
