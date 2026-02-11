@@ -1,0 +1,33 @@
+id = "doc_revision_v1"
+name = "doc_revision"
+version = "1.0.0"
+description = "Revision workflow for existing files while preserving style and structure."
+domains = ["docs", "revision"]
+force_complex = true
+required_tools = ["file_write", "terminal", "docs"]
+prompt_instructions = [
+  "When asked to revise an existing document, edit the file instead of returning chat-only deltas.",
+  "Preserve the original style unless user asks for a rewrite.",
+  "Report the final revised file path.",
+]
+
+[triggers]
+regex = [
+  "\\brevise\\b",
+  "\\bedit\\s+(the\\s+)?(doc|document|file)\\b",
+  "\\bupdate\\s+(the\\s+)?(doc|document|report|file)\\b",
+]
+extensions = [".md", ".docx", ".pdf", ".txt"]
+
+[output_contract]
+required_artifact = true
+allowed_extensions = [".md", ".docx", ".pdf", ".txt"]
+minimum_artifacts = 1
+description = "A revised file artifact is required for revision tasks."
+
+[validation_rules]
+rules = ["artifact_required"]
+
+[retry_policy]
+max_attempts = 1
+strategies = ["discover_existing_outputs"]

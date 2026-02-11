@@ -1,0 +1,36 @@
+id = "research_web_v1"
+name = "research_web"
+version = "1.0.0"
+description = "Research and web browsing workflow with source quality checks."
+domains = ["research", "web"]
+force_complex = true
+required_tools = ["search", "browser", "file_write"]
+prompt_instructions = [
+  "Create a short query plan before searching.",
+  "Corroborate key factual claims with at least two independent sources.",
+  "When findings are substantial, write a research artifact file instead of chat-only output.",
+  "Include source citations for factual claims.",
+]
+
+[triggers]
+regex = [
+  "\\bresearch\\b",
+  "\\bsearch\\s+(the\\s+)?web\\b",
+  "\\bfind\\s+sources\\b",
+  "\\blatest\\b",
+  "\\bcompare\\b",
+]
+extensions = []
+
+[output_contract]
+required_artifact = false
+allowed_extensions = [".md", ".txt"]
+minimum_artifacts = 0
+description = "Research tasks should include citation-backed findings."
+
+[validation_rules]
+rules = ["require_two_citations", "dedupe_sources"]
+
+[retry_policy]
+max_attempts = 2
+strategies = ["expand_queries", "adjust_search_type", "fallback_search_backend"]

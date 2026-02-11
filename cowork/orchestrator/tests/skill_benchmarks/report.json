@@ -1,0 +1,16 @@
+{
+  "weighted_score": 96.5,
+  "trigger_precision": 76.66666666666667,
+  "profile": {
+    "trigger_precision": 100.0,
+    "procedural_depth": 100.0,
+    "tool_orchestration": 100.0,
+    "output_contracts": 100.0,
+    "validation_recovery": 100.0,
+    "observability": 100.0,
+    "weighted_score": 100.0
+  },
+  "cases": 30,
+  "threshold": 82,
+  "pass": true
+}

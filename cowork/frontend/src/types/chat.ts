@@ -241,7 +241,21 @@ export interface ProgressStep {
   label: string
   status: 'pending' | 'active' | 'completed' | 'failed'
   timestamp?: number
-  data?: Record<string, unknown>
+  data?: ProgressStepData
+}
+
+export interface ProgressStepData extends Record<string, unknown> {
+  skill_id?: string
+  skill_version?: string
+  skill_stage?: string
+  skill_checkpoint?: string
+  skill_score?: number
+  validation?: {
+    success?: boolean
+    issues?: Array<Record<string, unknown>>
+    expected_contracts?: Record<string, unknown>
+    [key: string]: unknown
+  }
 }
 
 // ============ Chat Request Types ============

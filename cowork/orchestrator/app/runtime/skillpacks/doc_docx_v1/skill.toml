@@ -1,0 +1,33 @@
+id = "doc_docx_v1"
+name = "docx"
+version = "1.0.0"
+description = "Word document creation and conversion workflow."
+domains = ["docs", "docx"]
+force_complex = true
+required_tools = ["file_write", "terminal", "docs"]
+prompt_instructions = [
+  "If the user requests Word output, create a real .docx file.",
+  "Do not finish with chat-only output when a Word file is requested.",
+  "Prefer human-readable filenames unless the user requested a specific filename.",
+]
+
+[triggers]
+regex = [
+  "\\bdocx\\b",
+  "\\bword\\s+doc(?:ument)?\\b",
+  "\\bmicrosoft\\s+word\\b",
+]
+extensions = [".doc", ".docx"]
+
+[output_contract]
+required_artifact = true
+allowed_extensions = [".docx"]
+minimum_artifacts = 1
+description = "A .docx artifact is required for this task."
+
+[validation_rules]
+rules = ["artifact_required", "extension_required", "human_readable_filename"]
+
+[retry_policy]
+max_attempts = 1
+strategies = ["discover_existing_outputs"]

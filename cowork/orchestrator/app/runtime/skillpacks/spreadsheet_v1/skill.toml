@@ -1,0 +1,34 @@
+id = "spreadsheet_v1"
+name = "xlsx"
+version = "1.0.0"
+description = "Spreadsheet creation workflow with formula expectations."
+domains = ["docs", "spreadsheet"]
+force_complex = true
+required_tools = ["excel", "file_write", "terminal"]
+prompt_instructions = [
+  "Create a real spreadsheet artifact when requested (.xlsx/.csv).",
+  "Use formulas for derived values when applicable.",
+  "Use human-readable filenames unless user requested exact naming.",
+]
+
+[triggers]
+regex = [
+  "\\bspreadsheet\\b",
+  "\\bexcel\\b",
+  "\\bxlsx\\b",
+  "\\bcsv\\b",
+]
+extensions = [".xlsx", ".xlsm", ".csv", ".tsv"]
+
+[output_contract]
+required_artifact = true
+allowed_extensions = [".xlsx", ".csv", ".tsv"]
+minimum_artifacts = 1
+description = "A spreadsheet artifact is required for this task."
+
+[validation_rules]
+rules = ["artifact_required", "extension_required", "human_readable_filename"]
+
+[retry_policy]
+max_attempts = 1
+strategies = ["discover_existing_outputs"]

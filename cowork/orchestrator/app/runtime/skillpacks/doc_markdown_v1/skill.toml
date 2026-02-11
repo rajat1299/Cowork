@@ -1,0 +1,34 @@
+id = "doc_markdown_v1"
+name = "doc_markdown"
+version = "1.0.0"
+description = "Markdown document authoring with structural validation."
+domains = ["docs", "markdown"]
+force_complex = true
+required_tools = ["file_write", "terminal", "docs"]
+prompt_instructions = [
+  "Produce a real .md deliverable when the user asks for a document or report.",
+  "Write the file to the project workdir and report the saved path.",
+  "Use human-readable filenames unless the user explicitly provides one.",
+]
+
+[triggers]
+regex = [
+  "\\bmarkdown\\b",
+  "\\bwrite\\s+(a\\s+)?(doc|document|report|summary)\\b",
+  "\\bcreate\\s+(a\\s+)?(doc|document|report|summary)\\b",
+  "\\bnotes?\\b",
+]
+extensions = [".md", ".txt"]
+
+[output_contract]
+required_artifact = true
+allowed_extensions = [".md"]
+minimum_artifacts = 1
+description = "A markdown artifact is required for this task."
+
+[validation_rules]
+rules = ["artifact_required", "markdown_structure", "human_readable_filename"]
+
+[retry_policy]
+max_attempts = 1
+strategies = ["repair_from_transcript", "discover_existing_outputs"]

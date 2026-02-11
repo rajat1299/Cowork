@@ -1,0 +1,32 @@
+id = "doc_pdf_v1"
+name = "pdf"
+version = "1.0.0"
+description = "PDF creation and extraction workflow."
+domains = ["docs", "pdf"]
+force_complex = true
+required_tools = ["file_write", "terminal"]
+prompt_instructions = [
+  "If PDF output is requested, produce a real .pdf file.",
+  "Report the saved file path and include it in output artifacts.",
+]
+
+[triggers]
+regex = [
+  "\\bpdf\\b",
+  "\\bportable\\s+document\\s+format\\b",
+  "\\bexport\\s+to\\s+pdf\\b",
+]
+extensions = [".pdf"]
+
+[output_contract]
+required_artifact = true
+allowed_extensions = [".pdf"]
+minimum_artifacts = 1
+description = "A .pdf artifact is required for this task."
+
+[validation_rules]
+rules = ["artifact_required", "extension_required", "human_readable_filename"]
+
+[retry_policy]
+max_attempts = 1
+strategies = ["discover_existing_outputs"]

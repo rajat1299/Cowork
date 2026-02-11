@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterable
+from typing import Any, AsyncIterator, Callable, Iterable
 from urllib.parse import quote
 
 from camel.agents import ChatAgent
@@ -57,12 +57,14 @@ from app.runtime.llm_client import (
     collect_chat_completion,
     stream_chat,
 )
+from app.runtime.skill_engine import SkillRunState, get_runtime_skill_engine
 from app.runtime.skills import (
     RuntimeSkill,
     apply_runtime_skills,
     build_runtime_skill_context,
     detect_runtime_skills,
     requires_complex_execution,
+    skill_ids,
     skill_names,
 )
 from app.runtime.sync import fire_and_forget, fire_and_forget_artifact
@@ -1127,10 +1129,16 @@ class TokenTracker:
 
 
 class EventStream:
-    def __init__(self, task_id: str, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(
+        self,
+        task_id: str,
+        loop: asyncio.AbstractEventLoop,
+        step_listener: Callable[[StepEvent, dict[str, Any]], None] | None = None,
+    ) -> None:
         self.task_id = task_id
         self.loop = loop
         self.queue: asyncio.Queue[StepEventModel | None] = asyncio.Queue()
+        self._step_listener = step_listener
 
     def emit(self, step: StepEvent, data: dict) -> None:
         artifact_payloads: list[dict[str, Any]] = []
@@ -1138,13 +1146,19 @@ class EventStream:
             # Collect artifacts once so they can be persisted and streamed live.
             artifact_payloads = _collect_tool_artifacts(self.task_id, data)
         event = _emit(self.task_id, step, data)
-        events: list[StepEventModel] = [event]
+        events: list[tuple[StepEvent, dict[str, Any], StepEventModel]] = [(step, data, event)]
         for artifact_payload in artifact_payloads:
-            events.append(_emit(self.task_id, StepEvent.artifact, artifact_payload))
+            artifact_event = _emit(self.task_id, StepEvent.artifact, artifact_payload)
+            events.append((StepEvent.artifact, artifact_payload, artifact_event))
 
         def _enqueue() -> None:
-            for queued in events:
-                self.queue.put_nowait(queued)
+            for queued_step, queued_data, queued_event in events:
+                if self._step_listener is not None:
+                    try:
+                        self._step_listener(queued_step, queued_data)
+                    except Exception as exc:
+                        logger.warning("step_listener_failed: %s", exc)
+                self.queue.put_nowait(queued_event)
 
         if self.loop.is_running():
             self.loop.call_soon_threadsafe(_enqueue)
@@ -1453,10 +1467,33 @@ async def _run_camel_complex(
     context: str,
     memory_generate_enabled: bool,
     active_skills: list[RuntimeSkill],
+    skill_run_state: SkillRunState | None,
 ) -> None:
     env_snapshot: dict[str, str | None] | None = None
     mcp_toolkit: MCPToolkit | None = None
+    skill_engine = get_runtime_skill_engine()
     try:
+        if skill_run_state and skill_run_state.active_skills:
+            if skill_run_state.query_plan:
+                event_stream.emit(
+                    StepEvent.notice,
+                    {
+                        "message": "Prepared research query plan.",
+                        "skill_id": skill_run_state.active_skills[0].id,
+                        "skill_version": skill_run_state.active_skills[0].version,
+                        "skill_stage": "prepare_plan",
+                        "skill_checkpoint": "query_plan_ready",
+                        "query_plan": skill_run_state.query_plan,
+                    },
+                )
+            _trace_log(
+                "skill_stage",
+                {
+                    "task_id": action.task_id,
+                    "stage": "prepare_plan",
+                    "skills": [skill.id for skill in skill_run_state.active_skills],
+                },
+            )
         decompose_parts: list[str] = []
         decompose_usage: dict | None = None
         decompose_prompt = build_decomposition_prompt(action.question, context)
@@ -1585,7 +1622,8 @@ async def _run_camel_complex(
                 spec.tools = _strip_search_tools(spec.tools, include_browser=False)
         if memory_search_enabled:
             _ensure_tool(agent_specs, "memory_search")
-        apply_runtime_skills(agent_specs, active_skills)
+        if not skill_engine.is_shadow():
+            apply_runtime_skills(agent_specs, active_skills)
         global_base_context = _build_global_base_context(str(workdir), action.project_id)
         skill_context = build_runtime_skill_context(active_skills)
         if skill_context:
@@ -1713,6 +1751,105 @@ async def _run_camel_complex(
 
         if final_result and (not summary_streamed or not summary_result):
             event_stream.emit(StepEvent.streaming, {"chunk": final_result})
+
+        if skill_run_state and skill_run_state.active_skills:
+            validation = skill_engine.validate_outputs(
+                run_state=skill_run_state,
+                workdir=workdir,
+                transcript=final_result,
+            )
+            primary_skill = skill_run_state.active_skills[0]
+            event_stream.emit(
+                StepEvent.notice,
+                {
+                    "message": "Validating runtime skill output contracts.",
+                    "skill_id": primary_skill.id,
+                    "skill_version": primary_skill.version,
+                    "skill_stage": "validate_outputs",
+                    "skill_score": validation.score,
+                    "validation": {
+                        "success": validation.success,
+                        "issues": validation.issues,
+                        "expected_contracts": validation.expected_contracts,
+                    },
+                },
+            )
+            _trace_log(
+                "skill_validation",
+                {
+                    "task_id": action.task_id,
+                    "success": validation.success,
+                    "score": validation.score,
+                    "issues": validation.issues,
+                },
+            )
+            if not validation.success:
+                event_stream.emit(
+                    StepEvent.notice,
+                    {
+                        "message": "Attempting a repair pass for skill contracts.",
+                        "skill_id": primary_skill.id,
+                        "skill_version": primary_skill.version,
+                        "skill_stage": "repair",
+                        "skill_checkpoint": "repair_attempt",
+                        "validation": {
+                            "success": validation.success,
+                            "issues": validation.issues,
+                            "expected_contracts": validation.expected_contracts,
+                        },
+                    },
+                )
+                repair = skill_engine.repair_or_fail(
+                    run_state=skill_run_state,
+                    validation=validation,
+                    workdir=workdir,
+                )
+                for artifact in repair.artifacts:
+                    event_stream.emit(StepEvent.artifact, artifact)
+                _trace_log(
+                    "skill_repair_attempt",
+                    {
+                        "task_id": action.task_id,
+                        "success": repair.success,
+                        "notes": repair.notes,
+                        "artifacts": repair.artifacts,
+                    },
+                )
+                if not repair.success:
+                    reason = "Skill output contract validation failed"
+                    event_stream.emit(
+                        StepEvent.error,
+                        {
+                            "error": reason,
+                            "skill_id": primary_skill.id,
+                            "skill_version": primary_skill.version,
+                            "skill_stage": "validation_failed",
+                            "validation": {
+                                "success": validation.success,
+                                "issues": validation.issues,
+                                "expected_contracts": validation.expected_contracts,
+                            },
+                        },
+                    )
+                    event_stream.emit(
+                        StepEvent.end,
+                        {
+                            "result": "error",
+                            "reason": reason,
+                            "skill_id": primary_skill.id,
+                            "skill_version": primary_skill.version,
+                            "skill_stage": "validation_failed",
+                            "validation": {
+                                "success": validation.success,
+                                "issues": validation.issues,
+                                "expected_contracts": validation.expected_contracts,
+                            },
+                        },
+                    )
+                    if history_id is not None:
+                        await update_history(action.auth_token, history_id, {"status": 3})
+                    task_lock.status = TaskStatus.done
+                    return
 
         if history_id is not None:
             await update_history(
@@ -1937,23 +2074,44 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             attachments_text = _attachments_context(attachments)
             context = _build_context(task_lock)
             context_with_attachments = f"{context}{attachments_text}" if attachments_text else context
+            skill_engine = get_runtime_skill_engine()
             active_skills = detect_runtime_skills(action.question, attachments)
+            skill_run_state = skill_engine.prepare_plan(
+                task_id=action.task_id,
+                project_id=action.project_id,
+                question=action.question,
+                context=context_with_attachments,
+                active_skills=active_skills,
+            )
             skills_context = build_runtime_skill_context(active_skills)
             context_with_skills = (
                 f"{context_with_attachments}{skills_context}" if skills_context else context_with_attachments
             )
             if active_skills:
                 _trace_log(
-                    "runtime_skills",
+                    "skill_detected",
                     {
                         "task_id": action.task_id,
+                        "skill_ids": skill_ids(active_skills),
                         "skills": skill_names(active_skills),
+                        "query_plan": skill_run_state.query_plan,
                     },
                 )
                 yield _emit(
                     action.task_id,
                     StepEvent.notice,
-                    {"message": f"Activated skills: {', '.join(skill_names(active_skills))}"},
+                    {
+                        "message": f"Activated skills: {', '.join(skill_names(active_skills))}",
+                        "skill_id": active_skills[0].id,
+                        "skill_version": active_skills[0].version,
+                        "skill_stage": "detect",
+                        "skill_checkpoint": "skills_activated",
+                        "skill_score": skill_engine.score_parity_profile().get("weighted_score"),
+                        "validation": {
+                            "skill_ids": skill_ids(active_skills),
+                            "query_plan": skill_run_state.query_plan,
+                        },
+                    },
                 )
             await _persist_message(
                 action.auth_token,
@@ -1976,7 +2134,17 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             total_tokens += complexity_tokens
             if exa_fallback_enabled:
                 is_complex = True
-            if requires_complex_execution(action.question, active_skills):
+            skill_forces_complex = requires_complex_execution(action.question, active_skills)
+            if skill_forces_complex and skill_engine.is_shadow():
+                _trace_log(
+                    "skill_stage",
+                    {
+                        "task_id": action.task_id,
+                        "stage": "force_complex_shadow_only",
+                        "skill_ids": skill_ids(active_skills),
+                    },
+                )
+            elif skill_forces_complex:
                 is_complex = True
 
             if not is_complex:
@@ -2004,6 +2172,8 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                         if chunk:
                             content_parts.append(chunk)
                             yield _emit(action.task_id, StepEvent.streaming, {"chunk": chunk})
+                            if skill_run_state and skill_run_state.active_skills:
+                                skill_engine.on_step_event(skill_run_state, StepEvent.streaming.value, {"chunk": chunk})
                         if usage_update:
                             usage = usage_update
                 except Exception as exc:
@@ -2048,6 +2218,60 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                         project_id=action.project_id,
                     )
 
+                if skill_run_state and skill_run_state.active_skills:
+                    skill_engine.on_step_event(skill_run_state, StepEvent.end.value, {"result": result_text})
+                    validation = skill_engine.validate_outputs(
+                        run_state=skill_run_state,
+                        workdir=workdir,
+                        transcript=result_text,
+                    )
+                    if not validation.success:
+                        repair = skill_engine.repair_or_fail(
+                            run_state=skill_run_state,
+                            validation=validation,
+                            workdir=workdir,
+                        )
+                        for artifact in repair.artifacts:
+                            yield _emit(action.task_id, StepEvent.artifact, artifact)
+                            skill_engine.on_step_event(skill_run_state, StepEvent.artifact.value, artifact)
+                        if not repair.success:
+                            reason = "Skill output contract validation failed"
+                            yield _emit(
+                                action.task_id,
+                                StepEvent.error,
+                                {
+                                    "error": reason,
+                                    "skill_id": skill_run_state.active_skills[0].id,
+                                    "skill_version": skill_run_state.active_skills[0].version,
+                                    "skill_stage": "validation_failed",
+                                    "validation": {
+                                        "success": validation.success,
+                                        "issues": validation.issues,
+                                        "expected_contracts": validation.expected_contracts,
+                                    },
+                                },
+                            )
+                            yield _emit(
+                                action.task_id,
+                                StepEvent.end,
+                                {
+                                    "result": "error",
+                                    "reason": reason,
+                                    "skill_id": skill_run_state.active_skills[0].id,
+                                    "skill_version": skill_run_state.active_skills[0].version,
+                                    "skill_stage": "validation_failed",
+                                    "validation": {
+                                        "success": validation.success,
+                                        "issues": validation.issues,
+                                        "expected_contracts": validation.expected_contracts,
+                                    },
+                                },
+                            )
+                            if history_id is not None:
+                                await update_history(action.auth_token, history_id, {"status": 3})
+                            task_lock.status = TaskStatus.done
+                            continue
+
                 yield _emit(action.task_id, StepEvent.end, {"result": result_text, "usage": usage or {}})
                 task_lock.add_conversation("assistant", result_text)
                 await _persist_message(
@@ -2068,7 +2292,15 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 continue
 
             loop = asyncio.get_running_loop()
-            event_stream = EventStream(action.task_id, loop)
+            event_stream = EventStream(
+                action.task_id,
+                loop,
+                step_listener=(
+                    (lambda step, data: skill_engine.on_step_event(skill_run_state, step.value, data))
+                    if skill_run_state and skill_run_state.active_skills
+                    else None
+                ),
+            )
             token_tracker = TokenTracker(total_tokens)
             run_task = asyncio.create_task(
                 _run_camel_complex(
@@ -2084,6 +2316,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                     context_with_skills,
                     memory_generate_enabled,
                     active_skills,
+                    skill_run_state,
                 )
             )
             task_lock.add_background_task(run_task)

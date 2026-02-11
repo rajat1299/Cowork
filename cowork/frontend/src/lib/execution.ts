@@ -345,6 +345,9 @@ function deriveContextSignals(turnSteps: ProgressStep[]): { connectors: string[]
         }
       })
     }
+    if (typeof data.skill_id === 'string' && data.skill_id.trim()) {
+      skills.add(data.skill_id.replace(/_/g, ' '))
+    }
   })
 
   return {
