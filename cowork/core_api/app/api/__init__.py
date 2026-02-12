@@ -17,6 +17,7 @@ from app.api.search import router as search_router
 from app.api.share import router as share_router
 from app.api.snapshots import router as snapshots_router
 from app.api.sessions import router as sessions_router
+from app.api.skills import router as skills_router
 from app.api.steps import router as steps_router
 
 router = APIRouter()
@@ -37,4 +38,5 @@ router.include_router(search_router)
 router.include_router(share_router)
 router.include_router(snapshots_router)
 router.include_router(sessions_router)
+router.include_router(skills_router)
 router.include_router(steps_router)

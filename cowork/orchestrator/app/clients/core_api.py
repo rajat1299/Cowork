@@ -35,6 +35,19 @@ class ProviderFeatureFlags(BaseModel):
     updated_at: datetime
 
 
+class SkillEntry(BaseModel):
+    skill_id: str
+    name: str
+    description: str
+    source: str
+    enabled_by_default: bool = False
+    enabled: bool = False
+    user_owned: bool = False
+    storage_path: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ChatMessage(BaseModel):
     id: int
     user_id: int
@@ -140,6 +153,22 @@ async def fetch_provider_features(
             if not payload:
                 return None
             return ProviderFeatureFlags(**payload[0])
+    except httpx.HTTPError:
+        return None
+
+
+async def fetch_skills(auth_header: str | None) -> list[SkillEntry] | None:
+    if not auth_header:
+        return None
+    base_url = settings.core_api_url.rstrip("/")
+    if not base_url:
+        return None
+    headers = _build_headers(auth_header)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{base_url}/skills", headers=headers)
+            resp.raise_for_status()
+            return [SkillEntry(**item) for item in resp.json()]
     except httpx.HTTPError:
         return None
 

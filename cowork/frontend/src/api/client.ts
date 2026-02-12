@@ -160,6 +160,9 @@ export const coreApi = {
 
   delete: <T>(endpoint: string, auth = true) =>
     apiRequest<T>(CORE_API_URL, endpoint, { method: 'DELETE', auth }),
+
+  upload: <T>(endpoint: string, formData: FormData, auth = true) =>
+    uploadRequest<T>(CORE_API_URL, endpoint, formData, auth),
 }
 
 // Convenience methods for Orchestrator

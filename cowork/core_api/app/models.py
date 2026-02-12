@@ -126,6 +126,36 @@ class ProviderFeatureFlags(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class Skill(SQLModel, table=True):
+    __tablename__ = "skill"
+    __table_args__ = (UniqueConstraint("skill_id", name="uq_skill_skill_id"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    skill_id: str = Field(index=True)
+    name: str
+    description: str = ""
+    source: str = Field(default="built_in", index=True)
+    owner_user_id: int | None = Field(default=None, foreign_key="user.id")
+    storage_path: str | None = None
+    enabled_by_default: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UserSkillState(SQLModel, table=True):
+    __tablename__ = "user_skill_state"
+    __table_args__ = (
+        UniqueConstraint("user_id", "skill_id", name="uq_user_skill_state_user_skill"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True, foreign_key="user.id")
+    skill_id: str = Field(index=True)
+    enabled: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ChatHistory(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(index=True, foreign_key="user.id")

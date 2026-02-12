@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Download,
   Clipboard,
+  PanelRightClose,
 } from 'lucide-react'
 import { buildTurnExecutionView, type TurnCheckpoint } from '../../lib/execution'
 import {
@@ -28,6 +29,7 @@ import type { ArtifactInfo } from '../../types/chat'
 
 interface RightSidebarProps {
   className?: string
+  onCollapse?: () => void
 }
 
 function renderArtifactIcon(type: ArtifactInfo['type']) {
@@ -158,7 +160,7 @@ function NewChatSidebar() {
   )
 }
 
-export function RightSidebar({ className }: RightSidebarProps) {
+export function RightSidebar({ className, onCollapse }: RightSidebarProps) {
   const activeTask = useChatStore((state) => state.getActiveTask())
 
   const view = useMemo(() => {
@@ -185,10 +187,26 @@ export function RightSidebar({ className }: RightSidebarProps) {
   return (
     <aside
       className={cn(
-        'w-80 h-full flex flex-col border-l border-border bg-card/80 backdrop-blur-xl',
+        'w-80 min-w-80 h-full flex flex-col border-l border-border bg-card/80 backdrop-blur-xl',
         className
       )}
     >
+      {/* Header with collapse button */}
+      <div className="flex items-center justify-end p-3 border-b border-border/60">
+        <button
+          onClick={onCollapse}
+          aria-label="Collapse sidebar"
+          className={cn(
+            'w-8 h-8 flex items-center justify-center',
+            'text-muted-foreground hover:text-foreground',
+            'rounded-lg hover:bg-secondary',
+            'transition-all duration-200'
+          )}
+        >
+          <PanelRightClose size={18} strokeWidth={1.5} />
+        </button>
+      </div>
+
       {!activeTask || activeTask.messages.length === 0 ? (
         <NewChatSidebar />
       ) : (

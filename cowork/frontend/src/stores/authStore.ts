@@ -40,7 +40,9 @@ export const useAuthStore = create<AuthState>()(
         }),
 
       setUser: (user) =>
-        set({ user }),
+        set((state) => ({
+          user: state.user ? { ...state.user, ...user } : user,
+        })),
 
       updateUserName: (name) =>
         set((state) => ({

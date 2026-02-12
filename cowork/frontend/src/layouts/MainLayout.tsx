@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Outlet, Navigate } from 'react-router-dom'
+import { Outlet, Navigate, useLocation } from 'react-router-dom'
+import { PanelRight } from 'lucide-react'
 import { Sidebar, RightSidebar } from '../components/layout'
 import { ArtifactViewerPane } from '../components/layout/ArtifactViewerPane'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { useAuthStore } from '../stores'
 import { useViewerStore } from '../stores/viewerStore'
+import { cn } from '../lib/utils'
 
 /**
  * Main layout for authenticated pages
@@ -12,8 +14,10 @@ import { useViewerStore } from '../stores/viewerStore'
  */
 export function MainLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false)
   const [isResizing, setIsResizing] = useState(false)
   const mainContentRef = useRef<HTMLDivElement>(null)
+  const location = useLocation()
   // Use individual selectors to avoid re-renders on unrelated state changes
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const isLoading = useAuthStore((s) => s.isLoading)
@@ -21,6 +25,10 @@ export function MainLayout() {
   const widthRatio = useViewerStore((state) => state.widthRatio)
   const setWidthRatio = useViewerStore((state) => state.setWidthRatio)
   const isArtifactOpen = Boolean(openedArtifact)
+
+  // Hide right sidebar on non-chat routes (settings, history, etc.)
+  const isChatRoute = location.pathname === '/'
+  const showRightSidebar = isChatRoute && !isArtifactOpen && !rightSidebarCollapsed
 
   useEffect(() => {
     if (!isResizing) return undefined
@@ -103,7 +111,36 @@ export function MainLayout() {
       </main>
 
       {/* Right Sidebar */}
-      {!isArtifactOpen ? <RightSidebar /> : null}
+      {isChatRoute && !isArtifactOpen && (
+        <div
+          className={cn(
+            'h-full overflow-hidden transition-all duration-300 ease-smooth',
+            rightSidebarCollapsed ? 'w-0' : 'w-80'
+          )}
+        >
+          <RightSidebar onCollapse={() => setRightSidebarCollapsed(true)} />
+        </div>
+      )}
+
+      {/* Expand button when right sidebar is collapsed */}
+      {isChatRoute && !isArtifactOpen && (
+        <button
+          onClick={() => setRightSidebarCollapsed(false)}
+          aria-label="Expand sidebar"
+          className={cn(
+            'fixed right-4 top-4 z-10',
+            'w-8 h-8 flex items-center justify-center',
+            'text-muted-foreground hover:text-foreground',
+            'rounded-lg',
+            'transition-all duration-300 ease-smooth',
+            rightSidebarCollapsed
+              ? 'opacity-100 pointer-events-auto'
+              : 'opacity-0 pointer-events-none'
+          )}
+        >
+          <PanelRight size={18} strokeWidth={1.5} />
+        </button>
+      )}
     </div>
   )
 }

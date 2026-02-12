@@ -79,6 +79,21 @@ export interface CreateConfigRequest {
   value: string
 }
 
+export type SkillSource = 'built_in' | 'example' | 'custom' | string
+
+export interface Skill {
+  skill_id: string
+  name: string
+  description: string
+  source: SkillSource
+  enabled_by_default: boolean
+  enabled: boolean
+  user_owned: boolean
+  storage_path?: string | null
+  created_at: string
+  updated_at: string
+}
+
 // Steps
 export interface StepEvent {
   id?: string
@@ -160,6 +175,21 @@ export const config = {
 
   delete: (id: string): Promise<void> =>
     coreApi.delete(`/configs/${id}`),
+}
+
+export const skills = {
+  list: (): Promise<Skill[]> =>
+    coreApi.get('/skills'),
+
+  toggle: (skillId: string, enabled: boolean): Promise<Skill> =>
+    coreApi.put(`/skills/${skillId}/toggle`, { enabled }),
+
+  upload: (file: File, enabled = true): Promise<Skill> => {
+    const payload = new FormData()
+    payload.append('file', file)
+    payload.append('enabled', enabled ? 'true' : 'false')
+    return coreApi.upload('/skills/upload', payload)
+  },
 }
 
 // ============ Chat Messages Types ============

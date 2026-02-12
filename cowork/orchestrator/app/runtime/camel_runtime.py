@@ -32,6 +32,7 @@ from camel.tasks.task import Task, TaskState
 
 from app.clients.core_api import (
     ProviderConfig,
+    SkillEntry,
     create_history,
     create_message,
     create_memory_note,
@@ -41,6 +42,7 @@ from app.clients.core_api import (
     fetch_mcp_users,
     fetch_provider,
     fetch_provider_features,
+    fetch_skills,
     fetch_task_summary,
     fetch_thread_summary,
     upsert_task_summary,
@@ -67,6 +69,7 @@ from app.runtime.skills import (
     skill_ids,
     skill_names,
 )
+from app.runtime.skills_schema import load_skill_packs
 from app.runtime.sync import fire_and_forget, fire_and_forget_artifact
 from app.runtime.task_lock import TaskLock
 from app.runtime.tool_context import (
@@ -1072,12 +1075,89 @@ _SEARCH_INTENT_PATTERN = re.compile(
     r"\b(web\s+search|search the web|search online|search for|look up|lookup|google|bing|browse the web|find sources|latest news|recent news)\b",
     re.IGNORECASE,
 )
+_QUESTION_EXTENSION_PATTERN = re.compile(r"\.[a-zA-Z0-9]{1,8}\b")
 
 
 def _detect_search_intent(question: str) -> bool:
     if not question:
         return False
     return bool(_SEARCH_INTENT_PATTERN.search(question))
+
+
+def _extensions_for_skill_detection(question: str, attachments: list[object] | None) -> set[str]:
+    question_extensions = {ext.lower() for ext in _QUESTION_EXTENSION_PATTERN.findall(question or "")}
+    attachment_extensions: set[str] = set()
+    for attachment in attachments or []:
+        payload: dict[str, object] | None = None
+        if isinstance(attachment, dict):
+            payload = attachment
+        elif hasattr(attachment, "model_dump"):
+            payload = attachment.model_dump()  # type: ignore[attr-defined]
+        elif hasattr(attachment, "dict"):
+            payload = attachment.dict()  # type: ignore[attr-defined]
+        if not payload:
+            continue
+        for key in ("name", "path"):
+            value = payload.get(key)
+            if not isinstance(value, str):
+                continue
+            suffix = Path(value).suffix.lower()
+            if suffix:
+                attachment_extensions.add(suffix)
+    return question_extensions | attachment_extensions
+
+
+def _detect_custom_runtime_skills(
+    question: str,
+    attachments: list[object] | None,
+    available_skills: list[SkillEntry] | None,
+) -> list[RuntimeSkill]:
+    if not available_skills:
+        return []
+    extension_set = _extensions_for_skill_detection(question, attachments)
+    detected: list[RuntimeSkill] = []
+    for catalog_skill in available_skills:
+        if not catalog_skill.enabled or catalog_skill.source != "custom" or not catalog_skill.storage_path:
+            continue
+        skill_root = Path(catalog_skill.storage_path) / "contents"
+        if not skill_root.exists():
+            continue
+        try:
+            loaded = load_skill_packs(skill_root)
+        except Exception:
+            continue
+        for skill in loaded.skills:
+            if skill.matches_question(question) or skill.matches_extensions(extension_set):
+                detected.append(skill)
+    # Preserve first-seen order and avoid duplicate IDs.
+    deduped: list[RuntimeSkill] = []
+    seen_ids: set[str] = set()
+    for skill in detected:
+        if skill.id in seen_ids:
+            continue
+        seen_ids.add(skill.id)
+        deduped.append(skill)
+    return deduped
+
+
+def _filter_enabled_runtime_skills(
+    detected_skills: list[RuntimeSkill],
+    available_skills: list[SkillEntry] | None = None,
+) -> list[RuntimeSkill]:
+    if not detected_skills:
+        return []
+    if available_skills is None:
+        return detected_skills
+    if not available_skills:
+        return []
+    enabled_ids = {
+        item.skill_id
+        for item in available_skills
+        if item.enabled and item.skill_id
+    }
+    if not enabled_ids:
+        return []
+    return [skill for skill in detected_skills if skill.id in enabled_ids]
 
 
 async def _extract_response(response) -> tuple[str, dict | None]:
@@ -2075,7 +2155,26 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             context = _build_context(task_lock)
             context_with_attachments = f"{context}{attachments_text}" if attachments_text else context
             skill_engine = get_runtime_skill_engine()
-            active_skills = detect_runtime_skills(action.question, attachments)
+            skill_catalog = await fetch_skills(action.auth_token)
+            detected_skills = detect_runtime_skills(action.question, attachments)
+            custom_detected_skills = _detect_custom_runtime_skills(
+                action.question,
+                attachments,
+                skill_catalog,
+            )
+            if custom_detected_skills:
+                combined: list[RuntimeSkill] = []
+                seen_ids: set[str] = set()
+                for skill in [*detected_skills, *custom_detected_skills]:
+                    if skill.id in seen_ids:
+                        continue
+                    seen_ids.add(skill.id)
+                    combined.append(skill)
+                detected_skills = combined
+            active_skills = _filter_enabled_runtime_skills(
+                detected_skills,
+                skill_catalog,
+            )
             skill_run_state = skill_engine.prepare_plan(
                 task_id=action.task_id,
                 project_id=action.project_id,
@@ -2110,6 +2209,18 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                         "validation": {
                             "skill_ids": skill_ids(active_skills),
                             "query_plan": skill_run_state.query_plan,
+                        },
+                    },
+                )
+            elif detected_skills:
+                yield _emit(
+                    action.task_id,
+                    StepEvent.notice,
+                    {
+                        "message": "Detected skills are disabled in your Capabilities settings.",
+                        "skill_stage": "detect",
+                        "validation": {
+                            "detected_skill_ids": skill_ids(detected_skills),
                         },
                     },
                 )

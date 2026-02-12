@@ -17,6 +17,8 @@ dependencies = [
     "psycopg2-binary>=2.9.9",
     "alembic>=1.13.2",
     "cryptography>=43.0.0",
+    "python-multipart>=0.0.22",
+    "bcrypt==4.0.1",
 ]
 
 [tool.ruff]
