@@ -60,6 +60,11 @@ from app.runtime.llm_client import (
     stream_chat,
 )
 from app.runtime.skill_engine import SkillRunState, get_runtime_skill_engine
+from app.runtime.skill_catalog_matching import (
+    catalog_skill_matches_request,
+    extensions_for_skill_detection,
+    filter_enabled_runtime_skills,
+)
 from app.runtime.skills import (
     RuntimeSkill,
     apply_runtime_skills,
@@ -1075,7 +1080,6 @@ _SEARCH_INTENT_PATTERN = re.compile(
     r"\b(web\s+search|search the web|search online|search for|look up|lookup|google|bing|browse the web|find sources|latest news|recent news)\b",
     re.IGNORECASE,
 )
-_QUESTION_EXTENSION_PATTERN = re.compile(r"\.[a-zA-Z0-9]{1,8}\b")
 
 
 def _detect_search_intent(question: str) -> bool:
@@ -1084,40 +1088,16 @@ def _detect_search_intent(question: str) -> bool:
     return bool(_SEARCH_INTENT_PATTERN.search(question))
 
 
-def _extensions_for_skill_detection(question: str, attachments: list[object] | None) -> set[str]:
-    question_extensions = {ext.lower() for ext in _QUESTION_EXTENSION_PATTERN.findall(question or "")}
-    attachment_extensions: set[str] = set()
-    for attachment in attachments or []:
-        payload: dict[str, object] | None = None
-        if isinstance(attachment, dict):
-            payload = attachment
-        elif hasattr(attachment, "model_dump"):
-            payload = attachment.model_dump()  # type: ignore[attr-defined]
-        elif hasattr(attachment, "dict"):
-            payload = attachment.dict()  # type: ignore[attr-defined]
-        if not payload:
-            continue
-        for key in ("name", "path"):
-            value = payload.get(key)
-            if not isinstance(value, str):
-                continue
-            suffix = Path(value).suffix.lower()
-            if suffix:
-                attachment_extensions.add(suffix)
-    return question_extensions | attachment_extensions
-
-
 def _detect_custom_runtime_skills(
     question: str,
-    attachments: list[object] | None,
-    available_skills: list[SkillEntry] | None,
+    extension_set: set[str],
+    custom_candidates: list[SkillEntry],
 ) -> list[RuntimeSkill]:
-    if not available_skills:
+    if not custom_candidates:
         return []
-    extension_set = _extensions_for_skill_detection(question, attachments)
     detected: list[RuntimeSkill] = []
-    for catalog_skill in available_skills:
-        if not catalog_skill.enabled or catalog_skill.source != "custom" or not catalog_skill.storage_path:
+    for catalog_skill in custom_candidates:
+        if not catalog_skill.storage_path:
             continue
         skill_root = Path(catalog_skill.storage_path) / "contents"
         if not skill_root.exists():
@@ -1138,26 +1118,6 @@ def _detect_custom_runtime_skills(
         seen_ids.add(skill.id)
         deduped.append(skill)
     return deduped
-
-
-def _filter_enabled_runtime_skills(
-    detected_skills: list[RuntimeSkill],
-    available_skills: list[SkillEntry] | None = None,
-) -> list[RuntimeSkill]:
-    if not detected_skills:
-        return []
-    if available_skills is None:
-        return detected_skills
-    if not available_skills:
-        return []
-    enabled_ids = {
-        item.skill_id
-        for item in available_skills
-        if item.enabled and item.skill_id
-    }
-    if not enabled_ids:
-        return []
-    return [skill for skill in detected_skills if skill.id in enabled_ids]
 
 
 async def _extract_response(response) -> tuple[str, dict | None]:
@@ -2156,11 +2116,19 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             context_with_attachments = f"{context}{attachments_text}" if attachments_text else context
             skill_engine = get_runtime_skill_engine()
             skill_catalog = await fetch_skills(action.auth_token)
+            enabled_catalog_skills = [entry for entry in (skill_catalog or []) if entry.enabled]
+            detection_extensions = extensions_for_skill_detection(action.question, attachments)
             detected_skills = detect_runtime_skills(action.question, attachments)
+            custom_skill_candidates = [
+                entry
+                for entry in enabled_catalog_skills
+                if entry.source == "custom"
+                and catalog_skill_matches_request(entry, action.question, detection_extensions)
+            ]
             custom_detected_skills = _detect_custom_runtime_skills(
                 action.question,
-                attachments,
-                skill_catalog,
+                detection_extensions,
+                custom_skill_candidates,
             )
             if custom_detected_skills:
                 combined: list[RuntimeSkill] = []
@@ -2171,7 +2139,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                     seen_ids.add(skill.id)
                     combined.append(skill)
                 detected_skills = combined
-            active_skills = _filter_enabled_runtime_skills(
+            active_skills = filter_enabled_runtime_skills(
                 detected_skills,
                 skill_catalog,
             )

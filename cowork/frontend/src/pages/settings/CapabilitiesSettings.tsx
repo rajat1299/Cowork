@@ -265,6 +265,9 @@ export default function CapabilitiesSettings() {
           </a>
           .
         </p>
+        <p className="text-[12px] text-muted-foreground mb-6">
+          Disabled skills are unavailable to the model at runtime, even if they match your prompt.
+        </p>
 
         {/* Search skills */}
         <div className="flex items-center gap-4 mb-4">
@@ -345,7 +348,9 @@ export default function CapabilitiesSettings() {
         ) : filteredSkills.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-[14px] text-muted-foreground">
-              {skillsTab === 'example' ? 'No example skills found' : 'No skills added by you yet'}
+              {skillsTab === 'example'
+                ? 'No example skills found for this search.'
+                : 'No skills added by you yet. Upload a skill zip to get started.'}
             </p>
           </div>
         ) : (

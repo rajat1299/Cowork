@@ -1,5 +1,11 @@
 from pathlib import Path
+from datetime import datetime
 
+from app.clients.core_api import SkillEntry
+from app.runtime.skill_catalog_matching import (
+    catalog_skill_matches_request,
+    filter_enabled_runtime_skills,
+)
 from app.runtime.file_naming import (
     extract_explicit_filenames,
     normalize_filename_for_output,
@@ -253,3 +259,55 @@ def test_mixed_task_detects_research_and_document_skills():
     skill_ids = {skill.id for skill in skills}
     assert "research_web_v1" in skill_ids
     assert "doc_markdown_v1" in skill_ids
+
+
+def test_filter_enabled_runtime_skills_blocks_disabled_examples():
+    engine = RuntimeSkillEngine(mode="on")
+    detected = engine.detect("Please research this topic on the web")
+    catalog = [
+        SkillEntry(
+            skill_id="research_web_v1",
+            name="research_web",
+            description="Research and web browsing with source checks.",
+            source="built_in",
+            enabled=False,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+    ]
+    filtered = filter_enabled_runtime_skills(detected, catalog)
+    assert all(skill.id != "research_web_v1" for skill in filtered)
+
+
+def test_catalog_skill_matches_request_by_keyword_and_extension():
+    entry = SkillEntry(
+        skill_id="canvas_design",
+        name="canvas-design",
+        description="Create visual art in PNG/PDF documents.",
+        source="example",
+        trigger_keywords=["canvas design", "poster"],
+        trigger_extensions=[".png", ".pdf"],
+        enabled=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+
+    assert catalog_skill_matches_request(entry, "Create a poster for our launch", set()) is True
+    assert catalog_skill_matches_request(entry, "Do something else", {".png"}) is True
+    assert catalog_skill_matches_request(entry, "Do something else", {".md"}) is False
+
+
+def test_catalog_skill_matches_request_allows_custom_without_metadata():
+    entry = SkillEntry(
+        skill_id="custom_docx_v1",
+        name="custom-docx",
+        description="Custom skill uploaded before discovery metadata existed.",
+        source="custom",
+        trigger_keywords=[],
+        trigger_extensions=[],
+        enabled=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+
+    assert catalog_skill_matches_request(entry, "Unrelated prompt", set()) is True

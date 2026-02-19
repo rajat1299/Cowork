@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import settings
 
@@ -40,6 +40,9 @@ class SkillEntry(BaseModel):
     name: str
     description: str
     source: str
+    domains: list[str] = Field(default_factory=list)
+    trigger_keywords: list[str] = Field(default_factory=list)
+    trigger_extensions: list[str] = Field(default_factory=list)
     enabled_by_default: bool = False
     enabled: bool = False
     user_owned: bool = False

@@ -86,6 +86,9 @@ export interface Skill {
   name: string
   description: string
   source: SkillSource
+  domains: string[]
+  trigger_keywords: string[]
+  trigger_extensions: string[]
   enabled_by_default: boolean
   enabled: boolean
   user_owned: boolean

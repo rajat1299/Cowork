@@ -31,6 +31,9 @@ class SkillOut(BaseModel):
     name: str
     description: str
     source: str
+    domains: list[str]
+    trigger_keywords: list[str]
+    trigger_extensions: list[str]
     enabled_by_default: bool
     enabled: bool
     user_owned: bool
@@ -52,6 +55,9 @@ def _build_skill_out(skill: Skill, enabled: bool, user_id: int) -> SkillOut:
         name=skill.name,
         description=skill.description,
         source=skill.source,
+        domains=list(skill.domains or []),
+        trigger_keywords=list(skill.trigger_keywords or []),
+        trigger_extensions=list(skill.trigger_extensions or []),
         enabled_by_default=skill.enabled_by_default,
         enabled=enabled,
         user_owned=bool(skill.owner_user_id == user_id),
@@ -75,6 +81,9 @@ def _ensure_default_catalog(session: Session) -> None:
                     name=catalog_entry.name,
                     description=catalog_entry.description,
                     source=catalog_entry.source,
+                    domains=list(catalog_entry.domains),
+                    trigger_keywords=list(catalog_entry.trigger_keywords),
+                    trigger_extensions=list(catalog_entry.trigger_extensions),
                     enabled_by_default=catalog_entry.enabled_by_default,
                     created_at=now,
                     updated_at=now,
@@ -88,6 +97,9 @@ def _ensure_default_catalog(session: Session) -> None:
             record.name = catalog_entry.name
             record.description = catalog_entry.description
             record.source = catalog_entry.source
+            record.domains = list(catalog_entry.domains)
+            record.trigger_keywords = list(catalog_entry.trigger_keywords)
+            record.trigger_extensions = list(catalog_entry.trigger_extensions)
             record.enabled_by_default = catalog_entry.enabled_by_default
             record.updated_at = now
             session.add(record)
@@ -101,6 +113,9 @@ def _catalog_changed(record: Skill, catalog_entry: SkillCatalogEntry) -> bool:
         record.name != catalog_entry.name
         or record.description != catalog_entry.description
         or record.source != catalog_entry.source
+        or list(record.domains or []) != list(catalog_entry.domains)
+        or list(record.trigger_keywords or []) != list(catalog_entry.trigger_keywords)
+        or list(record.trigger_extensions or []) != list(catalog_entry.trigger_extensions)
         or record.enabled_by_default != catalog_entry.enabled_by_default
     )
 
@@ -266,6 +281,9 @@ async def upload_skill_zip(
         existing.name = parsed["name"]
         existing.description = parsed.get("description", "")
         existing.source = "custom"
+        existing.domains = []
+        existing.trigger_keywords = []
+        existing.trigger_extensions = []
         existing.owner_user_id = user.id
         existing.storage_path = str(skill_storage_dir)
         existing.enabled_by_default = bool(enabled)
@@ -278,6 +296,9 @@ async def upload_skill_zip(
             name=parsed["name"],
             description=parsed.get("description", ""),
             source="custom",
+            domains=[],
+            trigger_keywords=[],
+            trigger_extensions=[],
             owner_user_id=user.id,
             storage_path=str(skill_storage_dir),
             enabled_by_default=bool(enabled),

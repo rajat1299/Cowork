@@ -135,6 +135,9 @@ class Skill(SQLModel, table=True):
     name: str
     description: str = ""
     source: str = Field(default="built_in", index=True)
+    domains: list[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    trigger_keywords: list[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    trigger_extensions: list[str] = Field(default_factory=list, sa_column=Column(JSONB))
     owner_user_id: int | None = Field(default=None, foreign_key="user.id")
     storage_path: str | None = None
     enabled_by_default: bool = Field(default=False)
