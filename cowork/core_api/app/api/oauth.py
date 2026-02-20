@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlmodel import Session
 
+from app.api.auth_cookies import set_auth_cookies
 from app.db import get_session
 from app.oauth_adapter import get_oauth_adapter
 from app.oauth_service import get_or_create_oauth_user, issue_tokens
@@ -72,6 +73,7 @@ def oauth_token(
     provider: str,
     data: OAuthCallbackPayload,
     request: Request,
+    response: Response,
     session: Session = Depends(get_session),
 ):
     try:
@@ -94,4 +96,10 @@ def oauth_token(
         name=profile.get("name"),
         avatar_url=profile.get("avatar_url"),
     )
-    return issue_tokens(session, user.id)
+    tokens = issue_tokens(session, user.id)
+    set_auth_cookies(
+        response,
+        access_token=tokens["access_token"],
+        refresh_token=tokens["refresh_token"],
+    )
+    return tokens

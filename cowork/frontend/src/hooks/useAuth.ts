@@ -16,11 +16,9 @@ export function useAuth() {
     setError(null)
 
     try {
-      const tokens = await auth.login({ email, password })
-      // Store tokens FIRST so auth.me() can use them
-      useAuthStore.getState().setTokens(tokens.access_token, tokens.refresh_token)
+      await auth.login({ email, password })
       const userData = await auth.me()
-      setAuthState(tokens.access_token, tokens.refresh_token, userData)
+      setAuthState(userData)
       return true
     } catch (err) {
       if (err instanceof ApiError) {
@@ -41,10 +39,9 @@ export function useAuth() {
     try {
       await auth.register({ email, password })
       // Auto-login after registration
-      const tokens = await auth.login({ email, password })
-      useAuthStore.getState().setTokens(tokens.access_token, tokens.refresh_token)
+      await auth.login({ email, password })
       const userData = await auth.me()
-      setAuthState(tokens.access_token, tokens.refresh_token, userData)
+      setAuthState(userData)
       return true
     } catch (err) {
       if (err instanceof ApiError) {
@@ -60,25 +57,22 @@ export function useAuth() {
   }, [setAuthState])
 
   const logout = useCallback(() => {
+    void auth.logout().catch(() => undefined)
     clearAuthState()
   }, [clearAuthState])
 
   const checkAuth = useCallback(async () => {
-    const { accessToken, setLoading } = useAuthStore.getState()
-
-    if (!accessToken) {
-      setLoading(false)
-      return false
-    }
+    const { setLoading } = useAuthStore.getState()
 
     try {
       const userData = await auth.me()
-      useAuthStore.getState().setUser(userData)
-      setLoading(false)
+      useAuthStore.getState().login(userData)
       return true
     } catch {
       clearAuthState()
       return false
+    } finally {
+      setLoading(false)
     }
   }, [clearAuthState])
 

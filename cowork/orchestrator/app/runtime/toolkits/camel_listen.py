@@ -108,6 +108,56 @@ def _emit_tool_event(toolkit: Any, step: StepEvent, message: str) -> None:
     )
 
 
+async def _ensure_tool_approval(toolkit: Any, method_name: str, args: tuple, kwargs: dict) -> None:
+    callback = getattr(toolkit, "approval_callback", None)
+    if not callable(callback):
+        return
+
+    toolkit_name = getattr(toolkit, "toolkit_name", None)
+    if callable(toolkit_name):
+        toolkit_name = toolkit_name()
+    if not toolkit_name:
+        toolkit_name = toolkit.__class__.__name__
+
+    decision = callback(
+        toolkit_name=toolkit_name,
+        method_name=method_name,
+        args=args,
+        kwargs=kwargs,
+        message=_format_args((toolkit, *args), kwargs),
+        agent_name=getattr(toolkit, "agent_name", "") or current_agent_name.get(""),
+        process_task_id=current_process_task_id.get(""),
+    )
+    if inspect.iscoroutine(decision):
+        decision = await decision
+
+    if decision is False:
+        raise PermissionError(f"Tool execution denied for {toolkit_name}.{method_name}")
+
+
+def _ensure_tool_approval_sync(toolkit: Any, method_name: str, args: tuple, kwargs: dict) -> None:
+    callback = getattr(toolkit, "approval_callback", None)
+    if not callable(callback):
+        return
+
+    decision = callback(
+        toolkit_name=(
+            toolkit.toolkit_name() if callable(getattr(toolkit, "toolkit_name", None)) else toolkit.__class__.__name__
+        ),
+        method_name=method_name,
+        args=args,
+        kwargs=kwargs,
+        message=_format_args((toolkit, *args), kwargs),
+        agent_name=getattr(toolkit, "agent_name", "") or current_agent_name.get(""),
+        process_task_id=current_process_task_id.get(""),
+    )
+    if inspect.iscoroutine(decision):
+        decision = _run_async_in_sync(decision)
+
+    if decision is False:
+        raise PermissionError(f"Tool execution denied for {toolkit.__class__.__name__}.{method_name}")
+
+
 def listen_toolkit(base_method: Callable[..., Any]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         if iscoroutinefunction(base_method):
@@ -115,6 +165,7 @@ def listen_toolkit(base_method: Callable[..., Any]) -> Callable[[Callable[..., A
             async def async_wrapper(*args, **kwargs):
                 toolkit = args[0]
                 toolkit.current_method_name = func.__name__
+                await _ensure_tool_approval(toolkit, func.__name__, args[1:], kwargs)
                 _emit_tool_event(toolkit, StepEvent.activate_toolkit, _format_args(args, kwargs))
                 error = None
                 result = None
@@ -134,6 +185,7 @@ def listen_toolkit(base_method: Callable[..., Any]) -> Callable[[Callable[..., A
         def sync_wrapper(*args, **kwargs):
             toolkit = args[0]
             toolkit.current_method_name = func.__name__
+            _ensure_tool_approval_sync(toolkit, func.__name__, args[1:], kwargs)
             _emit_tool_event(toolkit, StepEvent.activate_toolkit, _format_args(args, kwargs))
             error = None
             result = None

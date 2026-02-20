@@ -1,5 +1,4 @@
 import { orchestratorApi, ORCHESTRATOR_URL } from './client'
-import { useAuthStore } from '../stores/authStore'
 
 // ============ Types ============
 
@@ -100,16 +99,8 @@ export function createSSEConnection(
   taskId: string,
   options: SSEConnectionOptions
 ): EventSource {
-  const { accessToken } = useAuthStore.getState()
-
-  // EventSource doesn't support custom headers natively.
-  // Options:
-  // 1. Pass token as query param (less secure but simple)
-  // 2. Use fetch + ReadableStream (more complex but proper auth)
-  // For now, using query param approach for simplicity.
-  const url = `${ORCHESTRATOR_URL}/chat/stream?task_id=${taskId}&token=${accessToken}`
-
-  const eventSource = new EventSource(url)
+  const url = `${ORCHESTRATOR_URL}/chat/stream?task_id=${taskId}`
+  const eventSource = new EventSource(url, { withCredentials: true })
 
   eventSource.onmessage = (event) => {
     try {
@@ -139,7 +130,6 @@ export async function createAuthenticatedSSEStream(
   request: StartChatRequest,
   options: SSEConnectionOptions
 ): Promise<AbortController> {
-  const { accessToken } = useAuthStore.getState()
   const controller = new AbortController()
 
   try {
@@ -147,11 +137,11 @@ export async function createAuthenticatedSSEStream(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
         'Accept': 'text/event-stream',
       },
       body: JSON.stringify(request),
       signal: controller.signal,
+      credentials: 'include',
     })
 
     if (!response.ok) {

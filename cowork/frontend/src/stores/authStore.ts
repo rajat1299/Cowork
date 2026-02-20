@@ -9,16 +9,14 @@ interface User {
 
 interface AuthState {
   user: User | null
-  accessToken: string | null
-  refreshToken: string | null
   isAuthenticated: boolean
   isLoading: boolean
 
   // Actions
-  setTokens: (accessToken: string, refreshToken: string) => void
+  setAuthenticated: (isAuthenticated: boolean) => void
   setUser: (user: User) => void
   updateUserName: (name: string) => void
-  login: (accessToken: string, refreshToken: string, user: User) => void
+  login: (user: User) => void
   logout: () => void
   setLoading: (loading: boolean) => void
 }
@@ -27,21 +25,18 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       user: null,
-      accessToken: null,
-      refreshToken: null,
       isAuthenticated: false,
       isLoading: true,
 
-      setTokens: (accessToken, refreshToken) =>
+      setAuthenticated: (isAuthenticated) =>
         set({
-          accessToken,
-          refreshToken,
-          isAuthenticated: true,
+          isAuthenticated,
         }),
 
       setUser: (user) =>
         set((state) => ({
           user: state.user ? { ...state.user, ...user } : user,
+          isAuthenticated: true,
         })),
 
       updateUserName: (name) =>
@@ -49,10 +44,8 @@ export const useAuthStore = create<AuthState>()(
           user: state.user ? { ...state.user, name } : null,
         })),
 
-      login: (accessToken, refreshToken, user) =>
+      login: (user) =>
         set({
-          accessToken,
-          refreshToken,
           user,
           isAuthenticated: true,
           isLoading: false,
@@ -61,8 +54,6 @@ export const useAuthStore = create<AuthState>()(
       logout: () =>
         set({
           user: null,
-          accessToken: null,
-          refreshToken: null,
           isAuthenticated: false,
           isLoading: false,
         }),
@@ -73,8 +64,6 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'cowork-auth',
       partialize: (state) => ({
-        accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
         user: state.user,
         isAuthenticated: state.isAuthenticated,
       }),

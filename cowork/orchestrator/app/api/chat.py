@@ -1,9 +1,11 @@
+import asyncio
 import json
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.auth import require_auth
 from app.config import settings
 from app.runtime.actions import ActionImprove, ActionStop, AgentSpec, TaskStatus
 from app.runtime.engine import run_task_loop
@@ -56,7 +58,7 @@ def format_sse(event: StepEventModel) -> str:
 @router.post("/chat", dependencies=[Depends(_chat_rate_limit)])
 async def start_chat(
     request: ChatRequest,
-    authorization: str | None = Header(None),
+    authorization: str = Depends(require_auth),
 ):
     if request.project_id == GLOBAL_USER_CONTEXT:
         raise HTTPException(status_code=400, detail="Reserved project id")
@@ -101,11 +103,17 @@ class ImproveRequest(BaseModel):
     agents: list[AgentSpec] | None = None
 
 
+class PermissionDecisionRequest(BaseModel):
+    request_id: str
+    approved: bool | None = None
+    response: str | None = None
+
+
 @router.post("/chat/{project_id}/improve", dependencies=[Depends(_chat_rate_limit)])
 async def improve_chat(
     project_id: str,
     request: ImproveRequest,
-    authorization: str | None = Header(None),
+    authorization: str = Depends(require_auth),
 ):
     if project_id == GLOBAL_USER_CONTEXT:
         raise HTTPException(status_code=400, detail="Reserved project id")
@@ -131,8 +139,33 @@ async def improve_chat(
     return {"status": "queued"}
 
 
+@router.post("/chat/{project_id}/permission", dependencies=[Depends(_chat_rate_limit)])
+async def submit_permission_decision(
+    project_id: str,
+    request: PermissionDecisionRequest,
+    _authorization: str = Depends(require_auth),
+):
+    task_lock = get(project_id)
+    if not task_lock:
+        raise HTTPException(status_code=404, detail="Project not found")
+    response_queue = task_lock.human_input.get(request.request_id)
+    if response_queue is None:
+        raise HTTPException(status_code=404, detail="Permission request not found")
+    if request.response and request.response.strip():
+        decision = request.response.strip()
+    elif request.approved is not None:
+        decision = "approve" if request.approved else "deny"
+    else:
+        raise HTTPException(status_code=400, detail="Decision is required")
+    try:
+        response_queue.put_nowait(decision)
+    except asyncio.QueueFull:
+        raise HTTPException(status_code=409, detail="Permission request already resolved")
+    return {"status": "recorded"}
+
+
 @router.delete("/chat/{project_id}", dependencies=[Depends(_chat_rate_limit)])
-async def stop_chat(project_id: str):
+async def stop_chat(project_id: str, _authorization: str = Depends(require_auth)):
     task_lock = get(project_id)
     if not task_lock:
         raise HTTPException(status_code=404, detail="Project not found")

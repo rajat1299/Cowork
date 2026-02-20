@@ -5,7 +5,6 @@
 
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { ORCHESTRATOR_URL } from '../api/client'
-import { useAuthStore } from '../stores/authStore'
 import {
   useChatStore,
   getSSEController,
@@ -694,7 +693,6 @@ export async function startSSEConnection(options: SSEConnectionOptions): Promise
   const { projectId, taskId, question, searchEnabled, agents, attachments, onOpen, onError, onClose } = options
 
   const store = useChatStore.getState()
-  const { accessToken } = useAuthStore.getState()
 
   const existingController = getSSEController(taskId)
   if (existingController) {
@@ -731,10 +729,10 @@ export async function startSSEConnection(options: SSEConnectionOptions): Promise
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
       body: JSON.stringify(requestBody),
       signal: abortController.signal,
+      credentials: 'include',
       openWhenHidden: true, // Keep connection open when tab is hidden
 
       async onopen(response) {
@@ -831,15 +829,13 @@ export async function sendImproveMessage(
     attachments?: ImproveChatRequest['attachments']
   }
 ): Promise<void> {
-  const { accessToken } = useAuthStore.getState()
-
   try {
     const response = await fetch(`${ORCHESTRATOR_URL}/chat/${projectId}/improve`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
+      credentials: 'include',
       body: JSON.stringify({
         question,
         task_id: taskId,
@@ -859,13 +855,10 @@ export async function sendImproveMessage(
 }
 
 async function requestStop(projectId: string): Promise<void> {
-  const { accessToken } = useAuthStore.getState()
   try {
     await fetch(`${ORCHESTRATOR_URL}/chat/${projectId}`, {
       method: 'DELETE',
-      headers: {
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      },
+      credentials: 'include',
     })
   } catch (error) {
     console.warn('[SSE] Failed to stop task:', error)

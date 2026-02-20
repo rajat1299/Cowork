@@ -29,32 +29,23 @@ class ApiError extends Error {
 
 export { ApiError }
 
-async function refreshAccessToken(): Promise<string | null> {
-  const { refreshToken, setTokens, logout } = useAuthStore.getState()
-
-  if (!refreshToken) {
-    logout()
-    return null
-  }
-
+async function refreshAccessToken(): Promise<boolean> {
+  const { logout } = useAuthStore.getState()
   try {
     const response = await fetch(`${CORE_API_URL}/auth/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
+      credentials: 'include',
     })
 
     if (!response.ok) {
       logout()
-      return null
+      return false
     }
 
-    const data = await response.json()
-    setTokens(data.access_token, data.refresh_token)
-    return data.access_token
+    return true
   } catch {
     logout()
-    return null
+    return false
   }
 }
 
@@ -64,20 +55,16 @@ export async function apiRequest<T>(
   options: RequestOptions = {}
 ): Promise<T> {
   const { method = 'GET', body, headers = {}, auth = true } = options
-  const { accessToken } = useAuthStore.getState()
 
   const requestHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
     ...headers,
   }
 
-  if (auth && accessToken) {
-    requestHeaders['Authorization'] = `Bearer ${accessToken}`
-  }
-
   const config: RequestInit = {
     method,
     headers: requestHeaders,
+    credentials: 'include',
   }
 
   if (body && method !== 'GET') {
@@ -88,10 +75,8 @@ export async function apiRequest<T>(
 
   // Handle 401 - try to refresh token
   if (response.status === 401 && auth) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      requestHeaders['Authorization'] = `Bearer ${newToken}`
-      config.headers = requestHeaders
+    const refreshed = await refreshAccessToken()
+    if (refreshed) {
       response = await fetch(`${baseUrl}${endpoint}`, config)
     }
   }
@@ -114,27 +99,19 @@ export async function uploadRequest<T>(
   formData: FormData,
   auth: boolean = true
 ): Promise<T> {
-  const { accessToken } = useAuthStore.getState()
-  const requestHeaders: Record<string, string> = {}
-
-  if (auth && accessToken) {
-    requestHeaders['Authorization'] = `Bearer ${accessToken}`
-  }
-
   let response = await fetch(`${baseUrl}${endpoint}`, {
     method: 'POST',
-    headers: requestHeaders,
     body: formData,
+    credentials: 'include',
   })
 
   if (response.status === 401 && auth) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      requestHeaders['Authorization'] = `Bearer ${newToken}`
+    const refreshed = await refreshAccessToken()
+    if (refreshed) {
       response = await fetch(`${baseUrl}${endpoint}`, {
         method: 'POST',
-        headers: requestHeaders,
         body: formData,
+        credentials: 'include',
       })
     }
   }

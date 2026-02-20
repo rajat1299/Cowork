@@ -1,9 +1,14 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
+from app.api.auth_cookies import (
+    REFRESH_TOKEN_COOKIE,
+    clear_auth_cookies,
+    set_auth_cookies,
+)
 from app.auth import get_current_user
 from app.config import settings
 from app.db import get_session
@@ -69,7 +74,11 @@ def register(request: RegisterRequest, session: Session = Depends(get_session)) 
 
 
 @router.post("/login", response_model=TokenResponse, dependencies=[Depends(_auth_rate_limit)])
-def login(request: LoginRequest, session: Session = Depends(get_session)) -> TokenResponse:
+def login(
+    request: LoginRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> TokenResponse:
     user = session.exec(select(User).where(User.email == request.email.strip().lower())).first()
     if not user or not verify_password(request.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -82,16 +91,28 @@ def login(request: LoginRequest, session: Session = Depends(get_session)) -> Tok
     )
     session.add(refresh)
     session.commit()
+    set_auth_cookies(response, access_token=access_token, refresh_token=refresh_token)
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str | None = None
 
 
 @router.post("/refresh", response_model=TokenResponse, dependencies=[Depends(_auth_rate_limit)])
-def refresh(request: RefreshRequest, session: Session = Depends(get_session)) -> TokenResponse:
-    record = session.exec(select(RefreshToken).where(RefreshToken.token == request.refresh_token)).first()
+def refresh(
+    response: Response,
+    request: RefreshRequest | None = None,
+    refresh_token_cookie: str | None = Cookie(default=None, alias=REFRESH_TOKEN_COOKIE),
+    session: Session = Depends(get_session),
+) -> TokenResponse:
+    refresh_token = (request.refresh_token.strip() if request and request.refresh_token else "") or (
+        refresh_token_cookie.strip() if refresh_token_cookie else ""
+    )
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    record = session.exec(select(RefreshToken).where(RefreshToken.token == refresh_token)).first()
     if not record or record.revoked or record.expires_at < datetime.utcnow():
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     access_token = create_access_token(record.user_id)
@@ -100,7 +121,25 @@ def refresh(request: RefreshRequest, session: Session = Depends(get_session)) ->
     record.expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_days)
     session.add(record)
     session.commit()
+    set_auth_cookies(response, access_token=access_token, refresh_token=new_refresh_token)
     return TokenResponse(access_token=access_token, refresh_token=new_refresh_token)
+
+
+@router.post("/logout", dependencies=[Depends(_auth_rate_limit)])
+def logout(
+    response: Response,
+    refresh_token: str | None = Cookie(default=None, alias=REFRESH_TOKEN_COOKIE),
+    session: Session = Depends(get_session),
+) -> dict[str, str]:
+    token = refresh_token.strip() if refresh_token else ""
+    if token:
+        record = session.exec(select(RefreshToken).where(RefreshToken.token == token)).first()
+        if record and not record.revoked:
+            record.revoked = True
+            session.add(record)
+            session.commit()
+    clear_auth_cookies(response)
+    return {"status": "ok"}
 
 
 @router.get("/me", response_model=UserResponse)

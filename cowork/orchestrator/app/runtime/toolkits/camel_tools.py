@@ -5,7 +5,7 @@ from contextvars import copy_context
 import inspect
 import logging
 import threading
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import httpx
 from camel.toolkits import FunctionTool
@@ -152,9 +152,11 @@ class FileToolkitWithEvents(FileToolkit):
         event_stream: Any,
         agent_name: str | None = None,
         working_directory: str | None = None,
+        approval_callback: Callable[..., Any] | None = None,
         **kwargs,
     ) -> None:
         self.event_stream = event_stream
+        self.approval_callback = approval_callback
         if agent_name:
             self.agent_name = agent_name
         super().__init__(working_directory=working_directory, **kwargs)
@@ -169,9 +171,11 @@ class TerminalToolkitWithEvents(TerminalToolkit):
         event_stream: Any,
         agent_name: str | None = None,
         working_directory: str | None = None,
+        approval_callback: Callable[..., Any] | None = None,
         **kwargs,
     ) -> None:
         self.event_stream = event_stream
+        self.approval_callback = approval_callback
         if agent_name:
             self.agent_name = agent_name
         super().__init__(working_directory=working_directory, **kwargs)
@@ -196,8 +200,15 @@ class TerminalToolkitWithEvents(TerminalToolkit):
 class CodeExecutionToolkitWithEvents(CodeExecutionToolkit):
     agent_name: str = "developer_agent"
 
-    def __init__(self, event_stream: Any, agent_name: str | None = None, **kwargs) -> None:
+    def __init__(
+        self,
+        event_stream: Any,
+        agent_name: str | None = None,
+        approval_callback: Callable[..., Any] | None = None,
+        **kwargs,
+    ) -> None:
         self.event_stream = event_stream
+        self.approval_callback = approval_callback
         if agent_name:
             self.agent_name = agent_name
         super().__init__(**kwargs)
@@ -492,6 +503,7 @@ def build_agent_tools(
     working_directory: str,
     mcp_tools: list[FunctionTool] | None = None,
     search_backend: str | None = None,
+    approval_callback: Callable[..., Any] | None = None,
 ) -> list[FunctionTool]:
     tools: list[FunctionTool] = []
     expanded = _normalize_tool_names(tool_names)
@@ -542,6 +554,7 @@ def build_agent_tools(
                 event_stream,
                 agent_name=agent_name,
                 working_directory=working_directory,
+                approval_callback=approval_callback,
             )
             _safe_extend(tools, toolkit.get_tools())
         except Exception as exc:
@@ -554,6 +567,7 @@ def build_agent_tools(
                 agent_name=agent_name,
                 working_directory=working_directory,
                 safe_mode=True,
+                approval_callback=approval_callback,
             )
             _safe_extend(tools, toolkit.get_tools())
         except Exception as exc:
@@ -566,6 +580,7 @@ def build_agent_tools(
                 agent_name=agent_name,
                 sandbox="subprocess",
                 require_confirm=False,
+                approval_callback=approval_callback,
             )
             _safe_extend(tools, toolkit.get_tools())
         except Exception as exc:

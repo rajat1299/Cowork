@@ -66,7 +66,7 @@ export function useOAuth() {
       }
 
       // Exchange code for tokens
-      const tokens = await oauth.exchangeToken(provider as OAuthProvider, {
+      await oauth.exchangeToken(provider as OAuthProvider, {
         code,
         state: returnedState,
         code_verifier: codeVerifier || undefined,
@@ -76,12 +76,10 @@ export function useOAuth() {
       clearPKCEParams()
 
       // Get user info
-      // First set tokens so the auth.me() call works
-      useAuthStore.getState().setTokens(tokens.access_token, tokens.refresh_token)
       const userData = await auth.me()
 
       // Set full auth state
-      setAuthState(tokens.access_token, tokens.refresh_token, userData)
+      setAuthState(userData)
 
       return true
     } catch (err) {
