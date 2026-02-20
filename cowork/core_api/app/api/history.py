@@ -61,6 +61,25 @@ class ChatHistoryOut(BaseModel):
     updated_at: datetime
 
 
+class ProjectGroupOut(BaseModel):
+    project_id: str
+    project_name: str | None = None
+    total_tokens: int
+    task_count: int
+    latest_task_date: datetime
+    last_prompt: str
+    tasks: list[ChatHistoryOut]
+    total_completed_tasks: int
+    total_ongoing_tasks: int
+
+
+class GroupedHistoryOut(BaseModel):
+    projects: list[ProjectGroupOut]
+    total_projects: int
+    total_tasks: int
+    total_tokens: int
+
+
 @router.post("/history", response_model=ChatHistoryOut)
 def create_history(
     request: ChatHistoryCreate,
@@ -135,6 +154,68 @@ def list_histories(
     statement = statement.order_by(ChatHistory.created_at.desc()).offset(offset).limit(limit)
     records = session.exec(statement).all()
     return [ChatHistoryOut(**record.__dict__) for record in records]
+
+
+@router.get("/histories/grouped", response_model=GroupedHistoryOut)
+def list_grouped_histories(
+    include_tasks: bool = Query(default=True),
+    user=Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> GroupedHistoryOut:
+    statement = (
+        select(ChatHistory)
+        .where(ChatHistory.user_id == user.id)
+        .order_by(ChatHistory.created_at.desc())
+    )
+    records = session.exec(statement).all()
+
+    grouped: dict[str, dict] = {}
+    total_tokens = 0
+    for record in records:
+        project_id = record.project_id or record.task_id
+        total_tokens += record.tokens
+
+        if project_id not in grouped:
+            grouped[project_id] = {
+                "project_id": project_id,
+                "project_name": record.project_name,
+                "total_tokens": 0,
+                "task_count": 0,
+                "latest_task_date": record.created_at,
+                "last_prompt": record.question,
+                "tasks": [],
+                "total_completed_tasks": 0,
+                "total_ongoing_tasks": 0,
+            }
+        item = grouped[project_id]
+        item["total_tokens"] += record.tokens
+        item["task_count"] += 1
+
+        if record.created_at >= item["latest_task_date"]:
+            item["latest_task_date"] = record.created_at
+            item["last_prompt"] = record.question
+            if record.project_name:
+                item["project_name"] = record.project_name
+        elif not item["project_name"] and record.project_name:
+            item["project_name"] = record.project_name
+
+        if record.status == 2:
+            item["total_completed_tasks"] += 1
+        else:
+            item["total_ongoing_tasks"] += 1
+
+        if include_tasks:
+            item["tasks"].append(ChatHistoryOut(**record.__dict__))
+
+    projects = [ProjectGroupOut(**item) for item in grouped.values()]
+    projects.sort(key=lambda item: item.latest_task_date, reverse=True)
+
+    return GroupedHistoryOut(
+        projects=projects,
+        total_projects=len(projects),
+        total_tasks=len(records),
+        total_tokens=total_tokens,
+    )
 
 
 @router.put("/history/{history_id}", response_model=ChatHistoryOut)

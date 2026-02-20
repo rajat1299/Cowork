@@ -7,6 +7,10 @@ from camel.tasks.task import TaskState
 
 from app.clients.core_api import ProviderConfig
 from app.runtime import camel_runtime as cr
+from app.runtime import executor as runtime_executor
+from app.runtime import artifacts as runtime_artifacts
+from app.runtime import mcp_config as runtime_mcp_config
+from app.runtime import streaming as runtime_streaming
 from app.runtime.actions import ActionImprove
 from app.runtime.events import StepEvent
 from app.runtime.task_lock import TaskLock
@@ -34,8 +38,8 @@ async def test_event_stream_emits_artifact_after_tool_deactivation(monkeypatch, 
 
     project_token = current_project_id.set("proj-artifact-stream")
     monkeypatch.setenv("CAMEL_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(cr, "fire_and_forget", lambda event: None)
-    monkeypatch.setattr(cr, "fire_and_forget_artifact", lambda event: None)
+    monkeypatch.setattr(runtime_streaming, "fire_and_forget", lambda event: None)
+    monkeypatch.setattr(runtime_artifacts, "fire_and_forget_artifact", lambda event: None)
 
     output_path = tmp_path / "outputs" / "summary.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -193,14 +197,20 @@ async def test_camel_complex_flow_emits_expected_steps(monkeypatch):
     monkeypatch.setattr(cr, "_is_complex_task", fake_is_complex)
     monkeypatch.setattr(cr, "stream_chat", fake_stream_chat)
     monkeypatch.setattr(cr, "collect_chat_completion", fake_collect)
+    monkeypatch.setattr(runtime_executor, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(runtime_executor, "collect_chat_completion", fake_collect)
     monkeypatch.setattr(cr, "create_history", fake_create_history)
     monkeypatch.setattr(cr, "update_history", fake_update_history)
+    monkeypatch.setattr(runtime_executor, "update_history", fake_update_history)
     monkeypatch.setattr(cr, "fetch_configs", fake_fetch_configs)
-    monkeypatch.setattr(cr, "fetch_mcp_users", fake_fetch_mcp_users)
+    monkeypatch.setattr(runtime_mcp_config, "fetch_mcp_users", fake_fetch_mcp_users)
     monkeypatch.setattr(cr, "build_agent_tools", lambda *args, **kwargs: [])
+    monkeypatch.setattr(runtime_executor, "build_agent_tools", lambda *args, **kwargs: [])
     monkeypatch.setattr(cr, "_build_agent", fake_build_agent)
+    monkeypatch.setattr(runtime_executor, "_build_agent", fake_build_agent)
     monkeypatch.setattr(cr, "CoworkWorkforce", FakeWorkforce)
-    monkeypatch.setattr(cr, "fire_and_forget", lambda event: None)
+    monkeypatch.setattr(runtime_executor, "CoworkWorkforce", FakeWorkforce)
+    monkeypatch.setattr(runtime_streaming, "fire_and_forget", lambda event: None)
 
     task_lock = TaskLock(project_id="proj-1")
     await task_lock.put(
@@ -244,7 +254,11 @@ def test_extract_file_artifact_from_write_file_result(monkeypatch, tmp_path: Pat
         monkeypatch.setenv("CAMEL_WORKDIR", str(tmp_path))
 
         captured_events = []
-        monkeypatch.setattr(cr, "fire_and_forget_artifact", lambda event: captured_events.append(event))
+        monkeypatch.setattr(
+            runtime_artifacts,
+            "fire_and_forget_artifact",
+            lambda event: captured_events.append(event),
+        )
 
         output_path = tmp_path / "outputs" / "summary.md"
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -277,7 +291,11 @@ def test_collect_tool_artifacts_skips_large_raw_tool_output(monkeypatch, tmp_pat
     task_id = "task-skip-tool-output"
     monkeypatch.setenv("CAMEL_WORKDIR", str(tmp_path))
     captured_events = []
-    monkeypatch.setattr(cr, "fire_and_forget_artifact", lambda event: captured_events.append(event))
+    monkeypatch.setattr(
+        runtime_artifacts,
+        "fire_and_forget_artifact",
+        lambda event: captured_events.append(event),
+    )
 
     cr._cleanup_artifact_cache(task_id)
     payloads = cr._collect_tool_artifacts(task_id, {"message": "x" * 10000})

@@ -97,6 +97,32 @@ def test_improve_chat_with_valid_token_queues_action(monkeypatch):
     remove(project_id)
 
 
+def test_start_chat_with_valid_token_streams_events(monkeypatch):
+    from app import auth as auth_module
+
+    project_id = "proj-auth-start"
+
+    async def fake_verify(_authorization: str) -> None:
+        return None
+
+    async def fake_run_task_loop(task_lock):
+        task_lock.status = TaskStatus.done
+        yield StepEventModel(task_id="task-auth", step="end", data={"result": "ok"}, timestamp=1.0)
+
+    monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
+    monkeypatch.setattr(chat_api, "run_task_loop", fake_run_task_loop)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat",
+            json=_chat_payload(project_id=project_id),
+            headers={"Authorization": "Bearer valid-token"},
+        )
+
+    assert response.status_code == 200
+    assert "\"step\": \"end\"" in response.text
+
+
 def test_improve_chat_accepts_access_token_cookie(monkeypatch):
     from app import auth as auth_module
 
