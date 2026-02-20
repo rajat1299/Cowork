@@ -315,3 +315,20 @@ def test_runtime_skills_force_complex_and_upgrade_tools():
 
     assert "excel" in document_agent.tools
     assert "terminal" in document_agent.tools
+
+
+def test_requires_tool_permission_only_for_sensitive_actions():
+    assert cr._requires_tool_permission("TerminalToolkitWithEvents", "shell_exec") is True
+    assert cr._requires_tool_permission("CodeExecutionToolkitWithEvents", "execute_code") is True
+    assert cr._requires_tool_permission("FileToolkitWithEvents", "write_file") is True
+    assert cr._requires_tool_permission("FileToolkitWithEvents", "read_file") is False
+    assert cr._requires_tool_permission("BrowserToolkitWithEvents", "search") is False
+
+
+def test_permission_response_parser_accepts_common_values():
+    assert cr._is_permission_approved("approve") is True
+    assert cr._is_permission_approved("yes") is True
+    assert cr._is_permission_approved("allow") is True
+    assert cr._is_permission_approved("deny") is False
+    assert cr._is_permission_approved("no") is False
+    assert cr._is_permission_approved(None) is False

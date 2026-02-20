@@ -125,8 +125,11 @@ export const auth = {
   login: (data: LoginRequest): Promise<LoginResponse> =>
     coreApi.post('/auth/login', data, false),
 
-  refresh: (refreshToken: string): Promise<LoginResponse> =>
-    coreApi.post('/auth/refresh', { refresh_token: refreshToken }, false),
+  refresh: (): Promise<LoginResponse> =>
+    coreApi.post('/auth/refresh', undefined, false),
+
+  logout: (): Promise<{ status: string }> =>
+    coreApi.post('/auth/logout', undefined, false),
 
   me: (): Promise<User> =>
     coreApi.get('/auth/me'),

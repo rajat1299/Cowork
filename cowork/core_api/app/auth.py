@@ -1,4 +1,4 @@
-from fastapi import Depends, Header, HTTPException
+from fastapi import Cookie, Depends, Header, HTTPException
 from jwt import InvalidTokenError
 from sqlmodel import Session, select
 
@@ -9,11 +9,16 @@ from app.security import decode_access_token
 
 def get_current_user(
     authorization: str | None = Header(None),
+    access_token: str | None = Cookie(None),
     session: Session = Depends(get_session),
 ):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
-    token = authorization.split(" ", 1)[1].strip()
+    token = ""
+    if authorization:
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+        token = authorization.split(" ", 1)[1].strip()
+    elif access_token:
+        token = access_token.strip()
     if not token:
         raise HTTPException(status_code=401, detail="Missing access token")
     try:
