@@ -20,6 +20,8 @@ from shared.observability import attach_request_logging
 app = FastAPI(title="Cowork Core API", version="0.1.0")
 
 # CORS middleware - allow frontend origins
+# With allow_credentials=True, methods and headers must be explicit (no "*")
+# allow_origin_regex catches localhost on any port (e.g. Vite 5173, 5174)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -28,9 +30,21 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
     ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "Accept-Language",
+        "Content-Language",
+        "X-Requested-With",
+        "Sec-Fetch-Dest",
+        "Sec-Fetch-Mode",
+        "Sec-Fetch-Site",
+    ],
 )
 
 app.include_router(api_router)
