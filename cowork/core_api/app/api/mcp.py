@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -284,7 +284,7 @@ def update_mcp_user(
     update_data = request.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(record, key, value)
-    record.updated_at = datetime.utcnow()
+    record.updated_at = datetime.now(timezone.utc)
     session.add(record)
     session.commit()
     session.refresh(record)

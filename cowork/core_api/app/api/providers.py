@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -65,9 +65,9 @@ def _set_preferred_provider(session: Session, user_id: int, provider_id: int) ->
     providers = session.exec(statement).all()
     for record in providers:
         record.prefer = False
-        record.updated_at = datetime.utcnow()
+        record.updated_at = datetime.now(timezone.utc)
     provider.prefer = True
-    provider.updated_at = datetime.utcnow()
+    provider.updated_at = datetime.now(timezone.utc)
     session.add(provider)
     session.commit()
     session.refresh(provider)
@@ -212,7 +212,7 @@ def update_provider(
     update_data = request.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(record, key, value)
-    record.updated_at = datetime.utcnow()
+    record.updated_at = datetime.now(timezone.utc)
     session.add(record)
     session.commit()
     session.refresh(record)

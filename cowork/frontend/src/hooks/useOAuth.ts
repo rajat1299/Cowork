@@ -13,7 +13,7 @@ export function useOAuth() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const { login: setAuthState } = useAuthStore()
+  const setAuthState = useAuthStore((s) => s.login)
 
   /**
    * Start OAuth login flow

@@ -620,17 +620,17 @@ function ConfigureMCPDialog({ mcp, onClose, onSave }: ConfigureMCPDialogProps) {
   const [env, setEnv] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
 
-  // Populate form when MCP changes
-  useEffect(() => {
-    if (mcp) {
-      setName(mcp.mcp_name || '')
-      setDescription(mcp.mcp_desc || '')
-      setCommand(mcp.command || '')
-      setArgs(mcp.args?.join(' ') || '')
-      setServerUrl(mcp.server_url || '')
-      setEnv(mcp.env || {})
-    }
-  }, [mcp])
+  // Populate form when MCP changes (render-time sync)
+  const [prevMcpId, setPrevMcpId] = useState<number | null>(null)
+  if (mcp && prevMcpId !== mcp.id) {
+    setPrevMcpId(mcp.id)
+    setName(mcp.mcp_name || '')
+    setDescription(mcp.mcp_desc || '')
+    setCommand(mcp.command || '')
+    setArgs(mcp.args?.join(' ') || '')
+    setServerUrl(mcp.server_url || '')
+    setEnv(mcp.env || {})
+  }
 
   const handleSave = async () => {
     if (!mcp) return

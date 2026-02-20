@@ -11,7 +11,7 @@
  * - Expanded: Full agent cards with details
  */
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { cn } from '@/lib/utils'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { WorkFlowProps } from './types'
@@ -28,7 +28,6 @@ interface WorkFlowPanelProps extends WorkFlowProps {
 
 export function WorkFlowPanel({
   agents,
-  tasks: _tasks,
   activeAgentId,
   decomposeText,
   status,
@@ -53,14 +52,16 @@ export function WorkFlowPanel({
   }, [timeline])
   
   // Auto-expand when first agent is created, collapse when done
-  useEffect(() => {
-    if (status === 'running' && agents.length > 0 && !isExpanded) {
+  const [prevStatus, setPrevStatus] = useState(status)
+  if (prevStatus !== status) {
+    setPrevStatus(status)
+    if (status === 'running' && agents.length > 0) {
       setIsExpanded(true)
     }
     if (status === 'done' || status === 'idle') {
       setIsExpanded(false)
     }
-  }, [status, agents.length])
+  }
 
   // Don't render if not visible
   if (!isVisible || status === 'idle') {
@@ -104,7 +105,6 @@ export function WorkFlowPanel({
                 {agents.map((agent) => (
                   <AgentDot
                     key={agent.id}
-                    name={agent.name}
                     type={agent.type}
                     isActive={agent.id === activeAgentId}
                     isDone={agent.status === 'done'}
@@ -176,13 +176,11 @@ export function WorkFlowPanel({
 /**
  * Compact agent indicator dot
  */
-function AgentDot({ 
-  name: _name, 
-  type, 
-  isActive, 
-  isDone 
-}: { 
-  name: string
+function AgentDot({
+  type,
+  isActive,
+  isDone
+}: {
   type: string
   isActive: boolean
   isDone: boolean

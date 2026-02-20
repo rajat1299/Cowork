@@ -49,7 +49,31 @@ async function refreshAccessToken(): Promise<boolean> {
   }
 }
 
+// ---- Request deduplication for GET requests ----
+const _inflightGets = new Map<string, Promise<unknown>>()
+
 export async function apiRequest<T>(
+  baseUrl: string,
+  endpoint: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const method = options.method ?? 'GET'
+
+  // Deduplicate identical in-flight GET requests
+  if (method === 'GET') {
+    const key = `${baseUrl}${endpoint}`
+    const inflight = _inflightGets.get(key)
+    if (inflight) return inflight as Promise<T>
+    const promise = _apiRequestInner<T>(baseUrl, endpoint, options)
+    _inflightGets.set(key, promise)
+    promise.finally(() => _inflightGets.delete(key))
+    return promise
+  }
+
+  return _apiRequestInner<T>(baseUrl, endpoint, options)
+}
+
+async function _apiRequestInner<T>(
   baseUrl: string,
   endpoint: string,
   options: RequestOptions = {}

@@ -112,11 +112,13 @@ export function ChatInputMenu({
   }, [])
 
   // Reset submenu when menu closes
-  useEffect(() => {
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen)
+  if (prevIsOpen !== isOpen) {
+    setPrevIsOpen(isOpen)
     if (!isOpen) {
       setShowConnectorSubmenu(false)
     }
-  }, [isOpen])
+  }
 
   if (!isOpen) return null
 

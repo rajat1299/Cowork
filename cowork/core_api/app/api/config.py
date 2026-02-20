@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -89,7 +89,7 @@ def update_config_entry(
     record.group = normalized_group
     record.name = request.name
     record.value = request.value
-    record.updated_at = datetime.utcnow()
+    record.updated_at = datetime.now(timezone.utc)
     session.add(record)
     session.commit()
     session.refresh(record)

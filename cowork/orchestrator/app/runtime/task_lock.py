@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from app.runtime.actions import Action, TaskStatus
@@ -10,8 +10,8 @@ from app.runtime.actions import Action, TaskStatus
 class TaskLock:
     project_id: str
     queue: asyncio.Queue[Action] = field(default_factory=asyncio.Queue)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    last_accessed: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_accessed: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     status: TaskStatus = TaskStatus.confirming
     current_task_id: str | None = None
     active_agent: str = ""
@@ -27,11 +27,11 @@ class TaskLock:
     workforce: Any | None = None
 
     async def put(self, item: Action) -> None:
-        self.last_accessed = datetime.utcnow()
+        self.last_accessed = datetime.now(timezone.utc)
         await self.queue.put(item)
 
     async def get(self) -> Action:
-        self.last_accessed = datetime.utcnow()
+        self.last_accessed = datetime.now(timezone.utc)
         return await self.queue.get()
 
     def add_background_task(self, task: asyncio.Task) -> None:
@@ -43,7 +43,7 @@ class TaskLock:
             {
                 "role": role,
                 "content": content,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )
 

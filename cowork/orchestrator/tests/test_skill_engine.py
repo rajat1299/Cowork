@@ -1,5 +1,5 @@
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.clients.core_api import SkillEntry
 from app.runtime.skill_catalog_matching import (
@@ -271,8 +271,8 @@ def test_filter_enabled_runtime_skills_blocks_disabled_examples():
             description="Research and web browsing with source checks.",
             source="built_in",
             enabled=False,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
     ]
     filtered = filter_enabled_runtime_skills(detected, catalog)
@@ -288,8 +288,8 @@ def test_catalog_skill_matches_request_by_keyword_and_extension():
         trigger_keywords=["canvas design", "poster"],
         trigger_extensions=[".png", ".pdf"],
         enabled=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
 
     assert catalog_skill_matches_request(entry, "Create a poster for our launch", set()) is True
@@ -306,8 +306,8 @@ def test_catalog_skill_matches_request_allows_custom_without_metadata():
         trigger_keywords=[],
         trigger_extensions=[],
         enabled=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
 
     assert catalog_skill_matches_request(entry, "Unrelated prompt", set()) is True

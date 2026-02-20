@@ -61,7 +61,7 @@ export function useWorkflow() {
           methodName,
           message,
           status: 'running',
-          timestamp: step.timestamp ?? Date.now(),
+          timestamp: step.timestamp ?? 0,
         }
         const existing = map.get(agentName) || []
         map.set(agentName, [...existing, activity])
@@ -87,7 +87,7 @@ export function useWorkflow() {
         methodName,
         message,
         status: 'done',
-        timestamp: step.timestamp ?? Date.now(),
+        timestamp: step.timestamp ?? 0,
       }
       const existing = map.get(agentName) || []
       map.set(agentName, [...existing, fallback])
@@ -95,14 +95,14 @@ export function useWorkflow() {
 
     return map
   }, [task?.progressSteps])
-  
+
   // Transform agents from store format to workflow format
   const agents = useMemo<WorkflowAgent[]>(() => {
     if (!task?.activeAgents) return []
-    
+
     return task.activeAgents.map((agent) => {
       const activities = toolkitActivitiesByName.get(agent.name) || []
-      
+
       return {
         id: agent.id,
         name: agent.name,
@@ -111,16 +111,16 @@ export function useWorkflow() {
         tools: agent.tools || [],  // From create_agent event
         tasks: agent.tasks.map(transformTask),
         toolkitActivity: activities,
-        activatedAt: agent.status === 'active' ? Date.now() : undefined,
+        activatedAt: agent.status === 'active' ? undefined : undefined,
       }
     })
-  }, [task?.activeAgents])
-  
+  }, [task, toolkitActivitiesByName])
+
   // Get all subtasks (for summary view)
   const tasks = useMemo<WorkflowTask[]>(() => {
     if (!task?.subtasks) return []
     return task.subtasks.map(transformTask)
-  }, [task?.subtasks])
+  }, [task])
   
   // Determine active agent (most recently activated)
   const activeAgentId = useMemo<string | null>(() => {
@@ -140,7 +140,7 @@ export function useWorkflow() {
     if (task.streamingDecomposeText) return 'decomposing'
     if (task.status === 'running') return 'running'
     return 'idle'
-  }, [task?.status, task?.error, task?.streamingDecomposeText])
+  }, [task])
   
   return {
     // Workflow state (for WorkFlow component)

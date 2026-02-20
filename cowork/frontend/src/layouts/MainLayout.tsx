@@ -28,7 +28,6 @@ export function MainLayout() {
 
   // Hide right sidebar on non-chat routes (settings, history, etc.)
   const isChatRoute = location.pathname === '/'
-  const showRightSidebar = isChatRoute && !isArtifactOpen && !rightSidebarCollapsed
 
   useEffect(() => {
     if (!isResizing) return undefined

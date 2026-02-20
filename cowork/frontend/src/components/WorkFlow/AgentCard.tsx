@@ -11,7 +11,7 @@
  * - Minimal, purposeful UI
  */
 
-import { useMemo, useCallback } from 'react'
+import { memo, useMemo, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 import { Terminal, Globe, FileText, Image, Bot } from 'lucide-react'
 import type { AgentCardProps } from './types'
@@ -27,7 +27,7 @@ const AgentIcons: Record<string, typeof Bot> = {
   multi_modal_agent: Image,
 }
 
-export function AgentCard({
+export const AgentCard = memo(function AgentCard({
   agent,
   isActive,
   isMuted,
@@ -36,7 +36,7 @@ export function AgentCard({
 }: AgentCardProps) {
   const Icon = AgentIcons[agent.type] || Bot
   const accentClass = getAgentAccentClass(agent.type)
-  const progress = useMemo(() => getAgentProgress(agent), [agent.tasks])
+  const progress = useMemo(() => getAgentProgress(agent), [agent])
   const displayName = getAgentDisplayName(agent.type)
 
   // Memoized click handler to avoid inline function
@@ -187,7 +187,7 @@ export function AgentCard({
       </div>{/* Close inner content overlay */}
     </button>
   )
-}
+})
 
 /**
  * Minimal progress ring indicator

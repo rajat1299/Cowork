@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useMemo, useState } from 'react'
+import { useRef, useEffect, useCallback, useMemo, useState, memo } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -8,6 +8,8 @@ import {
   ExternalLink,
   Download,
   Clipboard,
+  Share2,
+  CheckCircle2,
 } from 'lucide-react'
 import { ChatMessage } from './ChatMessage'
 import { ChatInput } from './ChatInput'
@@ -28,6 +30,7 @@ import {
 } from '../../lib/artifacts'
 import { cn } from '../../lib/utils'
 import { useViewerStore } from '../../stores/viewerStore'
+import { share as shareApi } from '../../api/coreApi'
 import type { ArtifactInfo, Message } from '../../types/chat'
 
 type TimelineItem =
@@ -35,7 +38,7 @@ type TimelineItem =
   | { kind: 'evidence'; id: string; timestamp: number; order: number; evidence: EvidenceBlock }
   | { kind: 'artifact'; id: string; timestamp: number; order: number; artifact: ArtifactInfo }
 
-function EvidenceRow({ item }: { item: EvidenceBlock }) {
+const EvidenceRow = memo(function EvidenceRow({ item }: { item: EvidenceBlock }) {
   const [expanded, setExpanded] = useState(false)
 
   const statusIcon =
@@ -147,9 +150,9 @@ function EvidenceRow({ item }: { item: EvidenceBlock }) {
       ) : null}
     </div>
   )
-}
+})
 
-function InlineArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
+const InlineArtifactCard = memo(function InlineArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
   const openArtifact = useViewerStore((state) => state.openArtifact)
   const url = resolveArtifactUrl(artifact.contentUrl, artifact.path)
   const previewable = canPreviewArtifact(artifact)
@@ -200,7 +203,7 @@ function InlineArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
       </div>
     </div>
   )
-}
+})
 
 export function ChatContainer() {
   const {
@@ -313,6 +316,24 @@ export function ChatContainer() {
   const isWelcome = messages.length === 0
   const isLoading = isConnecting || isRunning
 
+  // Share state
+  const [shareState, setShareState] = useState<'idle' | 'loading' | 'copied'>('idle')
+  const activeTaskId = useChatStore((s) => s.activeTaskId)
+
+  const handleShare = useCallback(async () => {
+    if (!activeTaskId || shareState === 'loading') return
+    setShareState('loading')
+    try {
+      const result = await shareApi.create(activeTaskId)
+      const shareUrl = `${window.location.origin}/share/${result.token}`
+      await navigator.clipboard.writeText(shareUrl)
+      setShareState('copied')
+      setTimeout(() => setShareState('idle'), 2000)
+    } catch {
+      setShareState('idle')
+    }
+  }, [activeTaskId, shareState])
+
   return (
     <div className="flex flex-col h-full">
       {/* Messages or Welcome Screen */}
@@ -321,6 +342,29 @@ export function ChatContainer() {
           <WelcomeScreen onPromptSelect={handleSend} />
         ) : (
           <div className="max-w-2xl mx-auto px-5 py-6 space-y-4">
+            {/* Share button */}
+            <div className="flex justify-end -mb-2">
+              <button
+                onClick={handleShare}
+                disabled={shareState === 'loading'}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg',
+                  'text-[12px] text-muted-foreground',
+                  'hover:text-foreground hover:bg-secondary',
+                  'transition-colors',
+                  shareState === 'copied' && 'text-green-500'
+                )}
+              >
+                {shareState === 'loading' ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : shareState === 'copied' ? (
+                  <CheckCircle2 size={14} />
+                ) : (
+                  <Share2 size={14} />
+                )}
+                {shareState === 'copied' ? 'Link copied!' : 'Share'}
+              </button>
+            </div>
             {timeline.map((item) => {
               if (item.kind === 'message') {
                 return <ChatMessage key={item.id} message={item.message} />

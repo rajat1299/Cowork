@@ -89,7 +89,7 @@ def _reserve_usage(
     estimated_cost: float,
 ) -> None:
     today = _utc_today()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     with session.begin():
         statement = (
             select(SearchUsage)
@@ -140,7 +140,7 @@ def _rollback_usage(
     estimated_cost: float,
 ) -> None:
     today = _utc_today()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     with session.begin():
         statement = (
             select(SearchUsage)

@@ -163,7 +163,7 @@ export function useMCP(): UseMCPReturn {
 
   // Fetch user MCPs on mount
   useEffect(() => {
-    fetchUserMcps()
+    void fetchUserMcps() // eslint-disable-line react-hooks/set-state-in-effect
   }, [fetchUserMcps])
 
   return {
@@ -213,7 +213,7 @@ export function validateMcpJson(jsonStr: string): { valid: boolean; error?: stri
     }
 
     return { valid: true, data: data as McpImportLocal }
-  } catch (err) {
+  } catch {
     return { valid: false, error: 'Invalid JSON format' }
   }
 }

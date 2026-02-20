@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Clock,
@@ -39,7 +39,7 @@ export default function HistoryPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null)
-  const [_loadingTaskId, setLoadingTaskId] = useState<string | null>(null)
+  const [, setLoadingTaskId] = useState<string | null>(null)
 
   // Fetch histories on mount
   useEffect(() => {
@@ -86,7 +86,7 @@ export default function HistoryPage() {
     const groups: Record<string, HistoryTask[]> = {}
 
     filteredHistories.forEach((item) => {
-      const date = new Date(item.created_at || Date.now())
+      const date = new Date(item.created_at || 0)
       const key = getDateGroupKey(date)
       if (!groups[key]) groups[key] = []
       groups[key].push(item)
@@ -336,7 +336,7 @@ interface HistoryCardProps {
   onDelete: () => void
 }
 
-function HistoryCard({
+const HistoryCard = memo(function HistoryCard({
   item,
   isDeleting,
   menuOpen,
@@ -345,7 +345,7 @@ function HistoryCard({
   onDelete,
 }: HistoryCardProps) {
   const isOngoing = item.status === 1
-  const date = new Date(item.created_at || Date.now())
+  const date = new Date(item.created_at || 0)
 
   return (
     <div
@@ -453,7 +453,7 @@ function HistoryCard({
       </div>
     </div>
   )
-}
+})
 
 // ============ Utility Functions ============
 

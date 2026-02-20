@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt
 
@@ -6,7 +6,7 @@ from app.config import settings
 
 
 def create_share_token(task_id: str) -> tuple[str, datetime]:
-    expires_at = datetime.utcnow() + timedelta(minutes=settings.share_token_minutes)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.share_token_minutes)
     payload = {
         "task_id": task_id,
         "exp": expires_at,

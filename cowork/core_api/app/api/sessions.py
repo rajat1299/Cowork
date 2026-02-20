@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -87,7 +87,7 @@ def update_session(
     if not record:
         raise HTTPException(status_code=404, detail="Session not found")
     record.title = request.title
-    record.updated_at = datetime.utcnow()
+    record.updated_at = datetime.now(timezone.utc)
     session.add(record)
     session.commit()
     session.refresh(record)

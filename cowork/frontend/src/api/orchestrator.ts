@@ -99,6 +99,8 @@ export function createSSEConnection(
   taskId: string,
   options: SSEConnectionOptions
 ): EventSource {
+  // EventSource doesn't support custom headers. Use withCredentials
+  // to send cookies for authentication instead of query params.
   const url = `${ORCHESTRATOR_URL}/chat/stream?task_id=${taskId}`
   const eventSource = new EventSource(url, { withCredentials: true })
 

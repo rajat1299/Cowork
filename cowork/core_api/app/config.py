@@ -41,8 +41,8 @@ class CoreApiSettings(BaseSettings):
     @classmethod
     def validate_internal_api_key(cls, value: str, info):
         app_env = info.data.get("app_env")
-        if app_env == "production" and not value:
-            raise ValueError("INTERNAL_API_KEY is required in production")
+        if app_env != "development" and not value:
+            raise ValueError("INTERNAL_API_KEY is required when APP_ENV != 'development'")
         return value
 
     @field_validator("data_encryption_key")

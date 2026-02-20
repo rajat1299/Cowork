@@ -38,3 +38,9 @@ attach_request_logging(app, "orchestrator")
 @app.on_event("startup")
 def _maybe_install_deps() -> None:
     maybe_start_auto_install()
+
+
+@app.on_event("shutdown")
+async def _close_http_clients() -> None:
+    from app.clients.core_api import close_client
+    await close_client()

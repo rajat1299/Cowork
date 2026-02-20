@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -87,7 +87,7 @@ def upsert_provider_features(
             record.browser_enabled = request.browser_enabled
         if request.extra_params_json is not None:
             record.extra_params_json = _encrypt_extra_params(request.extra_params_json)
-        record.updated_at = datetime.utcnow()
+        record.updated_at = datetime.now(timezone.utc)
         session.add(record)
         session.commit()
         session.refresh(record)

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { 
   User, 
@@ -12,6 +12,7 @@ import {
   Code,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { useShallow } from 'zustand/react/shallow'
 import { useAuthStore } from '../stores/authStore'
 import { useThemeStore } from '../stores/themeStore'
 
@@ -99,8 +100,8 @@ export default function SettingsPage() {
  * General/Profile settings - default view
  */
 function GeneralSettings() {
-  const { user, updateUserName } = useAuthStore()
-  const { mode, setMode } = useThemeStore()
+  const { user, updateUserName } = useAuthStore(useShallow((s) => ({ user: s.user, updateUserName: s.updateUserName })))
+  const { mode, setMode } = useThemeStore(useShallow((s) => ({ mode: s.mode, setMode: s.setMode })))
 
   // Get user display info
   const userEmail = user?.email || ''
@@ -108,15 +109,17 @@ function GeneralSettings() {
   const savedName = user?.name || defaultName
   const userInitial = (savedName || defaultName).charAt(0).toUpperCase() || 'U'
 
-  // Local state for form fields
+  // Local state for form fields — re-derive when savedName changes
+  const [prevSavedName, setPrevSavedName] = useState(savedName)
   const [fullName, setFullName] = useState(savedName)
   const [nickname, setNickname] = useState(savedName.split('.')[0] || savedName)
 
   // Sync local state when store hydrates from localStorage
-  useEffect(() => {
+  if (prevSavedName !== savedName) {
+    setPrevSavedName(savedName)
     setFullName(savedName)
     setNickname(savedName.split('.')[0] || savedName)
-  }, [savedName])
+  }
 
   // Save name when input loses focus
   const handleNameBlur = () => {

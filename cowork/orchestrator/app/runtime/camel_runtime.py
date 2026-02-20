@@ -194,7 +194,7 @@ def _get_trace_logger() -> logging.Logger:
 
 def _trace_log(event: str, payload: dict[str, Any]) -> None:
     logger = _get_trace_logger()
-    payload = {**payload, "event": event, "ts": datetime.utcnow().isoformat() + "Z"}
+    payload = {**payload, "event": event, "ts": datetime.now(timezone.utc).isoformat() + "Z"}
     logger.info(json.dumps(payload))
 
 

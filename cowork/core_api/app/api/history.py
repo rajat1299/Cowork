@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -152,7 +152,7 @@ def update_history(
     update_data = request.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(record, key, value)
-    record.updated_at = datetime.utcnow()
+    record.updated_at = datetime.now(timezone.utc)
     session.add(record)
     session.commit()
     session.refresh(record)

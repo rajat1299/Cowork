@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import secrets
 
 from sqlmodel import Session, select
@@ -60,7 +60,7 @@ def issue_tokens(session: Session, user_id: int) -> dict:
     refresh = RefreshToken(
         user_id=user_id,
         token=refresh_token,
-        expires_at=datetime.utcnow() + timedelta(days=settings.refresh_token_days),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_days),
     )
     session.add(refresh)
     session.commit()

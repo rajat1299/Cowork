@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -122,7 +122,7 @@ def upsert_thread_summary(
     ).first()
     if record:
         record.summary = request.summary
-        record.updated_at = datetime.utcnow()
+        record.updated_at = datetime.now(timezone.utc)
     else:
         record = ThreadSummary(
             user_id=user.id,
@@ -167,7 +167,7 @@ def upsert_task_summary(
     if record:
         record.summary = request.summary
         record.project_id = request.project_id or record.project_id
-        record.updated_at = datetime.utcnow()
+        record.updated_at = datetime.now(timezone.utc)
     else:
         record = TaskSummary(
             user_id=user.id,
@@ -240,7 +240,7 @@ def update_memory_note(
     update_data = request.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(record, key, value)
-    record.updated_at = datetime.utcnow()
+    record.updated_at = datetime.now(timezone.utc)
     session.add(record)
     session.commit()
     session.refresh(record)

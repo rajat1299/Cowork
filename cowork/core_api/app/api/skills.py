@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import tempfile
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -70,7 +70,7 @@ def _build_skill_out(skill: Skill, enabled: bool, user_id: int) -> SkillOut:
 def _ensure_default_catalog(session: Session) -> None:
     existing = session.exec(select(Skill)).all()
     by_skill_id = {entry.skill_id: entry for entry in existing}
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     changed = False
     for catalog_entry in DEFAULT_SKILL_CATALOG:
         record = by_skill_id.get(catalog_entry.skill_id)
@@ -214,7 +214,7 @@ def set_skill_enabled(
             UserSkillState.skill_id == normalized_skill_id,
         )
     ).first()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if state:
         state.enabled = request.enabled
         state.updated_at = now
@@ -268,7 +268,7 @@ async def upload_skill_zip(
     if existing and existing.source not in _ALLOWED_CUSTOM_SOURCES:
         raise HTTPException(status_code=409, detail="Cannot overwrite built-in or example skill id")
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     skill_storage_dir = _custom_skill_base_dir() / str(user.id) / f"{normalized_skill_id}_{timestamp}"
     skill_storage_dir.mkdir(parents=True, exist_ok=True)
     skill_zip_path = skill_storage_dir / "skill.zip"
@@ -276,7 +276,7 @@ async def upload_skill_zip(
     with zipfile.ZipFile(skill_zip_path) as archive:
         _safe_extract_zip(archive, skill_storage_dir / "contents")
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if existing:
         existing.name = parsed["name"]
         existing.description = parsed.get("description", "")

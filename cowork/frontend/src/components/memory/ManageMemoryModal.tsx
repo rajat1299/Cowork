@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { MEMORY_CATEGORIES } from '../../hooks/useMemory'
@@ -125,7 +126,7 @@ interface MemorySectionProps {
   content: string
 }
 
-function MemorySection({ title, content }: MemorySectionProps) {
+const MemorySection = memo(function MemorySection({ title, content }: MemorySectionProps) {
   return (
     <div>
       <h3 className="text-[15px] font-medium text-foreground mb-2">{title}</h3>
@@ -134,6 +135,6 @@ function MemorySection({ title, content }: MemorySectionProps) {
       </p>
     </div>
   )
-}
+})
 
 export default ManageMemoryModal

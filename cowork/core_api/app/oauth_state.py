@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import secrets
 import threading
 
@@ -24,7 +24,7 @@ def create_state(provider: str, provided_state: str | None = None) -> str:
         _states[value] = OAuthState(
             provider=provider,
             state=value,
-            expires_at=datetime.utcnow() + timedelta(seconds=_STATE_TTL_SECONDS),
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=_STATE_TTL_SECONDS),
         )
     return value
 
@@ -38,6 +38,6 @@ def consume_state(provider: str, state: str | None) -> bool:
         return False
     if record.provider != provider:
         return False
-    if record.expires_at < datetime.utcnow():
+    if record.expires_at < datetime.now(timezone.utc):
         return False
     return True

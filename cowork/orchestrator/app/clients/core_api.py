@@ -8,6 +8,27 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 
+# ---- Shared httpx client with connection pooling ----
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=10,
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
+    return _client
+
+
+async def close_client() -> None:
+    """Call on app shutdown to close the shared httpx client."""
+    global _client
+    if _client is not None and not _client.is_closed:
+        await _client.aclose()
+        _client = None
+
 
 class ProviderConfig(BaseModel):
     id: int
@@ -113,14 +134,14 @@ async def fetch_provider(
         return None
     headers = _build_headers(auth_header)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            if provider_id is not None:
-                resp = await client.get(f"{base_url}/provider/internal/{provider_id}", headers=headers)
-                resp.raise_for_status()
-                return ProviderConfig(**resp.json())
-            resp = await client.get(f"{base_url}/providers/internal", headers=headers)
+        client = _get_client()
+        if provider_id is not None:
+            resp = await client.get(f"{base_url}/provider/internal/{provider_id}", headers=headers)
             resp.raise_for_status()
-            providers = [ProviderConfig(**item) for item in resp.json()]
+            return ProviderConfig(**resp.json())
+        resp = await client.get(f"{base_url}/providers/internal", headers=headers)
+        resp.raise_for_status()
+        providers = [ProviderConfig(**item) for item in resp.json()]
     except httpx.HTTPError:
         return None
 
@@ -149,13 +170,13 @@ async def fetch_provider_features(
     headers = _build_headers(auth_header)
     params = {"provider_id": provider_id, "model": model}
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{base_url}/provider-features", headers=headers, params=params)
-            resp.raise_for_status()
-            payload = resp.json()
-            if not payload:
-                return None
-            return ProviderFeatureFlags(**payload[0])
+        client = _get_client()
+        resp = await client.get(f"{base_url}/provider-features", headers=headers, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
+        if not payload:
+            return None
+        return ProviderFeatureFlags(**payload[0])
     except httpx.HTTPError:
         return None
 
@@ -168,10 +189,10 @@ async def fetch_skills(auth_header: str | None) -> list[SkillEntry] | None:
         return None
     headers = _build_headers(auth_header)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{base_url}/skills", headers=headers)
-            resp.raise_for_status()
-            return [SkillEntry(**item) for item in resp.json()]
+        client = _get_client()
+        resp = await client.get(f"{base_url}/skills", headers=headers)
+        resp.raise_for_status()
+        return [SkillEntry(**item) for item in resp.json()]
     except httpx.HTTPError:
         return None
 
@@ -184,10 +205,10 @@ async def create_history(auth_header: str | None, payload: dict[str, Any]) -> di
         return None
     headers = _build_headers(auth_header)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{base_url}/chat/history", json=payload, headers=headers)
-            resp.raise_for_status()
-            return resp.json()
+        client = _get_client()
+        resp = await client.post(f"{base_url}/chat/history", json=payload, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
     except httpx.HTTPError:
         return None
 
@@ -200,10 +221,10 @@ async def create_message(auth_header: str | None, payload: dict[str, Any]) -> di
         return None
     headers = _build_headers(auth_header)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{base_url}/chat/messages", json=payload, headers=headers)
-            resp.raise_for_status()
-            return resp.json()
+        client = _get_client()
+        resp = await client.post(f"{base_url}/chat/messages", json=payload, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
     except httpx.HTTPError:
         return None
 
@@ -227,10 +248,10 @@ async def fetch_messages(
     if task_id:
         params["task_id"] = task_id
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{base_url}/chat/messages", headers=headers, params=params)
-            resp.raise_for_status()
-            return [ChatMessage(**item) for item in resp.json()]
+        client = _get_client()
+        resp = await client.get(f"{base_url}/chat/messages", headers=headers, params=params)
+        resp.raise_for_status()
+        return [ChatMessage(**item) for item in resp.json()]
     except httpx.HTTPError:
         return []
 
@@ -247,10 +268,10 @@ async def fetch_configs(
     headers = _build_headers(auth_header)
     params = {"group": group} if group else None
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{base_url}/configs", headers=headers, params=params)
-            resp.raise_for_status()
-            return resp.json()
+        client = _get_client()
+        resp = await client.get(f"{base_url}/configs", headers=headers, params=params)
+        resp.raise_for_status()
+        return resp.json()
     except httpx.HTTPError:
         return []
 
@@ -263,10 +284,10 @@ async def fetch_mcp_users(auth_header: str | None) -> list[dict[str, Any]]:
         return []
     headers = _build_headers(auth_header)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{base_url}/mcp/users", headers=headers)
-            resp.raise_for_status()
-            return resp.json()
+        client = _get_client()
+        resp = await client.get(f"{base_url}/mcp/users", headers=headers)
+        resp.raise_for_status()
+        return resp.json()
     except httpx.HTTPError:
         return []
 
@@ -290,10 +311,10 @@ async def search_chat_messages(
     if task_id:
         params["task_id"] = task_id
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{base_url}/memory/search", headers=headers, params=params)
-            resp.raise_for_status()
-            return resp.json()
+        client = _get_client()
+        resp = await client.get(f"{base_url}/memory/search", headers=headers, params=params)
+        resp.raise_for_status()
+        return resp.json()
     except httpx.HTTPError:
         return []
 
@@ -313,10 +334,10 @@ async def fetch_memory_notes(
     if task_id:
         params["task_id"] = task_id
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{base_url}/memory/notes", headers=headers, params=params)
-            resp.raise_for_status()
-            return [MemoryNote(**item) for item in resp.json()]
+        client = _get_client()
+        resp = await client.get(f"{base_url}/memory/notes", headers=headers, params=params)
+        resp.raise_for_status()
+        return [MemoryNote(**item) for item in resp.json()]
     except httpx.HTTPError:
         return []
 
@@ -332,10 +353,10 @@ async def create_memory_note(
         return None
     headers = _build_headers(auth_header)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{base_url}/memory/notes", json=payload, headers=headers)
-            resp.raise_for_status()
-            return MemoryNote(**resp.json())
+        client = _get_client()
+        resp = await client.post(f"{base_url}/memory/notes", json=payload, headers=headers)
+        resp.raise_for_status()
+        return MemoryNote(**resp.json())
     except httpx.HTTPError:
         return None
 
@@ -352,10 +373,10 @@ async def fetch_thread_summary(
     headers = _build_headers(auth_header)
     params = {"project_id": project_id}
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{base_url}/memory/thread-summary", headers=headers, params=params)
-            resp.raise_for_status()
-            return ThreadSummary(**resp.json())
+        client = _get_client()
+        resp = await client.get(f"{base_url}/memory/thread-summary", headers=headers, params=params)
+        resp.raise_for_status()
+        return ThreadSummary(**resp.json())
     except httpx.HTTPError:
         return None
 
@@ -373,10 +394,10 @@ async def upsert_thread_summary(
     headers = _build_headers(auth_header)
     payload = {"project_id": project_id, "summary": summary}
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.put(f"{base_url}/memory/thread-summary", headers=headers, json=payload)
-            resp.raise_for_status()
-            return ThreadSummary(**resp.json())
+        client = _get_client()
+        resp = await client.put(f"{base_url}/memory/thread-summary", headers=headers, json=payload)
+        resp.raise_for_status()
+        return ThreadSummary(**resp.json())
     except httpx.HTTPError:
         return None
 
@@ -393,10 +414,10 @@ async def fetch_task_summary(
     headers = _build_headers(auth_header)
     params = {"task_id": task_id}
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{base_url}/memory/task-summary", headers=headers, params=params)
-            resp.raise_for_status()
-            return TaskSummary(**resp.json())
+        client = _get_client()
+        resp = await client.get(f"{base_url}/memory/task-summary", headers=headers, params=params)
+        resp.raise_for_status()
+        return TaskSummary(**resp.json())
     except httpx.HTTPError:
         return None
 
@@ -415,10 +436,10 @@ async def upsert_task_summary(
     headers = _build_headers(auth_header)
     payload = {"task_id": task_id, "project_id": project_id, "summary": summary}
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.put(f"{base_url}/memory/task-summary", headers=headers, json=payload)
-            resp.raise_for_status()
-            return TaskSummary(**resp.json())
+        client = _get_client()
+        resp = await client.put(f"{base_url}/memory/task-summary", headers=headers, json=payload)
+        resp.raise_for_status()
+        return TaskSummary(**resp.json())
     except httpx.HTTPError:
         return None
 
@@ -435,8 +456,8 @@ async def update_history(
         return
     headers = _build_headers(auth_header)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.put(f"{base_url}/chat/history/{history_id}", json=payload, headers=headers)
-            resp.raise_for_status()
+        client = _get_client()
+        resp = await client.put(f"{base_url}/chat/history/{history_id}", json=payload, headers=headers)
+        resp.raise_for_status()
     except httpx.HTTPError:
         return

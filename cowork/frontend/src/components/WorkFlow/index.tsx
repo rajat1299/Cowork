@@ -18,12 +18,10 @@ import { AgentCard } from './AgentCard'
 
 export function WorkFlow({
   agents,
-  tasks: _tasks,
   activeAgentId,
   decomposeText,
   status,
   onAgentSelect,
-  onTaskSelect: _onTaskSelect,
   className,
 }: WorkFlowProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -268,6 +266,7 @@ function CompletionBanner({ agentCount }: { agentCount: number }) {
 }
 
 // Re-export types and subcomponents
+// eslint-disable-next-line react-refresh/only-export-components
 export * from './types'
 export { AgentCard } from './AgentCard'
 export { TaskPill } from './TaskPill'

@@ -270,7 +270,7 @@ export function useProviders(): UseProvidersReturn {
 
   // Fetch providers on mount
   useEffect(() => {
-    fetchProviders()
+    void fetchProviders() // eslint-disable-line react-hooks/set-state-in-effect
   }, [fetchProviders])
 
   return {

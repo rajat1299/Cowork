@@ -11,7 +11,7 @@ interface ChatMessageProps {
   message: Message
 }
 
-function ArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
+const ArtifactCard = memo(function ArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
   const openArtifact = useViewerStore((state) => state.openArtifact)
   const url = resolveArtifactUrl(artifact.contentUrl, artifact.path)
   const previewable = canPreviewArtifact(artifact)
@@ -61,7 +61,7 @@ function ArtifactCard({ artifact }: { artifact: ArtifactInfo }) {
       </div>
     </div>
   )
-}
+})
 
 export const ChatMessage = memo(function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === 'user'

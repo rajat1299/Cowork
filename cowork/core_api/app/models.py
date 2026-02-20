@@ -1,4 +1,8 @@
-from datetime import date as dt_date, datetime
+from datetime import date as dt_date, datetime, timezone
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 from typing import Optional
 
 from sqlalchemy import Column, UniqueConstraint
@@ -10,7 +14,7 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     email: str = Field(index=True, unique=True)
     password_hash: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class RefreshToken(SQLModel, table=True):
@@ -19,7 +23,7 @@ class RefreshToken(SQLModel, table=True):
     token: str = Field(index=True, unique=True)
     expires_at: datetime
     revoked: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Config(SQLModel, table=True):
@@ -28,8 +32,8 @@ class Config(SQLModel, table=True):
     group: str = Field(index=True)
     name: str = Field(index=True)
     value: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class SearchUsage(SQLModel, table=True):
@@ -45,8 +49,8 @@ class SearchUsage(SQLModel, table=True):
     requests_count: int = Field(default=0)
     results_count: int = Field(default=0)
     cost_usd_estimate: float = Field(default=0.0)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class Step(SQLModel, table=True):
@@ -55,7 +59,7 @@ class Step(SQLModel, table=True):
     step: str = Field(index=True)
     data: dict = Field(sa_column=Column(JSONB))
     timestamp: Optional[float] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Artifact(SQLModel, table=True):
@@ -64,7 +68,7 @@ class Artifact(SQLModel, table=True):
     artifact_type: str = Field(index=True)
     name: str
     content_url: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Session(SQLModel, table=True):
@@ -72,8 +76,8 @@ class Session(SQLModel, table=True):
     user_id: int = Field(index=True, foreign_key="user.id")
     project_id: str = Field(index=True, unique=True)
     title: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class OAuthAccount(SQLModel, table=True):
@@ -84,7 +88,7 @@ class OAuthAccount(SQLModel, table=True):
     email: str | None = None
     name: str | None = None
     avatar_url: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Provider(SQLModel, table=True):
@@ -97,8 +101,8 @@ class Provider(SQLModel, table=True):
     encrypted_config: dict | None = Field(default=None, sa_column=Column(JSONB))
     prefer: bool = Field(default=False)
     is_valid: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class ProviderFeatureFlags(SQLModel, table=True):
@@ -122,8 +126,8 @@ class ProviderFeatureFlags(SQLModel, table=True):
     tool_use_enabled: bool = Field(default=False)
     browser_enabled: bool = Field(default=False)
     extra_params_json: dict | None = Field(default=None, sa_column=Column(JSONB))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class Skill(SQLModel, table=True):
@@ -141,8 +145,8 @@ class Skill(SQLModel, table=True):
     owner_user_id: int | None = Field(default=None, foreign_key="user.id")
     storage_path: str | None = None
     enabled_by_default: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class UserSkillState(SQLModel, table=True):
@@ -155,8 +159,8 @@ class UserSkillState(SQLModel, table=True):
     user_id: int = Field(index=True, foreign_key="user.id")
     skill_id: str = Field(index=True)
     enabled: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class ChatHistory(SQLModel, table=True):
@@ -178,8 +182,8 @@ class ChatHistory(SQLModel, table=True):
     tokens: int = Field(default=0)
     spend: float = Field(default=0.0)
     status: int = Field(default=1)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class ChatMessage(SQLModel, table=True):
@@ -191,7 +195,7 @@ class ChatMessage(SQLModel, table=True):
     content: str
     message_type: str = Field(default="message")
     meta: dict | None = Field(default=None, sa_column=Column("metadata", JSONB))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class ThreadSummary(SQLModel, table=True):
@@ -199,8 +203,8 @@ class ThreadSummary(SQLModel, table=True):
     user_id: int = Field(index=True, foreign_key="user.id")
     project_id: str = Field(index=True)
     summary: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class TaskSummary(SQLModel, table=True):
@@ -209,8 +213,8 @@ class TaskSummary(SQLModel, table=True):
     project_id: str | None = Field(default=None, index=True)
     task_id: str = Field(index=True)
     summary: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class MemoryNote(SQLModel, table=True):
@@ -221,8 +225,8 @@ class MemoryNote(SQLModel, table=True):
     category: str = Field(default="note", index=True)
     content: str
     pinned: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class ChatSnapshot(SQLModel, table=True):
@@ -231,7 +235,7 @@ class ChatSnapshot(SQLModel, table=True):
     task_id: str = Field(index=True)
     browser_url: str
     image_path: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class McpServer(SQLModel, table=True):
@@ -243,8 +247,8 @@ class McpServer(SQLModel, table=True):
     mcp_type: str = Field(default="local")
     status: str = Field(default="online")
     install_command: dict | None = Field(default=None, sa_column=Column(JSONB))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class McpUser(SQLModel, table=True):
@@ -260,5 +264,5 @@ class McpUser(SQLModel, table=True):
     mcp_type: str = Field(default="local")
     status: str = Field(default="enable")
     server_url: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)

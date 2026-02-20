@@ -18,6 +18,7 @@ const MCPSettings = lazy(() => import('./pages/settings/MCPSettings'))
 const CapabilitiesSettings = lazy(() => import('./pages/settings/CapabilitiesSettings'))
 
 // Loading fallback
+// eslint-disable-next-line react-refresh/only-export-components
 function PageLoader() {
   return (
     <div className="h-full flex items-center justify-center">
@@ -26,14 +27,52 @@ function PageLoader() {
   )
 }
 
-// Placeholder for settings pages not yet implemented
+// Coming soon descriptions for settings pages not yet implemented
+const SETTINGS_DESCRIPTIONS: Record<string, { description: string; features: string[] }> = {
+  Account: {
+    description: 'Manage your profile, email, and account preferences.',
+    features: ['Update display name and avatar', 'Change email address', 'Delete account'],
+  },
+  Privacy: {
+    description: 'Control how your data is stored and used.',
+    features: ['Manage conversation history retention', 'Data export and deletion', 'Analytics opt-out'],
+  },
+  Billing: {
+    description: 'View your plan details and manage payment methods.',
+    features: ['Current plan overview', 'Payment method management', 'Invoice history'],
+  },
+  Usage: {
+    description: 'Monitor your API usage, token consumption, and costs.',
+    features: ['Token usage by model', 'Request history and trends', 'Cost breakdown'],
+  },
+  Developer: {
+    description: 'Access API keys, webhooks, and developer tools.',
+    features: ['Personal API keys', 'Webhook configuration', 'Debug logs'],
+  },
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
 function PlaceholderSettings({ title }: { title: string }) {
+  const info = SETTINGS_DESCRIPTIONS[title]
   return (
     <div className="max-w-2xl mx-auto p-8">
-      <h2 className="text-xl font-medium text-foreground mb-4">{title}</h2>
-      <p className="text-muted-foreground text-[14px]">
-        This settings section is coming soon.
+      <h2 className="text-xl font-medium text-foreground mb-2">{title}</h2>
+      <p className="text-muted-foreground text-[14px] mb-6">
+        {info?.description ?? 'This settings section is coming soon.'}
       </p>
+      {info?.features && (
+        <div className="rounded-xl border border-border bg-secondary/30 p-5">
+          <p className="text-[13px] font-medium text-foreground mb-3">Coming soon</p>
+          <ul className="space-y-2">
+            {info.features.map((feature) => (
+              <li key={feature} className="flex items-center gap-2 text-[13px] text-muted-foreground">
+                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 flex-shrink-0" />
+                {feature}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

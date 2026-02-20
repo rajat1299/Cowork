@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 from pydantic import BaseModel, field_validator
@@ -87,7 +87,7 @@ def login(
     refresh = RefreshToken(
         user_id=user.id,
         token=refresh_token,
-        expires_at=datetime.utcnow() + timedelta(days=settings.refresh_token_days),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_days),
     )
     session.add(refresh)
     session.commit()
@@ -113,12 +113,17 @@ def refresh(
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
     record = session.exec(select(RefreshToken).where(RefreshToken.token == refresh_token)).first()
-    if not record or record.revoked or record.expires_at < datetime.utcnow():
+    if not record:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if record.revoked or expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     access_token = create_access_token(record.user_id)
     new_refresh_token = create_refresh_token()
     record.token = new_refresh_token
-    record.expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_days)
+    record.expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_days)
     session.add(record)
     session.commit()
     set_auth_cookies(response, access_token=access_token, refresh_token=new_refresh_token)

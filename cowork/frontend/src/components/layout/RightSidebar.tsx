@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -79,7 +79,7 @@ function CollapsibleSection({
   )
 }
 
-function ArtifactRow({ artifact }: { artifact: ArtifactInfo }) {
+const ArtifactRow = memo(function ArtifactRow({ artifact }: { artifact: ArtifactInfo }) {
   const openArtifact = useViewerStore((state) => state.openArtifact)
   const url = resolveArtifactUrl(artifact.contentUrl, artifact.path)
   const previewable = canPreviewArtifact(artifact)
@@ -139,7 +139,7 @@ function ArtifactRow({ artifact }: { artifact: ArtifactInfo }) {
       </div>
     </div>
   )
-}
+})
 
 function NewChatSidebar() {
   return (
