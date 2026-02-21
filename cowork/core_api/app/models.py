@@ -1,13 +1,14 @@
 from datetime import date as dt_date, datetime, timezone
+from typing import Optional
+
+from sqlalchemy import Column, UniqueConstraint
+from sqlmodel import Field, SQLModel
+
+from shared.db_types import PortableJSON
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-from typing import Optional
-
-from sqlalchemy import Column, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field, SQLModel
 
 
 class User(SQLModel, table=True):
@@ -57,7 +58,7 @@ class Step(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     task_id: str = Field(index=True)
     step: str = Field(index=True)
-    data: dict = Field(sa_column=Column(JSONB))
+    data: dict = Field(sa_column=Column(PortableJSON()))
     timestamp: Optional[float] = None
     created_at: datetime = Field(default_factory=_utcnow)
 
@@ -98,7 +99,7 @@ class Provider(SQLModel, table=True):
     model_type: str
     api_key: str
     endpoint_url: str = ""
-    encrypted_config: dict | None = Field(default=None, sa_column=Column(JSONB))
+    encrypted_config: dict | None = Field(default=None, sa_column=Column(PortableJSON()))
     prefer: bool = Field(default=False)
     is_valid: bool = Field(default=False)
     created_at: datetime = Field(default_factory=_utcnow)
@@ -125,7 +126,7 @@ class ProviderFeatureFlags(SQLModel, table=True):
     audio_enabled: bool = Field(default=False)
     tool_use_enabled: bool = Field(default=False)
     browser_enabled: bool = Field(default=False)
-    extra_params_json: dict | None = Field(default=None, sa_column=Column(JSONB))
+    extra_params_json: dict | None = Field(default=None, sa_column=Column(PortableJSON()))
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -139,9 +140,9 @@ class Skill(SQLModel, table=True):
     name: str
     description: str = ""
     source: str = Field(default="built_in", index=True)
-    domains: list[str] = Field(default_factory=list, sa_column=Column(JSONB))
-    trigger_keywords: list[str] = Field(default_factory=list, sa_column=Column(JSONB))
-    trigger_extensions: list[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    domains: list[str] = Field(default_factory=list, sa_column=Column(PortableJSON()))
+    trigger_keywords: list[str] = Field(default_factory=list, sa_column=Column(PortableJSON()))
+    trigger_extensions: list[str] = Field(default_factory=list, sa_column=Column(PortableJSON()))
     owner_user_id: int | None = Field(default=None, foreign_key="user.id")
     storage_path: str | None = None
     enabled_by_default: bool = Field(default=False)
@@ -176,7 +177,7 @@ class ChatHistory(SQLModel, table=True):
     api_url: str | None = None
     max_retries: int = Field(default=3)
     file_save_path: str | None = None
-    installed_mcp: dict | None = Field(default=None, sa_column=Column(JSONB))
+    installed_mcp: dict | None = Field(default=None, sa_column=Column(PortableJSON()))
     project_name: str | None = None
     summary: str | None = None
     tokens: int = Field(default=0)
@@ -194,7 +195,7 @@ class ChatMessage(SQLModel, table=True):
     role: str = Field(index=True)
     content: str
     message_type: str = Field(default="message")
-    meta: dict | None = Field(default=None, sa_column=Column("metadata", JSONB))
+    meta: dict | None = Field(default=None, sa_column=Column("metadata", PortableJSON()))
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -246,7 +247,7 @@ class McpServer(SQLModel, table=True):
     home_page: str | None = None
     mcp_type: str = Field(default="local")
     status: str = Field(default="online")
-    install_command: dict | None = Field(default=None, sa_column=Column(JSONB))
+    install_command: dict | None = Field(default=None, sa_column=Column(PortableJSON()))
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -259,8 +260,8 @@ class McpUser(SQLModel, table=True):
     mcp_key: str
     mcp_desc: str | None = None
     command: str | None = None
-    args: list[str] | None = Field(default=None, sa_column=Column(JSONB))
-    env: dict | None = Field(default=None, sa_column=Column(JSONB))
+    args: list[str] | None = Field(default=None, sa_column=Column(PortableJSON()))
+    env: dict | None = Field(default=None, sa_column=Column(PortableJSON()))
     mcp_type: str = Field(default="local")
     status: str = Field(default="enable")
     server_url: str | None = None

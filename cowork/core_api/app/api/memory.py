@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlmodel import Session, select
 
 from app.auth import get_current_user
@@ -362,12 +362,42 @@ def search_chat_messages(
     user=Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> list[ChatSearchResultOut]:
+    dialect_name = session.get_bind().dialect.name
+    if dialect_name == "sqlite":
+        return _sqlite_fts5_search(
+            session=session,
+            user_id=user.id,
+            query=query,
+            project_id=project_id,
+            task_id=task_id,
+            limit=limit,
+        )
+
+    return _postgres_fts_search(
+        session=session,
+        user_id=user.id,
+        query=query,
+        project_id=project_id,
+        task_id=task_id,
+        limit=limit,
+    )
+
+
+def _postgres_fts_search(
+    *,
+    session: Session,
+    user_id: int,
+    query: str,
+    project_id: str | None,
+    task_id: str | None,
+    limit: int,
+) -> list[ChatSearchResultOut]:
     ts_query = func.plainto_tsquery("english", query)
     tsvector = func.to_tsvector("english", ChatMessage.content)
     rank = func.ts_rank_cd(tsvector, ts_query).label("rank")
     statement = (
         select(ChatMessage, rank)
-        .where(ChatMessage.user_id == user.id)
+        .where(ChatMessage.user_id == user_id)
         .where(tsvector.op("@@")(ts_query))
     )
     if project_id:
@@ -391,3 +421,129 @@ def search_chat_messages(
             )
         )
     return payload
+
+
+def _sqlite_fts5_search(
+    *,
+    session: Session,
+    user_id: int,
+    query: str,
+    project_id: str | None,
+    task_id: str | None,
+    limit: int,
+) -> list[ChatSearchResultOut]:
+    _ensure_sqlite_fts(session)
+
+    match_query = " ".join(part for part in query.strip().split() if part)
+    if not match_query:
+        return []
+
+    where_clauses = [
+        "m.user_id = :user_id",
+        "chatmessage_fts MATCH :query",
+    ]
+    params: dict[str, object] = {
+        "user_id": user_id,
+        "query": match_query,
+        "limit": limit,
+    }
+    if project_id:
+        where_clauses.append("m.project_id = :project_id")
+        params["project_id"] = project_id
+    if task_id:
+        where_clauses.append("m.task_id = :task_id")
+        params["task_id"] = task_id
+
+    statement = text(
+        f"""
+        SELECT
+            m.id AS id,
+            m.project_id AS project_id,
+            m.task_id AS task_id,
+            m.role AS role,
+            m.content AS content,
+            m.message_type AS message_type,
+            m.created_at AS created_at,
+            -bm25(chatmessage_fts) AS rank
+        FROM chatmessage_fts
+        JOIN chatmessage AS m ON m.id = chatmessage_fts.rowid
+        WHERE {" AND ".join(where_clauses)}
+        ORDER BY rank DESC, m.created_at DESC
+        LIMIT :limit
+        """
+    )
+    rows = session.exec(statement, params=params).all()
+    payload: list[ChatSearchResultOut] = []
+    for row in rows:
+        created_at = row.created_at
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        payload.append(
+            ChatSearchResultOut(
+                id=int(row.id),
+                project_id=str(row.project_id),
+                task_id=str(row.task_id),
+                role=str(row.role),
+                content=str(row.content),
+                message_type=str(row.message_type),
+                created_at=created_at,
+                rank=float(row.rank or 0.0),
+            )
+        )
+    return payload
+
+
+def _ensure_sqlite_fts(session: Session) -> None:
+    session.exec(
+        text(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS chatmessage_fts
+            USING fts5(content)
+            """
+        )
+    )
+    session.exec(
+        text(
+            """
+            CREATE TRIGGER IF NOT EXISTS chatmessage_fts_ai
+            AFTER INSERT ON chatmessage
+            BEGIN
+                INSERT INTO chatmessage_fts(rowid, content) VALUES (new.id, new.content);
+            END
+            """
+        )
+    )
+    session.exec(
+        text(
+            """
+            CREATE TRIGGER IF NOT EXISTS chatmessage_fts_ad
+            AFTER DELETE ON chatmessage
+            BEGIN
+                DELETE FROM chatmessage_fts WHERE rowid = old.id;
+            END
+            """
+        )
+    )
+    session.exec(
+        text(
+            """
+            CREATE TRIGGER IF NOT EXISTS chatmessage_fts_au
+            AFTER UPDATE OF content ON chatmessage
+            BEGIN
+                DELETE FROM chatmessage_fts WHERE rowid = old.id;
+                INSERT INTO chatmessage_fts(rowid, content) VALUES (new.id, new.content);
+            END
+            """
+        )
+    )
+    session.exec(
+        text(
+            """
+            INSERT INTO chatmessage_fts(rowid, content)
+            SELECT id, content
+            FROM chatmessage
+            WHERE id NOT IN (SELECT rowid FROM chatmessage_fts)
+            """
+        )
+    )
+    session.commit()

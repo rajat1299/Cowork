@@ -1,0 +1,33 @@
+{
+  "name": "cowork-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main/index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "build:mac": "npm run build && electron-builder --mac",
+    "build:dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "electron-log": "^5.4.0",
+    "electron-updater": "^6.3.9",
+    "tree-kill": "^1.2.2"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^2.5.0",
+    "@types/node": "^24.10.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vite-plugin-electron": "^0.29.0",
+    "vite-plugin-electron-renderer": "^0.14.6"
+  },
+  "engines": {
+    "node": ">=20 <24"
+  }
+}

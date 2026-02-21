@@ -51,7 +51,11 @@ def oauth_login(
 
 @router.get("/{provider}/callback", name="oauth_callback")
 def oauth_callback(provider: str, code: str, state: str | None = None):
-    redirect_url = f"{settings.app_callback_scheme}://callback/oauth?provider={provider}&code={code}"
+    base = settings.app_callback_scheme.rstrip("/")
+    if "://" in base:
+        redirect_url = f"{base}/oauth/callback?provider={provider}&code={code}"
+    else:
+        redirect_url = f"{base}://oauth/callback?provider={provider}&code={code}"
     if state:
         redirect_url += f"&state={state}"
     html_content = f"""

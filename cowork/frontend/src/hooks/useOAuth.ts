@@ -9,6 +9,25 @@ import {
   clearPKCEParams,
 } from '../lib/pkce'
 
+type DesktopBridge = {
+  openOAuthLogin?: (payload: {
+    provider: OAuthProvider
+    state: string
+    codeChallenge: string
+  }) => Promise<unknown>
+  exchangeOAuthCode?: (payload: {
+    provider: OAuthProvider
+    code: string
+    state?: string
+    codeVerifier?: string
+  }) => Promise<unknown>
+}
+
+function getDesktopBridge(): DesktopBridge | undefined {
+  const maybeBridge = (window as Window & { coworkDesktop?: DesktopBridge }).coworkDesktop
+  return maybeBridge
+}
+
 export function useOAuth() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,8 +53,18 @@ export function useOAuth() {
       const loginUrl = oauth.getLoginUrl(provider, { state, codeChallenge })
 
       // Open in browser/new window
-      // In Electron, this will be handled by shell.openExternal
-      // In browser, we redirect the current window
+      const desktopBridge = getDesktopBridge()
+      if (desktopBridge?.openOAuthLogin) {
+        await desktopBridge.openOAuthLogin({
+          provider,
+          state,
+          codeChallenge,
+        })
+        setIsLoading(false)
+        return
+      }
+
+      // Browser mode: redirect current window.
       window.location.href = loginUrl
     } catch (err) {
       setError('Failed to start OAuth login')
@@ -65,12 +94,22 @@ export function useOAuth() {
         throw new Error('OAuth provider not found')
       }
 
-      // Exchange code for tokens
-      await oauth.exchangeToken(provider as OAuthProvider, {
-        code,
-        state: returnedState,
-        code_verifier: codeVerifier || undefined,
-      })
+      // Exchange code for tokens.
+      const desktopBridge = getDesktopBridge()
+      if (desktopBridge?.exchangeOAuthCode) {
+        await desktopBridge.exchangeOAuthCode({
+          provider: provider as OAuthProvider,
+          code,
+          state: returnedState,
+          codeVerifier: codeVerifier || undefined,
+        })
+      } else {
+        await oauth.exchangeToken(provider as OAuthProvider, {
+          code,
+          state: returnedState,
+          code_verifier: codeVerifier || undefined,
+        })
+      }
 
       // Clear PKCE params
       clearPKCEParams()
