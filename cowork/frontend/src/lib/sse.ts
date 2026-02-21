@@ -467,9 +467,11 @@ function handleEnd(taskId: string, data: EndData): void {
   // Desktop notification when window is not focused
   if (isDesktop && !document.hasFocus()) {
     const desktop = (window as { coworkDesktop?: { showNotification: (opts: { title: string; body?: string }) => void } }).coworkDesktop
+    const raw = task.messages.find((m) => m.role === 'user')?.content ?? ''
+    const body = raw ? `${raw.slice(0, 80)}${raw.length > 80 ? '…' : ''}` : 'Your task has finished.'
     desktop?.showNotification({
       title: 'Task completed',
-      body: task.title || 'Your task has finished.',
+      body,
     })
   }
 
