@@ -1,8 +1,27 @@
 import { useAuthStore } from '../stores/authStore'
 
-// API base URLs - adjust for your environment
-const CORE_API_URL = import.meta.env.VITE_CORE_API_URL || 'http://localhost:3001'
-const ORCHESTRATOR_URL = import.meta.env.VITE_ORCHESTRATOR_URL || 'http://localhost:5001'
+// ---- Desktop runtime config (injected by Electron preload bridge) ----
+interface CoworkRuntime {
+  coreApiUrl: string
+  orchestratorUrl: string
+  isDesktop: boolean
+  appVersion?: string
+}
+
+declare global {
+  interface Window {
+    __COWORK_RUNTIME__?: CoworkRuntime
+  }
+}
+
+const _runtime = typeof window !== 'undefined' ? window.__COWORK_RUNTIME__ : undefined
+
+// API base URLs — desktop: preload injection, web: env vars, fallback: localhost defaults
+const CORE_API_URL = _runtime?.coreApiUrl || import.meta.env.VITE_CORE_API_URL || 'http://localhost:3001'
+const ORCHESTRATOR_URL = _runtime?.orchestratorUrl || import.meta.env.VITE_ORCHESTRATOR_URL || 'http://localhost:5001'
+
+/** True when running inside the Electron desktop shell */
+export const isDesktop = _runtime?.isDesktop ?? false
 
 export { CORE_API_URL, ORCHESTRATOR_URL }
 

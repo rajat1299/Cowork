@@ -9,14 +9,18 @@ REFRESH_TOKEN_COOKIE = "refresh_token"
 
 
 def _cookie_secure() -> bool:
-    return settings.app_env != "development"
+    return settings.app_env not in ("development", "desktop")
+
+
+def _cookie_samesite() -> str:
+    return "lax" if settings.app_env in ("development", "desktop") else "strict"
 
 
 def set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
     common = {
         "httponly": True,
         "secure": _cookie_secure(),
-        "samesite": "strict",
+        "samesite": _cookie_samesite(),
         "path": "/",
     }
     response.set_cookie(
@@ -37,7 +41,7 @@ def clear_auth_cookies(response: Response) -> None:
     common = {
         "httponly": True,
         "secure": _cookie_secure(),
-        "samesite": "strict",
+        "samesite": _cookie_samesite(),
         "path": "/",
     }
     response.delete_cookie(ACCESS_TOKEN_COOKIE, **common)

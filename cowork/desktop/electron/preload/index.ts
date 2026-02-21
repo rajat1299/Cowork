@@ -44,6 +44,33 @@ contextBridge.exposeInMainWorld('coworkDesktop', {
     state?: string
     codeVerifier?: string
   }) => ipcRenderer.invoke('oauth-exchange-code', payload),
+  // Window controls
+  windowMinimize: () => ipcRenderer.invoke('window-minimize'),
+  windowToggleMaximize: () => ipcRenderer.invoke('window-toggle-maximize'),
+  windowClose: () => ipcRenderer.invoke('window-close'),
+
+  // File operations
+  selectFile: (opts?: { filters?: Array<{ name: string; extensions: string[] }>; multiple?: boolean }) =>
+    ipcRenderer.invoke('select-file', opts) as Promise<string[]>,
+  revealInFolder: (filePath: string) => ipcRenderer.invoke('reveal-in-folder', filePath),
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+
+  // System info
+  getSystemInfo: () =>
+    ipcRenderer.invoke('get-system-info') as Promise<{
+      platform: string
+      arch: string
+      osVersion: string
+      totalMemory: number
+      freeMemory: number
+      homeDir: string
+    }>,
+
+  // Notifications
+  showNotification: (opts: { title: string; body?: string }) =>
+    ipcRenderer.invoke('show-notification', opts),
+
+  // Updates
   checkForUpdates: (): Promise<unknown> => ipcRenderer.invoke('check-update'),
   downloadUpdate: (): Promise<unknown> => ipcRenderer.invoke('download-update'),
   quitAndInstall: (): Promise<unknown> => ipcRenderer.invoke('quit-and-install'),
@@ -63,6 +90,16 @@ contextBridge.exposeInMainWorld('coworkDesktop', {
       }
     }
   },
+  onDeepLink: (callback: (url: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, url: string) => {
+      callback(url)
+    }
+    ipcRenderer.on('deep-link', listener)
+    return () => {
+      ipcRenderer.removeListener('deep-link', listener)
+    }
+  },
+
   onUpdateEvent: (callback: (event: string, payload?: unknown) => void) => {
     const channels = [
       'update-checking',

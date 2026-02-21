@@ -1,3 +1,24 @@
+from unittest.mock import patch
+
+
+def test_desktop_cookie_policy_is_lax_and_not_secure():
+    """Desktop env should use SameSite=lax and Secure=false for localhost compatibility."""
+    with patch("app.api.auth_cookies.settings") as mock_settings:
+        from app.api.auth_cookies import _cookie_samesite, _cookie_secure
+
+        mock_settings.app_env = "desktop"
+        assert _cookie_secure() is False
+        assert _cookie_samesite() == "lax"
+
+        mock_settings.app_env = "production"
+        assert _cookie_secure() is True
+        assert _cookie_samesite() == "strict"
+
+        mock_settings.app_env = "development"
+        assert _cookie_secure() is False
+        assert _cookie_samesite() == "lax"
+
+
 def test_login_sets_auth_cookies(client, test_user):
     response = client.post(
         "/auth/login",
@@ -10,7 +31,9 @@ def test_login_sets_auth_cookies(client, test_user):
 
     set_cookie_header = response.headers.get("set-cookie", "")
     assert "HttpOnly" in set_cookie_header
-    assert "SameSite=strict" in set_cookie_header or "SameSite=Strict" in set_cookie_header
+    # In development/desktop mode SameSite is lax; in production it's strict
+    assert "SameSite=lax" in set_cookie_header or "SameSite=Lax" in set_cookie_header or \
+           "SameSite=strict" in set_cookie_header or "SameSite=Strict" in set_cookie_header
 
 
 def test_auth_me_accepts_access_token_cookie(client, test_user):

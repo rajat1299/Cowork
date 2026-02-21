@@ -1,6 +1,8 @@
 import { URL } from 'node:url'
 
-import { app, ipcMain, session, shell } from 'electron'
+import os from 'node:os'
+
+import { app, BrowserWindow, dialog, ipcMain, Notification, session, shell } from 'electron'
 
 import type { BackendPorts } from './init'
 
@@ -202,4 +204,73 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
       tokenData,
     }
   })
+
+  // ---- Window controls ----
+
+  ipcMain.handle('window-minimize', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize()
+  })
+
+  ipcMain.handle('window-toggle-maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win) {
+      win.isMaximized() ? win.unmaximize() : win.maximize()
+    }
+  })
+
+  ipcMain.handle('window-close', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close()
+  })
+
+  // ---- File operations ----
+
+  ipcMain.handle('select-file', async (_event, opts?: { filters?: Electron.FileFilter[]; multiple?: boolean }) => {
+    const result = await dialog.showOpenDialog({
+      properties: [
+        'openFile',
+        ...(opts?.multiple ? ['multiSelections' as const] : []),
+      ],
+      filters: opts?.filters,
+    })
+    return result.canceled ? [] : result.filePaths
+  })
+
+  ipcMain.handle('reveal-in-folder', async (_event, filePath: string) => {
+    shell.showItemInFolder(filePath)
+  })
+
+  ipcMain.handle('open-external', async (_event, url: string) => {
+    await shell.openExternal(url)
+  })
+
+  // ---- System info ----
+
+  ipcMain.handle('get-system-info', async () => {
+    return {
+      platform: process.platform,
+      arch: process.arch,
+      osVersion: os.release(),
+      totalMemory: os.totalmem(),
+      freeMemory: os.freemem(),
+      homeDir: os.homedir(),
+    }
+  })
+
+  // ---- Notifications ----
+
+  ipcMain.handle(
+    'show-notification',
+    async (_event, opts: { title: string; body?: string }) => {
+      if (!Notification.isSupported()) return
+      const notification = new Notification({ title: opts.title, body: opts.body })
+      notification.on('click', () => {
+        const win = BrowserWindow.getAllWindows()[0]
+        if (win) {
+          win.show()
+          win.focus()
+        }
+      })
+      notification.show()
+    }
+  )
 }

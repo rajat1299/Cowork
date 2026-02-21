@@ -13,6 +13,9 @@ import {
   type BackendPorts,
 } from './init'
 import { registerIpcHandlers } from './ipc'
+import { registerDeepLinkProtocol } from './protocol'
+import { registerGlobalShortcuts } from './shortcuts'
+import { createTray, destroyTray } from './tray'
 import { configureAutoUpdater, registerUpdateIpcHandlers } from './update'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -20,6 +23,12 @@ const MAIN_DIST = path.join(__dirname, '../..')
 const RENDERER_DIST = path.join(MAIN_DIST, 'dist')
 const PRELOAD_PATH = path.join(__dirname, '../preload/index.mjs')
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
+
+// Enforce single instance — deep links on Windows/Linux arrive via second-instance event
+const gotTheLock = app.requestSingleInstanceLock()
+if (!gotTheLock) {
+  app.quit()
+}
 
 let mainWindow: BrowserWindow | null = null
 
@@ -135,6 +144,10 @@ app.whenReady().then(async () => {
   configureAutoUpdater(() => mainWindow)
   registerUpdateIpcHandlers()
 
+  registerGlobalShortcuts(() => mainWindow)
+  registerDeepLinkProtocol(() => mainWindow)
+  createTray(() => mainWindow)
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createMainWindow(getBackendPorts())
@@ -143,6 +156,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', async () => {
+  destroyTray()
   await stopBackendServices()
 })
 

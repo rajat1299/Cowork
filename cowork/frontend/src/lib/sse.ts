@@ -4,7 +4,7 @@
  */
 
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import { ORCHESTRATOR_URL } from '../api/client'
+import { isDesktop, ORCHESTRATOR_URL } from '../api/client'
 import {
   useChatStore,
   getSSEController,
@@ -463,6 +463,15 @@ function handleEnd(taskId: string, data: EndData): void {
   // Mark task as completed
   store.setTaskStatus(taskId, 'completed')
   addProgressStepFromEvent(taskId, 'end', 'completed', { tokens: data.tokens })
+
+  // Desktop notification when window is not focused
+  if (isDesktop && !document.hasFocus()) {
+    const desktop = (window as { coworkDesktop?: { showNotification: (opts: { title: string; body?: string }) => void } }).coworkDesktop
+    desktop?.showNotification({
+      title: 'Task completed',
+      body: task.title || 'Your task has finished.',
+    })
+  }
 
   // Cleanup SSE controller
   removeSSEController(taskId)
