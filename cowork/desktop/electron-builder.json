@@ -1,0 +1,93 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "productName": "Cowork",
+  "appId": "com.cowork.app",
+  "asar": true,
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist-electron/**",
+    "dist/**",
+    "package.json",
+    "!**/*.map",
+    "!**/node_modules/.cache/**"
+  ],
+  "extraResources": [
+    {
+      "from": "../core_api",
+      "to": "core_api",
+      "filter": [
+        "**/*",
+        "!.venv/**",
+        "!**/__pycache__/**",
+        "!**/*.pyc"
+      ]
+    },
+    {
+      "from": "../orchestrator",
+      "to": "orchestrator",
+      "filter": [
+        "**/*",
+        "!.venv/**",
+        "!**/__pycache__/**",
+        "!**/*.pyc"
+      ]
+    },
+    {
+      "from": "../shared",
+      "to": "shared",
+      "filter": [
+        "**/*",
+        "!**/__pycache__/**",
+        "!**/*.pyc"
+      ]
+    },
+    {
+      "from": "resources/uv",
+      "to": "uv",
+      "filter": ["**/*"]
+    }
+  ],
+  "protocols": [
+    {
+      "name": "Cowork",
+      "schemes": ["cowork"]
+    }
+  ],
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "${env.COWORK_UPDATES_OWNER}",
+      "repo": "${env.COWORK_UPDATES_REPO}",
+      "releaseType": "release"
+    }
+  ],
+  "afterSign": "./config/notarize.cjs",
+  "mac": {
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["arm64", "x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["arm64", "x64"]
+      }
+    ],
+    "category": "public.app-category.productivity",
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "entitlements.mac.plist",
+    "entitlementsInherit": "entitlements.mac.plist",
+    "notarize": false,
+    "extendInfo": {
+      "CFBundleURLTypes": [
+        {
+          "CFBundleURLName": "com.cowork.app",
+          "CFBundleURLSchemes": ["cowork"]
+        }
+      ]
+    }
+  }
+}

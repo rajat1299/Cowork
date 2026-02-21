@@ -19,8 +19,8 @@ SHARED_ROOT = REPO_ROOT / "shared"
 if str(SHARED_ROOT) not in sys.path:
     sys.path.insert(0, str(SHARED_ROOT))
 
-from app import models  # noqa: F401
-from app.config import settings
+from app import models  # noqa: F401, E402
+from app.config import settings  # noqa: E402
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
@@ -31,8 +31,14 @@ if config.config_file_name is not None:
 target_metadata = SQLModel.metadata
 
 
+def _dialect_name(url: str) -> str:
+    return url.split(":", 1)[0].lower()
+
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
+    dialect_name = _dialect_name(url)
+    config.attributes["dialect_name"] = dialect_name
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -52,6 +58,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        config.attributes["dialect_name"] = connection.dialect.name
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
