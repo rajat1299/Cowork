@@ -51,6 +51,56 @@ export function removeSSEController(taskId: string): void {
 const streamingBuffer: Record<string, string> = {}
 const streamingTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 
+const TASK_PERSIST_TTL_MS = 24 * 60 * 60 * 1000
+
+type PersistedChatState = {
+  activeProjectId: string | null
+  activeTaskId: string | null
+  tasks: Record<string, ChatTask>
+}
+
+function pruneTasksByTtl(tasks: Record<string, ChatTask>, now: number = Date.now()): Record<string, ChatTask> {
+  const next: Record<string, ChatTask> = {}
+  const minTimestamp = now - TASK_PERSIST_TTL_MS
+
+  Object.entries(tasks).forEach(([taskId, task]) => {
+    const lastUpdated = typeof task.endTime === 'number' ? task.endTime : task.startTime
+    if (typeof lastUpdated === 'number' && lastUpdated >= minTimestamp) {
+      next[taskId] = task
+    }
+  })
+
+  return next
+}
+
+function normalizePersistedState(
+  state: Partial<PersistedChatState>,
+  now: number = Date.now()
+): PersistedChatState {
+  const tasks = pruneTasksByTtl(state.tasks || {}, now)
+  let activeTaskId = state.activeTaskId || null
+  let activeProjectId = state.activeProjectId || null
+
+  if (activeTaskId && !tasks[activeTaskId]) {
+    activeTaskId = null
+  }
+
+  if (activeTaskId) {
+    activeProjectId = tasks[activeTaskId]?.projectId || null
+  } else if (activeProjectId) {
+    const hasTaskForProject = Object.values(tasks).some((task) => task.projectId === activeProjectId)
+    if (!hasTaskForProject) {
+      activeProjectId = null
+    }
+  }
+
+  return {
+    activeProjectId,
+    activeTaskId,
+    tasks,
+  }
+}
+
 // ============ Store State ============
 
 interface ChatState {
@@ -186,15 +236,37 @@ export const useChatStore = create<ChatState>()(
         set((state) => {
           const remaining = { ...state.tasks }
           delete remaining[taskId]
+          const removingActiveTask = state.activeTaskId === taskId
           return {
             tasks: remaining,
-            activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
+            activeTaskId: removingActiveTask ? null : state.activeTaskId,
+            activeProjectId: removingActiveTask ? null : state.activeProjectId,
           }
         })
       },
 
       setActiveTask: (taskId) => {
-        set({ activeTaskId: taskId })
+        set((state) => {
+          if (!taskId) {
+            return {
+              activeTaskId: null,
+              activeProjectId: null,
+            }
+          }
+
+          const task = state.tasks[taskId]
+          if (!task) {
+            return {
+              activeTaskId: null,
+              activeProjectId: null,
+            }
+          }
+
+          return {
+            activeTaskId: taskId,
+            activeProjectId: task.projectId,
+          }
+        })
       },
       resetActiveChat: () => {
         set({
@@ -647,11 +719,11 @@ export const useChatStore = create<ChatState>()(
     {
       name: 'cowork-chat',
       partialize: (state) => ({
-        // Only persist essential data, not connection state
-        activeProjectId: state.activeProjectId,
-        activeTaskId: state.activeTaskId,
-        // Optionally persist recent tasks for history
-        // tasks: state.tasks,
+        ...normalizePersistedState(state),
+      }),
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...normalizePersistedState((persistedState || {}) as Partial<PersistedChatState>),
       }),
     }
   )

@@ -21,6 +21,18 @@ import { useSessionStore, formatRelativeTime } from '../../stores/sessionStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useChat } from '../../hooks'
 
+/** Strip markdown syntax from chat titles for clean sidebar display. */
+function stripMarkdownTitle(title: string): string {
+  return title
+    .replace(/^#{1,6}\s+/, '')              // headings
+    .replace(/\*{1,3}(.+?)\*{1,3}/g, '$1') // bold/italic
+    .replace(/`(.+?)`/g, '$1')             // inline code
+    .replace(/^\s*[-*]\s+/, '')             // bullets
+    .replace(/^\s*\d+\.\s+/, '')           // numbered lists
+    .replace(/^>\s+/, '')                   // blockquotes
+    .trim()
+}
+
 interface SidebarProps {
   collapsed?: boolean
   onToggle?: () => void
@@ -384,7 +396,7 @@ const SessionItem = memo(function SessionItem({ session, isActive, isLoading, on
           />
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-[13px] font-medium truncate">{session.title}</p>
+          <p className="text-[13px] font-medium truncate">{stripMarkdownTitle(session.title)}</p>
           <p className="text-[11px] text-muted-foreground truncate">
             {formatRelativeTime(session.updatedAt)}
           </p>

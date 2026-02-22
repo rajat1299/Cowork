@@ -219,9 +219,10 @@ Subtasks:
 {task_list}
 
 Instructions:
-1. **Title**: Max 5 words. Action-oriented. (e.g., "Fix Auth Bug", "Research Competitors")
-2. **Summary**: Max 1 sentence. Focus on the outcome.
-3. Return format: Title|Summary
+1. Title: Plain text only. No markdown, no hashtags, no asterisks, no special formatting. Max 5 words. Action-oriented. (e.g., "Fix Auth Bug", "Research Competitors")
+2. Summary: Plain text only. Max 1 sentence. Focus on the outcome.
+3. Return EXACTLY this format: Title|Summary
+4. Do NOT include numbering, bullet points, or any markdown syntax in the title or summary.
 """
 
 

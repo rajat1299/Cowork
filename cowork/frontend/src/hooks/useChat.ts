@@ -3,7 +3,6 @@ import { useChatStore } from '../stores/chatStore'
 import { startSSEConnection, stopSSEConnection } from '../lib/sse'
 import { buildTurnExecutionView, mapBackendStepToProgressStep } from '../lib/execution'
 import { dedupeArtifactsByCanonicalName, filterUserArtifacts, normalizeArtifactUrl } from '../lib/artifacts'
-import { emitTelemetryEvent } from '../lib/telemetry'
 import { generateId, createMessage } from '../types/chat'
 import { history, chatMessages, steps, artifacts as artifactsApi } from '../api/coreApi'
 import { files as orchestratorFiles } from '../api/orchestrator'
@@ -24,6 +23,36 @@ export interface ChatMessageOptions {
   searchEnabled?: boolean
   agents?: AgentConfig[]
   files?: File[]
+}
+
+type FollowUpRoute = 'new_chat' | 'reuse_project_new_task' | 'existing_task'
+
+export function chooseSendProjectId(params: {
+  explicitProjectId?: string
+  activeProjectId: string | null
+  createId: () => string
+}): string {
+  const explicitProjectId = params.explicitProjectId?.trim()
+  if (explicitProjectId) {
+    return explicitProjectId
+  }
+  if (params.activeProjectId) {
+    return params.activeProjectId
+  }
+  return params.createId()
+}
+
+export function chooseFollowUpRoute(params: {
+  activeProjectId: string | null
+  activeTaskId: string | null
+}): FollowUpRoute {
+  if (!params.activeProjectId) {
+    return 'new_chat'
+  }
+  if (!params.activeTaskId) {
+    return 'reuse_project_new_task'
+  }
+  return 'existing_task'
 }
 
 interface UseChatReturn {
@@ -147,13 +176,11 @@ export function useChat(): UseChatReturn {
   // Send a new message (starts SSE connection)
   const sendMessage = useCallback(
     async (message: string, options?: ChatMessageOptions & { projectId?: string }): Promise<void> => {
-      if (!options?.projectId && !activeTaskId && activeProjectId) {
-        emitTelemetryEvent('welcome_send_ignored_stale_project_id', {
-          stale_project_id: activeProjectId,
-        })
-      }
-
-      const pid = options?.projectId || generateId()
+      const pid = chooseSendProjectId({
+        explicitProjectId: options?.projectId,
+        activeProjectId,
+        createId: generateId,
+      })
       const taskId = generateId()
       let attachments: AttachmentInfo[] = []
       let attachmentPayloads: AttachmentPayload[] = []
@@ -185,14 +212,25 @@ export function useChat(): UseChatReturn {
         throw err
       }
     },
-    [activeProjectId, activeTaskId, createTask, uploadChatFiles]
+    [activeProjectId, createTask, uploadChatFiles]
   )
 
   // Send a follow-up message to existing conversation
   const sendFollowUp = useCallback(
     async (message: string, options?: ChatMessageOptions): Promise<void> => {
-      if (!activeProjectId || !activeTaskId) {
-        // No active conversation, start a new one
+      const route = chooseFollowUpRoute({ activeProjectId, activeTaskId })
+      if (route === 'new_chat') {
+        await sendMessage(message, options)
+        return
+      }
+      if (route === 'reuse_project_new_task') {
+        await sendMessage(message, { ...options, projectId: activeProjectId || undefined })
+        return
+      }
+
+      const projectId = activeProjectId
+      const taskId = activeTaskId
+      if (!projectId || !taskId) {
         await sendMessage(message, options)
         return
       }
@@ -200,13 +238,13 @@ export function useChat(): UseChatReturn {
       let attachments: AttachmentInfo[] = []
       let attachmentPayloads: AttachmentPayload[] = []
       if (options?.files?.length) {
-        const uploadResult = await uploadChatFiles(activeProjectId, activeTaskId, options.files)
+        const uploadResult = await uploadChatFiles(projectId, taskId, options.files)
         attachments = uploadResult.attachments
         attachmentPayloads = uploadResult.payloads
       }
 
       // Add user message to current task
-      addMessage(activeTaskId, {
+      addMessage(taskId, {
         id: generateId(),
         role: 'user',
         content: message,
@@ -218,12 +256,12 @@ export function useChat(): UseChatReturn {
 
       try {
         useChatStore.setState((state) => {
-          const task = state.tasks[activeTaskId]
+          const task = state.tasks[taskId]
           if (!task) return state
           return {
             tasks: {
               ...state.tasks,
-              [activeTaskId]: {
+              [taskId]: {
                 ...task,
                 status: 'pending',
                 currentStep: null,
@@ -238,8 +276,8 @@ export function useChat(): UseChatReturn {
         })
 
         await startSSEConnection({
-          projectId: activeProjectId,
-          taskId: activeTaskId,
+          projectId,
+          taskId,
           question: message,
           searchEnabled: options?.searchEnabled,
           agents: options?.agents,
@@ -441,8 +479,12 @@ export function useChat(): UseChatReturn {
   const switchTask = useCallback(
     async (taskId: string) => {
       // Try to load from backend if not in store
+      let isReady = Boolean(tasks[taskId])
       if (!tasks[taskId]) {
-        await loadTask(taskId)
+        isReady = await loadTask(taskId)
+      }
+      if (!isReady) {
+        return
       }
       setActiveTask(taskId)
       useSessionStore.getState().syncLocalSessions()

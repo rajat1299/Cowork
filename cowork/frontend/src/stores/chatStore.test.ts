@@ -57,4 +57,70 @@ describe('chatStore state transitions', () => {
     expect(task.artifacts[0].name).toBe('report-v2.md')
     expect(task.artifacts[0].contentUrl).toBe('/files/report-v2.md')
   })
+
+  it('updates activeProjectId when switching active task', () => {
+    const store = useChatStore.getState()
+    const firstTaskId = store.createTask('project-alpha', 'First')
+    const secondTaskId = store.createTask('project-beta', 'Second')
+
+    expect(useChatStore.getState().activeTaskId).toBe(secondTaskId)
+    expect(useChatStore.getState().activeProjectId).toBe('project-beta')
+
+    store.setActiveTask(firstTaskId)
+
+    expect(useChatStore.getState().activeTaskId).toBe(firstTaskId)
+    expect(useChatStore.getState().activeProjectId).toBe('project-alpha')
+  })
+
+  it('clears activeProjectId when removing the active task', () => {
+    const store = useChatStore.getState()
+    const taskId = store.createTask('project-zeta', 'Delete me')
+
+    store.removeTask(taskId)
+
+    expect(useChatStore.getState().activeTaskId).toBeNull()
+    expect(useChatStore.getState().activeProjectId).toBeNull()
+  })
+
+  it('persists tasks and prunes stale tasks from hydrated state', () => {
+    const now = Date.now()
+    const oneDayMs = 24 * 60 * 60 * 1000
+
+    const store = useChatStore.getState()
+    const staleTaskId = store.createTask('project-old', 'Old task')
+    const freshTaskId = store.createTask('project-new', 'Fresh task')
+
+    const staleTask = {
+      ...useChatStore.getState().tasks[staleTaskId],
+      startTime: now - oneDayMs - 60_000,
+    }
+    const freshTask = {
+      ...useChatStore.getState().tasks[freshTaskId],
+      startTime: now - 60_000,
+    }
+
+    const persistOptions = useChatStore.persist.getOptions()
+    const partial = persistOptions.partialize(useChatStore.getState())
+
+    expect('tasks' in partial).toBe(true)
+    expect(typeof persistOptions.merge).toBe('function')
+
+    if (typeof persistOptions.merge === 'function') {
+      const merged = persistOptions.merge(
+        {
+          activeProjectId: staleTask.projectId,
+          activeTaskId: staleTaskId,
+          tasks: {
+            [staleTaskId]: staleTask,
+            [freshTaskId]: freshTask,
+          },
+        },
+        useChatStore.getState()
+      )
+
+      expect(merged.activeTaskId).toBeNull()
+      expect(merged.activeProjectId).toBeNull()
+      expect(Object.keys(merged.tasks)).toEqual([freshTaskId])
+    }
+  })
 })

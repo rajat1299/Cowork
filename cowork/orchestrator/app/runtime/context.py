@@ -7,15 +7,35 @@ from pathlib import Path
 from app.clients.core_api import fetch_configs
 
 
+def _strip_markdown(text: str) -> str:
+    """Remove common markdown syntax from text to ensure plain display."""
+    # Strip leading markdown headings (### Title)
+    cleaned = re.sub(r"^#{1,6}\s+", "", text.strip())
+    # Strip bold/italic markers
+    cleaned = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", cleaned)
+    cleaned = re.sub(r"_{1,3}(.+?)_{1,3}", r"\1", cleaned)
+    # Strip inline code backticks
+    cleaned = re.sub(r"`(.+?)`", r"\1", cleaned)
+    # Strip leading bullets/numbers (- item, * item, 1. item)
+    cleaned = re.sub(r"^\s*[-*]\s+", "", cleaned)
+    cleaned = re.sub(r"^\s*\d+\.\s+", "", cleaned)
+    # Strip blockquote markers
+    cleaned = re.sub(r"^>\s+", "", cleaned)
+    return cleaned.strip()
+
+
 def _parse_summary(summary_text: str) -> tuple[str | None, str | None]:
     if not summary_text:
         return None, None
     if "|" in summary_text:
         name, summary = summary_text.split("|", 1)
-        name = name.strip() or None
-        summary = summary.strip() or None
+        name = _strip_markdown(name) or None
+        summary = _strip_markdown(summary) if summary else None
+        # Truncate title to 60 chars
+        if name and len(name) > 60:
+            name = name[:57] + "..."
         return name, summary
-    return None, summary_text.strip()
+    return None, _strip_markdown(summary_text)
 
 
 def _sanitize_identifier(value: str, fallback: str) -> str:

@@ -292,20 +292,25 @@ export function ChatContainer() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isConnecting, isRunning, progressSteps, timeline.length])
 
+  // Read activeProjectId to decide new-chat vs follow-up routing
+  const activeProjectId = useChatStore((s) => s.activeProjectId)
+
   // Handle sending messages
   const handleSend = useCallback(
     async (content: string, options?: ChatMessageOptions) => {
       try {
-        if (messages.length === 0) {
+        if (!activeProjectId) {
+          // No active project — truly a new chat
           await sendMessage(content, options)
         } else {
+          // Active project exists — continue the conversation
           await sendFollowUp(content, options)
         }
       } catch (err) {
         console.error('Failed to send message:', err)
       }
     },
-    [messages.length, sendMessage, sendFollowUp]
+    [activeProjectId, sendMessage, sendFollowUp]
   )
 
   // Handle stop
