@@ -75,6 +75,20 @@ export const chat = {
     orchestratorApi.delete(`/chat/${projectId}`),
 }
 
+export const permission = {
+  /**
+   * Submit a tool permission decision (approve/deny).
+   * Backend waits on an asyncio.Queue for this response.
+   * @param remember - For ask_once tier: whether to skip future prompts for this toolkit
+   */
+  submit: (projectId: string, requestId: string, approved: boolean, remember?: boolean): Promise<{ status: string }> =>
+    orchestratorApi.post(`/chat/${projectId}/permission`, {
+      request_id: requestId,
+      approved,
+      ...(remember !== undefined && { remember }),
+    }),
+}
+
 export const files = {
   upload: (formData: FormData): Promise<UploadResponse> =>
     orchestratorApi.upload('/files/upload', formData),

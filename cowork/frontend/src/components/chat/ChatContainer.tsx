@@ -16,6 +16,7 @@ import { ChatInput } from './ChatInput'
 import { TypingIndicator } from './TypingIndicator'
 import { WelcomeScreen } from './WelcomeScreen'
 import { CompactingNotice } from './CompactingNotice'
+import { ToolApprovalCard } from './ToolApprovalCard'
 import { useChat } from '../../hooks'
 import type { ChatMessageOptions } from '../../hooks/useChat'
 import { useChatStore } from '../../stores/chatStore'
@@ -285,12 +286,16 @@ export function ChatContainer() {
     return taskId ? s.tasks[taskId]?.notice ?? null : null
   })
 
+  const pendingApprovals = useChatStore((s) => {
+    return Object.values(s.pendingApprovals)
+  })
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll on new messages
+  // Auto-scroll on new messages and approvals
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isConnecting, isRunning, progressSteps, timeline.length])
+  }, [messages, isConnecting, isRunning, progressSteps, timeline.length, pendingApprovals.length])
 
   // Read activeProjectId to decide new-chat vs follow-up routing
   const activeProjectId = useChatStore((s) => s.activeProjectId)
@@ -379,6 +384,11 @@ export function ChatContainer() {
               }
               return <InlineArtifactCard key={item.id} artifact={item.artifact} />
             })}
+
+            {/* Tool approval cards */}
+            {pendingApprovals.length > 0 && pendingApprovals.map((approval) => (
+              <ToolApprovalCard key={approval.requestId} approval={approval} />
+            ))}
 
             {/* Compacting notice when backend is summarizing history */}
             {activeTaskNotice && (

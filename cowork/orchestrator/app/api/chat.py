@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.auth import require_auth
 from app.config import settings
 from app.runtime.actions import ActionImprove, ActionStop, AgentSpec, TaskStatus
+from app.runtime.config_helpers import _is_permission_approved
 from app.runtime.engine import run_task_loop
 from app.runtime.manager import get, get_or_create, remove
 from shared.schemas import StepEvent as StepEventModel
@@ -107,6 +108,7 @@ class PermissionDecisionRequest(BaseModel):
     request_id: str
     approved: bool | None = None
     response: str | None = None
+    remember: bool = True
 
 
 @router.post("/chat/{project_id}/improve", dependencies=[Depends(_chat_rate_limit)])
@@ -161,6 +163,17 @@ async def submit_permission_decision(
         response_queue.put_nowait(decision)
     except asyncio.QueueFull:
         raise HTTPException(status_code=409, detail="Permission request already resolved")
+
+    pending_context = task_lock.pending_approval_context.get(request.request_id) or {}
+    if (
+        request.remember
+        and pending_context.get("tier") == "ask_once"
+        and _is_permission_approved(decision)
+    ):
+        toolkit_key = pending_context.get("toolkit_key")
+        if toolkit_key:
+            task_lock.remembered_approvals.add(toolkit_key)
+
     return {"status": "recorded"}
 
 

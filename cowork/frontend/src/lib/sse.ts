@@ -652,8 +652,31 @@ function mapToolPayload(payload: Record<string, unknown>): ToolkitData {
 
 function handleAsk(taskId: string, data: Record<string, unknown>): void {
   const store = useChatStore.getState()
-  const question = (data.question as string) || 'The assistant has a question for you.'
+  const eventType = data.type as string | undefined
+  const requestId = data.request_id as string | undefined
+  const question = (data.human_question as string) || (data.question as string) || 'The assistant has a question for you.'
 
+  // Tool approval events — route to ToolApprovalCard system
+  if (eventType === 'tool_approval' && requestId) {
+    const task = store.tasks[taskId]
+    const projectId = task?.projectId || store.activeProjectId || ''
+
+    store.addApproval({
+      requestId,
+      question,
+      detail: data.detail as string | undefined,
+      tier: (data.tier as 'always_ask' | 'ask_once') || 'always_ask',
+      toolkitName: (data.toolkit_name as string) || '',
+      methodName: (data.method_name as string) || '',
+      projectId,
+      status: 'pending',
+    })
+    addProgressStepFromEvent(taskId, 'ask', 'active', data)
+    return
+  }
+
+  // Non-approval ask_user events (decisions, plain questions) — render as message
+  // This path will be replaced by DecisionWidget in Phase D.3
   store.addMessage(taskId, createMessage('assistant', question))
   addProgressStepFromEvent(taskId, 'ask', 'active', data)
 }

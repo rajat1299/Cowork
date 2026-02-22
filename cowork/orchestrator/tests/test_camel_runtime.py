@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 from camel.tasks.task import TaskState
 
-from app.clients.core_api import ProviderConfig
 from app.runtime import camel_runtime as cr
 from app.runtime import executor as runtime_executor
 from app.runtime import artifacts as runtime_artifacts
@@ -339,7 +338,25 @@ def test_requires_tool_permission_only_for_sensitive_actions():
     assert cr._requires_tool_permission("TerminalToolkitWithEvents", "shell_exec") is True
     assert cr._requires_tool_permission("CodeExecutionToolkitWithEvents", "execute_code") is True
     assert cr._requires_tool_permission("FileToolkitWithEvents", "write_file") is True
+    assert cr._requires_tool_permission("FileToolkitWithEvents", "mkdir") is True
+    assert cr._requires_tool_permission("FileToolkitWithEvents", "delete_file") is True
     assert cr._requires_tool_permission("FileToolkitWithEvents", "read_file") is False
+    assert cr._requires_tool_permission("GmailToolkit", "send_email") is True
+    assert cr._requires_tool_permission("SlackToolkit", "post_message") is True
+    assert cr._requires_tool_permission("LarkToolkit", "send_message") is True
+    assert cr._requires_tool_permission("WhatsAppToolkit", "send_message") is True
+    assert cr._requires_tool_permission("PyAutoGuiToolkit", "click") is True
+    assert cr._requires_tool_permission("GitHubToolkit", "create_pull_request") is True
+    assert cr._requires_tool_permission("GitHubToolkit", "list_pull_requests") is False
+    assert cr._requires_tool_permission("MemoryToolkit", "update_note") is True
+    assert cr._requires_tool_permission("MemoryToolkit", "search_notes") is False
+    assert cr._requires_tool_permission("ExcelToolkit", "create_workbook") is True
+    assert cr._requires_tool_permission("PptxToolkit", "build_deck") is True
+    assert cr._requires_tool_permission("NotionToolkit", "append_page") is True
+    assert cr._requires_tool_permission("GoogleCalendarToolkit", "create_event") is True
+    assert cr._requires_tool_permission("GoogleDriveMcpToolkit", "upload_file") is True
+    assert cr._requires_tool_permission("WebDeployToolkit", "deploy_site") is True
+    assert cr._requires_tool_permission("ImageGenerationToolkit", "generate_image") is True
     assert cr._requires_tool_permission("BrowserToolkitWithEvents", "search") is False
 
 

@@ -176,3 +176,69 @@ def test_submit_permission_decision_records_response(monkeypatch):
     assert response.json()["status"] == "recorded"
     assert response_queue.get_nowait() == "approve"
     remove(project_id)
+
+
+def test_submit_permission_decision_remembers_ask_once_toolkit_when_requested(monkeypatch):
+    from app import auth as auth_module
+
+    project_id = "proj-auth-permission-remember"
+    request_id = "req-remember"
+    toolkit_key = "filetoolkitwithevents"
+
+    async def fake_verify(_authorization: str) -> None:
+        return None
+
+    monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
+
+    task_lock = get_or_create(project_id)
+    response_queue = asyncio.Queue(maxsize=1)
+    task_lock.human_input[request_id] = response_queue
+    task_lock.pending_approval_context[request_id] = {
+        "tier": "ask_once",
+        "toolkit_key": toolkit_key,
+    }
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/chat/{project_id}/permission",
+            json={"request_id": request_id, "approved": True, "remember": True},
+            headers={"Authorization": "Bearer valid-token"},
+        )
+
+    assert response.status_code == 200
+    assert response_queue.get_nowait() == "approve"
+    assert toolkit_key in task_lock.remembered_approvals
+    remove(project_id)
+
+
+def test_submit_permission_decision_does_not_remember_when_disabled(monkeypatch):
+    from app import auth as auth_module
+
+    project_id = "proj-auth-permission-no-remember"
+    request_id = "req-no-remember"
+    toolkit_key = "filetoolkitwithevents"
+
+    async def fake_verify(_authorization: str) -> None:
+        return None
+
+    monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
+
+    task_lock = get_or_create(project_id)
+    response_queue = asyncio.Queue(maxsize=1)
+    task_lock.human_input[request_id] = response_queue
+    task_lock.pending_approval_context[request_id] = {
+        "tier": "ask_once",
+        "toolkit_key": toolkit_key,
+    }
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/chat/{project_id}/permission",
+            json={"request_id": request_id, "approved": True, "remember": False},
+            headers={"Authorization": "Bearer valid-token"},
+        )
+
+    assert response.status_code == 200
+    assert response_queue.get_nowait() == "approve"
+    assert toolkit_key not in task_lock.remembered_approvals
+    remove(project_id)

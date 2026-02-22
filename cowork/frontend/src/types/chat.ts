@@ -144,6 +144,21 @@ export interface AskData {
   agent_id?: string
 }
 
+// ============ Tool Approval Types ============
+
+export type ApprovalTier = 'always_ask' | 'ask_once' | 'never_ask'
+
+export interface ToolApprovalData {
+  requestId: string
+  question: string        // Human-readable: "Allow Mycellium to create a file?"
+  detail?: string         // Context: "report.md in /workspace"
+  tier: ApprovalTier
+  toolkitName: string     // For "remember" feature key
+  methodName: string
+  projectId: string
+  status: 'pending' | 'approved' | 'denied'
+}
+
 export interface TaskStateData {
   task_id: string
   state: 'running' | 'completed' | 'failed' | 'paused'

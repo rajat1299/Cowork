@@ -11,6 +11,7 @@ import type {
   AgentInfo,
   NoticeData,
   AttachmentInfo,
+  ToolApprovalData,
 } from '../types/chat'
 import { generateId, createMessage, getStepLabel } from '../types/chat'
 import { isBlockedArtifact } from '../lib/artifacts'
@@ -157,6 +158,12 @@ interface ChatState {
 
   // Actions - Notice
   setNotice: (taskId: string, notice: NoticeData | null) => void
+
+  // Actions - Tool Approvals
+  pendingApprovals: Record<string, ToolApprovalData>
+  addApproval: (approval: ToolApprovalData) => void
+  resolveApproval: (requestId: string, status: 'approved' | 'denied') => void
+  removeApproval: (requestId: string) => void
 
   // Actions - Connection State
   setConnecting: (connecting: boolean) => void
@@ -663,6 +670,39 @@ export const useChatStore = create<ChatState>()(
               },
             },
           }
+        })
+      },
+
+      // Tool Approvals
+      pendingApprovals: {},
+
+      addApproval: (approval) => {
+        set((state) => ({
+          pendingApprovals: {
+            ...state.pendingApprovals,
+            [approval.requestId]: approval,
+          },
+        }))
+      },
+
+      resolveApproval: (requestId, status) => {
+        set((state) => {
+          const approval = state.pendingApprovals[requestId]
+          if (!approval) return state
+          return {
+            pendingApprovals: {
+              ...state.pendingApprovals,
+              [requestId]: { ...approval, status },
+            },
+          }
+        })
+      },
+
+      removeApproval: (requestId) => {
+        set((state) => {
+          const next = { ...state.pendingApprovals }
+          delete next[requestId]
+          return { pendingApprovals: next }
         })
       },
 

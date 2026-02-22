@@ -24,6 +24,8 @@ class TaskLock:
     global_memory_notes: list[dict[str, object]] = field(default_factory=list)
     background_tasks: set[asyncio.Task] = field(default_factory=set)
     human_input: dict[str, asyncio.Queue[str]] = field(default_factory=dict)
+    pending_approval_context: dict[str, dict[str, str]] = field(default_factory=dict)
+    remembered_approvals: set[str] = field(default_factory=set)
     workforce: Any | None = None
 
     async def put(self, item: Action) -> None:
