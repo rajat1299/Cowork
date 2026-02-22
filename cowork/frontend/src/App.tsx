@@ -1,12 +1,19 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { RouterProvider } from 'react-router-dom'
 import { router } from './router'
 import { useAuth, useOAuth } from './hooks'
 import { Toaster } from './components/ui/sonner'
+import { isDesktop } from './api/client'
+import DesktopSplash from './components/DesktopSplash'
 
 function App() {
   const { checkAuth } = useAuth()
   const { checkOAuthCallback } = useOAuth()
+  const [backendReady, setBackendReady] = useState(!isDesktop)
+
+  const handleBackendReady = useCallback(() => {
+    setBackendReady(true)
+  }, [])
 
   // Check for OAuth callback and auth state on mount
   useEffect(() => {
@@ -25,6 +32,11 @@ function App() {
 
     initAuth()
   }, [checkAuth, checkOAuthCallback])
+
+  // Show splash screen while desktop backend boots
+  if (!backendReady) {
+    return <DesktopSplash onReady={handleBackendReady} />
+  }
 
   return (
     <>

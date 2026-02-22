@@ -136,11 +136,17 @@ async function bootstrapAndCreateWindow(): Promise<void> {
 
   mainWindow = createMainWindow(ports)
 
-  if (startupError) {
-    mainWindow.webContents.once('did-finish-load', () => {
-      emitToRenderer('backend-error', { message: startupError?.message })
-    })
-  }
+  mainWindow.webContents.once('did-finish-load', () => {
+    if (ports) {
+      // Backend may become ready before the renderer subscribes, so replay once.
+      emitToRenderer('backend-ready', ports)
+      return
+    }
+
+    if (startupError) {
+      emitToRenderer('backend-error', { message: startupError.message })
+    }
+  })
 }
 
 app.whenReady().then(async () => {

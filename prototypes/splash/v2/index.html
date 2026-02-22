@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mycelium — Splash v2</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: #08090b;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  canvas { position: fixed; top: 0; left: 0; }
+
+  #status-wrap {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-bottom: 54px;
+    pointer-events: none;
+  }
+  #status {
+    font-size: 13px;
+    font-weight: 300;
+    letter-spacing: 0.16em;
+    text-transform: lowercase;
+    color: rgba(196, 155, 112, 0);
+    pointer-events: none;
+  }
+
+  #controls {
+    position: fixed;
+    top: 20px; right: 20px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  body:hover #controls { opacity: 1; }
+  #controls button {
+    padding: 7px 14px;
+    background: rgba(255,255,255,0.04);
+    color: rgba(196,155,112,0.6);
+    border: 1px solid rgba(196,149,106,0.1);
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    letter-spacing: 0.04em;
+    transition: background 0.2s, color 0.2s;
+  }
+  #controls button:hover {
+    background: rgba(255,255,255,0.08);
+    color: rgba(232,213,183,0.8);
+  }
+  #controls .label {
+    color: rgba(255,255,255,0.2);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 6px 0 2px;
+  }
+
+  #debug {
+    position: fixed; bottom: 8px; left: 8px;
+    color: rgba(255,100,100,0.6); font-size: 10px;
+    font-family: monospace; z-index: 200;
+    pointer-events: none; max-width: 50vw;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+
+<div id="status-wrap"><div id="status"></div></div>
+
+<div id="controls">
+  <div class="label">Mode</div>
+  <button id="btn-first">First Launch</button>
+  <button id="btn-return">Returning User</button>
+  <button id="btn-reset">Reset</button>
+  <div class="label">Jump</div>
+  <button id="btn-awaken">Awakening</button>
+  <button id="btn-bloom">Bloom</button>
+</div>
+
+<div id="debug"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@8.6.1/dist/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js"></script>
+<script>
+const dbg = document.getElementById('debug');
+function log(msg) { dbg.textContent = msg + '\n' + (dbg.textContent || '').slice(0, 400); }
+
+(async () => {
+'use strict';
+try {
+
+log('PixiJS ' + PIXI.VERSION + ' | GSAP ' + gsap.version);
+
+// ============================================================
+//  CONFIG
+// ============================================================
+const CFG = {
+  bg: 0x08090b,
+
+  threadDim:     0x26201a,
+  threadMid:     0x82603c,
+  threadBright:  0xc49b70,
+  threadHot:     0xe8d5b7,
+  nodeCore:      0xf0dcbe,
+  nodeHalo:      0xc4915f,
+
+  totalThreads:  250,
+  threadSegs:    14,
+  segMin:        12,
+  segMax:        52,
+  baseWidth:     0.5,
+  widthRange:    0.9,
+  wobble:        0.5,
+  depthLayers:   3,
+
+  maxNodes:      7,
+  nodeMinSep:    90,
+  nodeGlowR:     50,
+  nodeCoreR:     3,
+  nodePulseHz:   0.35,
+
+  maxPulses:     30,
+  pulseSpeed:    0.35,
+  pulseLen:      0.18,
+
+  sporeCount:    80,
+  sporeMinR:     0.3,
+  sporeMaxR:     1.8,
+  sporeDrift:    0.12,
+
+  bloomMs:       2000,
+  breathHz:      0.22,
+  breathAmp:     0.2,
+};
+
+const FIRST_TIME = [
+  { id:'silence',     text:'',                       ms:900,   thr:0,   nod:0 },
+  { id:'germinating', text:'germinating',             ms:2500,  thr:10,  nod:0 },
+  { id:'rooting',     text:'taking root',             ms:3000,  thr:35,  nod:0 },
+  { id:'spreading',   text:'spreading underground',   ms:3500,  thr:90,  nod:0 },
+  { id:'weaving',     text:'weaving the network',     ms:5000,  thr:200, nod:0 },
+  { id:'awakening',   text:'awakening',               ms:2800,  thr:250, nod:3 },
+  { id:'connecting',  text:'connecting',               ms:2200,  thr:250, nod:6 },
+  { id:'alive',       text:'',                        ms:1800,  thr:250, nod:7 },
+  { id:'bloom',       text:'',                        ms:2200,  thr:250, nod:7 },
+];
+
+const RETURNING = [
+  { id:'sleep',       text:'',           ms:500,  thr:250, nod:0, prebuilt:true },
+  { id:'awakening',   text:'awakening',  ms:2400, thr:250, nod:4 },
+  { id:'connecting',  text:'',           ms:1400, thr:250, nod:7 },
+  { id:'bloom',       text:'',           ms:1800, thr:250, nod:7 },
+];
+
+// ============================================================
+//  APP INIT
+// ============================================================
+const app = new PIXI.Application();
+await app.init({
+  resizeTo: window,
+  backgroundColor: CFG.bg,
+  antialias: true,
+  resolution: window.devicePixelRatio || 1,
+  autoDensity: true,
+});
+document.body.prepend(app.canvas);
+log('Canvas: ' + app.canvas.width + 'x' + app.canvas.height);
+
+let W = app.screen.width;
+let H = app.screen.height;
+let cx = W * 0.5;
+let cy = H * 0.46;
+let diag = Math.hypot(W, H);
+
+window.addEventListener('resize', () => {
+  W = app.screen.width; H = app.screen.height;
+  cx = W * 0.5; cy = H * 0.46;
+  diag = Math.hypot(W, H);
+});
+
+// ============================================================
+//  LAYERS
+// ============================================================
+const threadContainer = new PIXI.Container();
+const glowContainer   = new PIXI.Container();
+const pulseContainer  = new PIXI.Container();
+const nodeContainer   = new PIXI.Container();
+const sporeContainer  = new PIXI.Container();
+const bloomContainer  = new PIXI.Container();
+
+app.stage.addChild(threadContainer, glowContainer, pulseContainer, nodeContainer, sporeContainer, bloomContainer);
+
+// Apply blur to glow layer
+try {
+  const blur = new PIXI.BlurFilter();
+  blur.blur = 6;
+  blur.quality = 3;
+  glowContainer.filters = [blur];
+  log('BlurFilter applied');
+} catch(e) {
+  log('BlurFilter failed: ' + e.message);
+}
+glowContainer.alpha = 0.45;
+
+// ============================================================
+//  HELPERS
+// ============================================================
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const rand  = (lo, hi) => lo + Math.random() * (hi - lo);
+const pick  = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+function hexLerp(a, b, t) {
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+  const br = (b >> 16) & 0xff, bg_ = (b >> 8) & 0xff, bb = b & 0xff;
+  return (Math.round(lerp(ar, br, t)) << 16) |
+         (Math.round(lerp(ag, bg_, t)) << 8) |
+          Math.round(lerp(ab, bb, t));
+}
+
+function bezPt(seg, t) {
+  const m = 1 - t;
+  return {
+    x: m*m*seg.x1 + 2*m*t*seg.cx + t*t*seg.x2,
+    y: m*m*seg.y1 + 2*m*t*seg.cy + t*t*seg.y2,
+  };
+}
+
+// ============================================================
+//  NETWORK DATA
+// ============================================================
+let threads = [];
+let nodes   = [];
+let pulses  = [];
+let spores  = [];
+
+function makeThread(sx, sy, angle, layer) {
+  const segs = [];
+  let x = sx, y = sy, a = angle;
+  const n = CFG.threadSegs + Math.floor(rand(-3, 4));
+  const w = CFG.baseWidth + Math.random() * CFG.widthRange;
+
+  for (let i = 0; i < n; i++) {
+    const len = rand(CFG.segMin, CFG.segMax) * (diag / 1900);
+    a += (Math.random() - 0.5) * CFG.wobble;
+    const dxc = cx - x, dyc = cy - y;
+    if (Math.hypot(dxc, dyc) > diag * 0.18) a += Math.atan2(dyc, dxc) * 0.025;
+    const ex = x + Math.cos(a) * len;
+    const ey = y + Math.sin(a) * len;
+    const cpOff = len * rand(0.15, 0.45);
+    const cpA = a + rand(-0.9, 0.9);
+    segs.push({
+      x1: x, y1: y,
+      cx: (x + ex)/2 + Math.cos(cpA) * cpOff,
+      cy: (y + ey)/2 + Math.sin(cpA) * cpOff,
+      x2: ex, y2: ey,
+    });
+    x = ex; y = ey;
+  }
+
+  return {
+    segs, w, layer,
+    grow: 0, opacity: 0,
+    gfxMain: new PIXI.Graphics(),
+    gfxGlow: new PIXI.Graphics(),
+    dirty: true,
+  };
+}
+
+function buildNetwork(count) {
+  // Clean up old
+  for (const t of threads) {
+    t.gfxMain.destroy();
+    t.gfxGlow.destroy();
+  }
+  threadContainer.removeChildren();
+  glowContainer.removeChildren();
+  threads = [];
+
+  const spread = diag * 0.03;
+  const origins = [];
+  for (let i = 0; i < 5; i++) origins.push({ x: cx + rand(-spread, spread), y: cy + rand(-spread, spread) });
+
+  const init = Math.min(count, 14);
+  for (let i = 0; i < init; i++) {
+    const o = pick(origins);
+    threads.push(makeThread(o.x, o.y, (Math.PI * 2 * i / init) + rand(-0.3, 0.3), Math.floor(rand(0, CFG.depthLayers))));
+  }
+
+  let attempts = 0;
+  while (threads.length < count && attempts < count * 5) {
+    attempts++;
+    const parent = pick(threads);
+    const si = Math.floor(rand(1, parent.segs.length));
+    const seg = parent.segs[Math.min(si, parent.segs.length - 1)];
+    const bp = bezPt(seg, rand(0.25, 0.85));
+    const pad = diag * 0.04;
+    if (bp.x < pad || bp.x > W - pad || bp.y < pad || bp.y > H - pad) continue;
+    if (Math.hypot(bp.x - cx, bp.y - cy) > diag * 0.4) continue;
+    const base = Math.atan2(seg.y2 - seg.y1, seg.x2 - seg.x1);
+    const layer = Math.min(parent.layer + (Math.random() > 0.55 ? 1 : 0), CFG.depthLayers - 1);
+    threads.push(makeThread(bp.x, bp.y, base + rand(-1.1, 1.1), layer));
+  }
+
+  // Add to stage
+  for (const t of threads) {
+    threadContainer.addChild(t.gfxMain);
+    glowContainer.addChild(t.gfxGlow);
+  }
+  log('Network built: ' + threads.length + ' threads');
+}
+
+function placeNodes(count) {
+  for (const n of nodes) { if (n.gfxCore) n.gfxCore.destroy(); if (n.gfxHalo) n.gfxHalo.destroy(); }
+  nodeContainer.removeChildren();
+  nodes = [];
+
+  const pts = [];
+  for (const t of threads) {
+    for (let i = 2; i < t.segs.length - 1; i++) {
+      const s = t.segs[i];
+      const d = Math.hypot(s.x2 - cx, s.y2 - cy);
+      if (d < diag * 0.28) pts.push({ x: s.x2, y: s.y2, score: 1 / (d + 40) });
+    }
+  }
+  pts.sort((a, b) => b.score - a.score);
+
+  for (const p of pts) {
+    if (nodes.length >= count) break;
+    if (nodes.some(n => Math.hypot(n.x - p.x, n.y - p.y) < CFG.nodeMinSep)) continue;
+    const gfxHalo = new PIXI.Graphics();
+    const gfxCore = new PIXI.Graphics();
+    nodeContainer.addChild(gfxHalo, gfxCore);
+    nodes.push({ x: p.x, y: p.y, phase: rand(0, Math.PI * 2), active: 0, gfxCore, gfxHalo });
+  }
+  log('Nodes placed: ' + nodes.length);
+}
+
+function initSpores() {
+  for (const s of spores) { if (s.gfx) s.gfx.destroy(); }
+  sporeContainer.removeChildren();
+  spores = [];
+  for (let i = 0; i < CFG.sporeCount; i++) {
+    const gfx = new PIXI.Graphics();
+    sporeContainer.addChild(gfx);
+    spores.push({
+      x: rand(0, W), y: rand(0, H),
+      r: rand(CFG.sporeMinR, CFG.sporeMaxR),
+      vx: rand(-CFG.sporeDrift, CFG.sporeDrift),
+      vy: rand(-CFG.sporeDrift, CFG.sporeDrift) - 0.04,
+      phase: rand(0, Math.PI * 2),
+      hz: rand(0.08, 0.35),
+      gfx,
+    });
+  }
+}
+
+// ============================================================
+//  DRAW FUNCTIONS
+// ============================================================
+
+let bloomGfx = null;
+
+function drawThreads(brightness, bloomFactor) {
+  for (const t of threads) {
+    const g = t.gfxMain;
+    const gg = t.gfxGlow;
+
+    if (t.grow <= 0 || t.opacity <= 0) {
+      g.clear(); gg.clear();
+      continue;
+    }
+
+    const n = t.segs.length;
+    const shown = t.grow * n;
+    const layerDim = 1 - t.layer * 0.18;
+    const b = clamp(t.opacity * brightness * layerDim, 0, 1);
+    const alpha = (0.15 + b * 0.65) * (0.75 + bloomFactor * 0.25);
+    const w = t.w * (0.35 + b * 0.65) * (1 + t.layer * 0.08);
+
+    const col = b < 0.35
+      ? hexLerp(CFG.threadDim, CFG.threadMid, b / 0.35)
+      : hexLerp(CFG.threadMid, CFG.threadBright, clamp((b - 0.35) / 0.65, 0, 1));
+
+    // Main thread
+    g.clear();
+    g.moveTo(t.segs[0].x1, t.segs[0].y1);
+    for (let j = 0; j < Math.ceil(shown); j++) {
+      const seg = t.segs[j];
+      if (!seg) break;
+      const frac = clamp(shown - j, 0, 1);
+      if (frac < 1) {
+        const steps = 10;
+        const maxS = Math.max(1, Math.floor(steps * frac));
+        for (let s = 1; s <= maxS; s++) {
+          const pt = bezPt(seg, s / steps);
+          g.lineTo(pt.x, pt.y);
+        }
+      } else {
+        g.quadraticCurveTo(seg.cx, seg.cy, seg.x2, seg.y2);
+      }
+    }
+    g.stroke({ width: w, color: col, alpha: alpha, cap: 'round', join: 'round' });
+
+    // Glow copy (thicker, for blur layer)
+    if (b > 0.2) {
+      gg.clear();
+      gg.moveTo(t.segs[0].x1, t.segs[0].y1);
+      for (let j = 0; j < Math.min(Math.ceil(shown), n); j++) {
+        const seg = t.segs[j];
+        gg.quadraticCurveTo(seg.cx, seg.cy, seg.x2, seg.y2);
+      }
+      const glowCol = hexLerp(CFG.threadMid, CFG.threadBright, clamp((b - 0.2) / 0.8, 0, 1));
+      gg.stroke({
+        width: w * 4 + bloomFactor * 3,
+        color: glowCol,
+        alpha: b * 0.3 * (1 + bloomFactor * 0.4),
+        cap: 'round',
+      });
+    } else {
+      gg.clear();
+    }
+  }
+}
+
+function drawPulses() {
+  // Reuse a single graphics for all pulses (cheaper than creating/destroying per frame)
+  pulseContainer.removeChildren();
+
+  for (const p of pulses) {
+    const t = threads[p.ti];
+    if (!t || t.grow < 0.3) continue;
+
+    const n = t.segs.length;
+    const head = p.pos / n;
+    const tail = head - CFG.pulseLen;
+
+    const g = new PIXI.Graphics();
+
+    for (let j = 0; j < n; j++) {
+      const s0 = j / n, s1 = (j + 1) / n;
+      if (s1 < tail || s0 > head) continue;
+
+      const seg = t.segs[j];
+      const from = clamp((tail - s0) / (s1 - s0), 0, 1);
+      const to   = clamp((head - s0) / (s1 - s0), 0, 1);
+
+      let first = true;
+      const steps = 8;
+      for (let s = Math.floor(from * steps); s <= Math.ceil(to * steps); s++) {
+        const pt = bezPt(seg, clamp(s / steps, 0, 1));
+        if (first) { g.moveTo(pt.x, pt.y); first = false; }
+        else g.lineTo(pt.x, pt.y);
+      }
+
+      const localT = clamp((head - s0) / CFG.pulseLen, 0, 1);
+      const fade = Math.sin(localT * Math.PI);
+      g.stroke({ width: t.w * 3, color: CFG.threadHot, alpha: fade * p.inten * 0.7, cap: 'round' });
+    }
+
+    pulseContainer.addChild(g);
+  }
+}
+
+function drawNodes(time) {
+  for (const nd of nodes) {
+    if (nd.active <= 0) { nd.gfxCore.clear(); nd.gfxHalo.clear(); continue; }
+
+    const pulse = Math.sin(nd.phase + time * CFG.nodePulseHz * Math.PI * 2) * 0.3 + 0.7;
+    const inten = nd.active * pulse;
+
+    nd.gfxHalo.clear();
+    nd.gfxHalo.circle(nd.x, nd.y, CFG.nodeGlowR * inten);
+    nd.gfxHalo.fill({ color: CFG.nodeHalo, alpha: 0.1 * inten });
+    nd.gfxHalo.circle(nd.x, nd.y, CFG.nodeGlowR * 0.4 * inten);
+    nd.gfxHalo.fill({ color: CFG.nodeCore, alpha: 0.15 * inten });
+
+    nd.gfxCore.clear();
+    nd.gfxCore.circle(nd.x, nd.y, CFG.nodeCoreR * (0.5 + inten * 0.5));
+    nd.gfxCore.fill({ color: CFG.nodeCore, alpha: inten * 0.9 });
+    nd.gfxCore.circle(nd.x, nd.y, CFG.nodeCoreR * 2 * inten);
+    nd.gfxCore.stroke({ width: 0.5, color: CFG.nodeCore, alpha: inten * 0.15 });
+  }
+}
+
+function drawSpores(time) {
+  for (const s of spores) {
+    const blink = Math.sin(s.phase + time * s.hz * Math.PI * 2) * 0.5 + 0.5;
+    const a = blink * 0.5;
+    if (a < 0.03) { s.gfx.clear(); continue; }
+    const col = hexLerp(CFG.threadDim, CFG.threadMid, blink);
+    s.gfx.clear();
+    s.gfx.circle(s.x, s.y, s.r);
+    s.gfx.fill({ color: col, alpha: a });
+  }
+}
+
+function drawBloom(progress) {
+  if (!bloomGfx) {
+    bloomGfx = new PIXI.Graphics();
+    bloomContainer.addChild(bloomGfx);
+  }
+  bloomGfx.clear();
+  if (progress <= 0) return;
+
+  const e = 1 - Math.pow(1 - progress, 3);
+  const r = diag * 0.45 * e;
+  const a = progress < 0.35
+    ? (progress / 0.35) * 0.15
+    : lerp(0.15, 0, clamp((progress - 0.35) / 0.65, 0, 1));
+
+  bloomGfx.circle(cx, cy, r);
+  bloomGfx.fill({ color: CFG.threadHot, alpha: a * 0.5 });
+  bloomGfx.circle(cx, cy, r * 0.55);
+  bloomGfx.fill({ color: CFG.threadBright, alpha: a * 0.35 });
+  bloomGfx.circle(cx, cy, r * 0.2);
+  bloomGfx.fill({ color: CFG.nodeCore, alpha: a * 0.25 });
+}
+
+// ============================================================
+//  STATE
+// ============================================================
+let currentStages = [];
+let stageIdx = 0;
+let targetThr = 0;
+let targetNod = 0;
+let isBloom = false;
+let bloomProg = 0;
+let isPrebuilt = false;
+let breathPhase = 0;
+let globalTime = 0;
+let running = false;
+let timeline = null;
+const statusEl = document.getElementById('status');
+
+function setStatus(text) {
+  if (!text) {
+    gsap.to(statusEl, { color: 'rgba(196,155,112,0)', y: -5, duration: 0.8, ease: 'power2.in' });
+    return;
+  }
+  gsap.to(statusEl, {
+    color: 'rgba(196,155,112,0)', y: -3, duration: 0.25, ease: 'power2.in',
+    onComplete: () => {
+      statusEl.textContent = text;
+      gsap.fromTo(statusEl,
+        { color: 'rgba(196,155,112,0)', y: 6 },
+        { color: 'rgba(196,155,112,0.5)', y: 0, duration: 1.0, ease: 'power3.out' }
+      );
+    }
+  });
+}
+
+function enterStage(idx) {
+  if (idx >= currentStages.length) return;
+  stageIdx = idx;
+  const s = currentStages[idx];
+  targetThr = s.thr;
+  targetNod = s.nod;
+  if (s.id === 'bloom') { isBloom = true; bloomProg = 0; }
+  setStatus(s.text);
+  log('Stage: ' + s.id + ' (thr=' + s.thr + ' nod=' + s.nod + ')');
+
+  if (s.prebuilt && threads.length === 0) {
+    buildNetwork(CFG.totalThreads);
+    for (const t of threads) { t.grow = 1; t.opacity = 0.12; }
+    isPrebuilt = true;
+    initSpores();
+  }
+}
+
+function makeTimeline(stages) {
+  if (timeline) timeline.kill();
+  timeline = gsap.timeline({ onComplete: () => setStatus('') });
+  let t = 0;
+  for (let i = 0; i < stages.length; i++) {
+    timeline.call(() => enterStage(i), [], t / 1000);
+    t += stages[i].ms;
+  }
+}
+
+// ============================================================
+//  TICK
+// ============================================================
+app.ticker.add((ticker) => {
+  if (!running) return;
+
+  const dt = ticker.deltaTime;
+  const dtSec = ticker.deltaMS / 1000;
+  globalTime += dtSec;
+
+  // Grow threads
+  if (threads.length < targetThr && threads.length === 0) {
+    buildNetwork(targetThr);
+    initSpores();
+  }
+
+  for (let i = 0; i < threads.length; i++) {
+    const t = threads[i];
+    if (i < targetThr) {
+      const delay = (i / Math.max(targetThr, 1)) * 0.35;
+      const speed = t.grow > delay ? 0.012 : 0.002;
+      t.grow = clamp(t.grow + speed * dt, 0, 1);
+      t.opacity = clamp(t.opacity + 0.01 * dt, 0, 1);
+    }
+  }
+
+  // Nodes
+  if (targetNod > 0 && nodes.length < targetNod) placeNodes(targetNod);
+  for (const n of nodes) n.active = clamp(n.active + 0.006 * dt, 0, 1);
+
+  // Pulses
+  if (nodes.some(n => n.active > 0.25) && Math.random() < 0.07) {
+    if (pulses.length < CFG.maxPulses) {
+      const ready = threads.filter(t => t.grow > 0.6);
+      if (ready.length) {
+        const t = pick(ready);
+        pulses.push({ ti: threads.indexOf(t), pos: -CFG.pulseLen * t.segs.length, inten: rand(0.3, 1) });
+      }
+    }
+  }
+  for (let i = pulses.length - 1; i >= 0; i--) {
+    const t = threads[pulses[i].ti];
+    if (!t) { pulses.splice(i, 1); continue; }
+    pulses[i].pos += CFG.pulseSpeed * dt;
+    if (pulses[i].pos > t.segs.length * 1.3) pulses.splice(i, 1);
+  }
+
+  // Spores
+  for (const s of spores) {
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    if (s.x < -20) s.x = W + 20; if (s.x > W + 20) s.x = -20;
+    if (s.y < -20) s.y = H + 20; if (s.y > H + 20) s.y = -20;
+  }
+
+  // Bloom
+  if (isBloom) bloomProg = clamp(bloomProg + dtSec / (CFG.bloomMs / 1000), 0, 1);
+
+  // Breathing
+  if (isPrebuilt) {
+    breathPhase += CFG.breathHz * dtSec * Math.PI * 2;
+    const bv = Math.sin(breathPhase) * CFG.breathAmp;
+    for (const t of threads) t.opacity = clamp(0.12 + bv * 0.08, 0.04, 0.25);
+    if (targetNod > 0) {
+      isPrebuilt = false;
+      for (const t of threads) t.opacity = 0.4;
+    }
+  }
+
+  // ---- DRAW ----
+  const brightness = isBloom
+    ? 0.6 + bloomProg * 0.4
+    : clamp(0.06 + (targetNod / CFG.maxNodes) * 0.6, 0.06, 0.65);
+  const bf = isBloom ? 1 - Math.pow(1 - bloomProg, 3) : 0;
+
+  drawThreads(brightness, bf);
+  drawPulses();
+  drawNodes(globalTime);
+  drawSpores(globalTime);
+  if (isBloom) drawBloom(bloomProg);
+
+  // Glow intensification during bloom
+  glowContainer.alpha = 0.45 + (isBloom ? bloomProg * 0.3 : 0);
+
+  // Final fade
+  if (bloomProg > 0.8) app.stage.alpha = 1 - ((bloomProg - 0.8) / 0.2) * 0.7;
+});
+
+// ============================================================
+//  CONTROLS
+// ============================================================
+function resetAll() {
+  running = false;
+  if (timeline) timeline.kill();
+  gsap.killTweensOf(statusEl);
+
+  for (const t of threads) { t.gfxMain.destroy(); t.gfxGlow.destroy(); }
+  for (const n of nodes) { n.gfxCore.destroy(); n.gfxHalo.destroy(); }
+  for (const s of spores) { s.gfx.destroy(); }
+  if (bloomGfx) { bloomGfx.destroy(); bloomGfx = null; }
+
+  threadContainer.removeChildren();
+  glowContainer.removeChildren();
+  pulseContainer.removeChildren();
+  nodeContainer.removeChildren();
+  sporeContainer.removeChildren();
+  bloomContainer.removeChildren();
+
+  threads = []; nodes = []; pulses = []; spores = [];
+  stageIdx = 0; targetThr = 0; targetNod = 0;
+  bloomProg = 0; isBloom = false; isPrebuilt = false;
+  breathPhase = 0; globalTime = 0;
+  app.stage.alpha = 1;
+  glowContainer.alpha = 0.45;
+  statusEl.textContent = '';
+  statusEl.style.color = 'rgba(196,155,112,0)';
+  log('Reset');
+}
+
+function runFirstTime() {
+  resetAll();
+  currentStages = FIRST_TIME;
+  makeTimeline(FIRST_TIME);
+  running = true;
+  log('Running: First Launch');
+}
+
+function runReturning() {
+  resetAll();
+  currentStages = RETURNING;
+  makeTimeline(RETURNING);
+  running = true;
+  log('Running: Returning User');
+}
+
+function skipToStage(id) {
+  resetAll();
+  currentStages = FIRST_TIME;
+  const idx = FIRST_TIME.findIndex(s => s.id === id);
+  if (idx < 0) return;
+  for (let i = 0; i <= idx; i++) { targetThr = FIRST_TIME[i].thr; targetNod = FIRST_TIME[i].nod; }
+  buildNetwork(targetThr);
+  for (const t of threads) { t.grow = 1; t.opacity = 0.55; }
+  placeNodes(targetNod);
+  for (const n of nodes) n.active = 1;
+  initSpores();
+  if (id === 'bloom') { isBloom = true; bloomProg = 0; }
+  stageIdx = idx;
+  setStatus(FIRST_TIME[idx].text);
+  running = true;
+  log('Skipped to: ' + id);
+}
+
+document.getElementById('btn-first').onclick = runFirstTime;
+document.getElementById('btn-return').onclick = runReturning;
+document.getElementById('btn-reset').onclick = resetAll;
+document.getElementById('btn-awaken').onclick = () => skipToStage('awakening');
+document.getElementById('btn-bloom').onclick = () => skipToStage('bloom');
+
+log('Ready — hover top-right for controls');
+
+} catch(e) {
+  log('FATAL: ' + e.message + '\n' + e.stack);
+  console.error(e);
+}
+})();
+</script>
+</body>
+</html>

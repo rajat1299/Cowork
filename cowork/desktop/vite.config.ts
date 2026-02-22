@@ -10,6 +10,8 @@ import pkg from './package.json'
 const desktopRoot = __dirname
 const frontendRoot = path.resolve(desktopRoot, '../frontend')
 
+// Vite + PostCSS + Tailwind need cwd to be the frontend root to resolve configs.
+// The electron plugin's onstart below compensates by passing the absolute entry path.
 if (process.cwd() !== frontendRoot) {
   process.chdir(frontendRoot)
 }
@@ -27,6 +29,11 @@ export default defineConfig(({ command }) => {
       electron({
         main: {
           entry: path.resolve(desktopRoot, 'electron/main/index.ts'),
+          onstart({ startup }) {
+            // Pass the absolute path to the built entry so Electron doesn't
+            // look for package.json in cwd (which is frontendRoot, not desktopRoot).
+            startup([path.resolve(desktopRoot, 'dist-electron/main/index.js')])
+          },
           vite: {
             build: {
               sourcemap: isServe,

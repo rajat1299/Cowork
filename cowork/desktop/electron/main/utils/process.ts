@@ -52,7 +52,24 @@ export function getDesktopAppPath(): string {
 }
 
 export function getRepoRootPath(): string {
-  return path.resolve(getDesktopAppPath(), '..')
+  const appPath = getDesktopAppPath()
+  const candidates = [
+    appPath,
+    path.resolve(appPath, '..'),
+    path.resolve(appPath, '..', '..'),
+    path.resolve(appPath, '..', '..', '..'),
+  ]
+
+  for (const candidate of candidates) {
+    const hasCoreApi = existsSync(path.join(candidate, 'core_api'))
+    const hasOrchestrator = existsSync(path.join(candidate, 'orchestrator'))
+    const hasShared = existsSync(path.join(candidate, 'shared'))
+    if (hasCoreApi && hasOrchestrator && hasShared) {
+      return candidate
+    }
+  }
+
+  return path.resolve(appPath, '..')
 }
 
 export function getServicePath(service: ServiceName): string {

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>PixiJS 8 API Test</title></head>
+<body style="margin:0;background:#000">
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@8.6.1/dist/pixi.min.js"></script>
+<script>
+(async () => {
+  try {
+    console.log('PIXI version:', PIXI.VERSION);
+    console.log('PIXI keys:', Object.keys(PIXI).slice(0, 30));
+
+    const app = new PIXI.Application();
+    await app.init({
+      resizeTo: window,
+      backgroundColor: 0x111111,
+      antialias: true,
+    });
+    document.body.appendChild(app.canvas);
+    console.log('App created, canvas added');
+
+    // Test 1: Simple Graphics line
+    const g1 = new PIXI.Graphics();
+    console.log('Graphics methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(g1)).filter(m => !m.startsWith('_')).sort().join(', '));
+
+    // Try v8 chained API
+    g1.moveTo(100, 100);
+    g1.lineTo(400, 300);
+    g1.stroke({ width: 3, color: 0xff0000 });
+    app.stage.addChild(g1);
+    console.log('Test 1 (lineTo+stroke): drawn');
+
+    // Test 2: quadraticCurveTo
+    const g2 = new PIXI.Graphics();
+    g2.moveTo(100, 200);
+    g2.quadraticCurveTo(250, 100, 400, 200);
+    g2.stroke({ width: 2, color: 0x00ff00 });
+    app.stage.addChild(g2);
+    console.log('Test 2 (quadraticCurveTo): drawn');
+
+    // Test 3: circle + fill
+    const g3 = new PIXI.Graphics();
+    g3.circle(300, 400, 50);
+    g3.fill({ color: 0x0088ff, alpha: 0.5 });
+    app.stage.addChild(g3);
+    console.log('Test 3 (circle+fill): drawn');
+
+    // Test 4: BlurFilter
+    try {
+      const blur = new PIXI.BlurFilter({ strength: 4 });
+      console.log('BlurFilter (strength obj):', blur);
+    } catch(e) {
+      console.log('BlurFilter {strength} failed:', e.message);
+      try {
+        const blur2 = new PIXI.BlurFilter(4);
+        console.log('BlurFilter (number arg):', blur2);
+      } catch(e2) {
+        console.log('BlurFilter (number) failed:', e2.message);
+      }
+    }
+
+    // Test 5: blendMode
+    const g4 = new PIXI.Graphics();
+    g4.circle(350, 400, 40);
+    g4.fill({ color: 0xff8800, alpha: 0.5 });
+    g4.blendMode = 'add';
+    app.stage.addChild(g4);
+    console.log('Test 5 (blendMode add string):', g4.blendMode);
+
+    console.log('ALL TESTS PASSED');
+  } catch(e) {
+    console.error('FATAL:', e);
+    document.body.innerHTML = '<pre style="color:red;padding:20px">' + e.stack + '</pre>';
+  }
+})();
+</script>
+</body>
+</html>

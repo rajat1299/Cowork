@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mycelium — Splash</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: #08090b;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Canvases ---- */
+  canvas {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+  }
+  #bg    { z-index: 0; }
+  #main  { z-index: 1; }
+  #glow  { z-index: 2; pointer-events: none; }
+  #spore { z-index: 3; pointer-events: none; }
+
+  /* ---- Status text ---- */
+  #status-wrap {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-bottom: 52px;
+    pointer-events: none;
+  }
+  #status {
+    font-size: 13px;
+    font-weight: 300;
+    letter-spacing: 0.14em;
+    text-transform: lowercase;
+    color: rgba(196, 155, 112, 0);
+    transition: color 1.2s cubic-bezier(0.25, 0.1, 0.25, 1),
+                transform 0.8s cubic-bezier(0.25, 0.1, 0.25, 1);
+    transform: translateY(6px);
+  }
+  #status.visible {
+    color: rgba(196, 155, 112, 0.55);
+    transform: translateY(0);
+  }
+  #status.fade {
+    color: rgba(196, 155, 112, 0);
+    transform: translateY(-4px);
+  }
+
+  /* ---- Controls ---- */
+  #controls {
+    position: fixed;
+    top: 20px; right: 20px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  body:hover #controls { opacity: 1; }
+  #controls button {
+    padding: 7px 14px;
+    background: rgba(255,255,255,0.04);
+    color: rgba(196,155,112,0.6);
+    border: 1px solid rgba(196,149,106,0.1);
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    letter-spacing: 0.04em;
+    transition: background 0.2s, color 0.2s;
+  }
+  #controls button:hover {
+    background: rgba(255,255,255,0.08);
+    color: rgba(232,213,183,0.8);
+  }
+  #controls .label {
+    color: rgba(255,255,255,0.2);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 6px 0 2px;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="bg"></canvas>
+<canvas id="main"></canvas>
+<canvas id="glow"></canvas>
+<canvas id="spore"></canvas>
+
+<div id="status-wrap">
+  <div id="status"></div>
+</div>
+
+<div id="controls">
+  <div class="label">Mode</div>
+  <button onclick="runFirstTime()">First Launch</button>
+  <button onclick="runReturning()">Returning User</button>
+  <button onclick="resetAll()">Reset</button>
+  <div class="label">Jump</div>
+  <button onclick="skipToStage('awakening')">Awakening</button>
+  <button onclick="skipToStage('bloom')">Bloom</button>
+</div>
+
+<script>
+// ============================================================
+//  MYCELIUM SPLASH — FULL-SCREEN PROTOTYPE
+// ============================================================
+
+// ---- Tunables ----
+const C = {
+  // Palette
+  bg: [8, 9, 11],
+  threadDim:    [38, 32, 26],     // dormant
+  threadMid:    [130, 95, 60],    // growing
+  threadBright: [196, 155, 112],  // active
+  threadHot:    [232, 213, 183],  // pulse peaks
+  nodeCore:     [240, 220, 190],
+  nodeHalo:     [196, 145, 95],
+
+  // Network
+  totalThreads:    220,
+  threadSegs:      12,
+  segMinLen:       15,
+  segMaxLen:       55,
+  threadBaseWidth:  0.6,
+  threadWidthRange: 0.8,
+  growSpeed:        0.012,
+  wobble:           0.55,
+
+  // Depth layers (threads get assigned to layers for parallax glow)
+  depthLayers: 3,
+
+  // Nodes
+  maxNodes:        7,
+  nodeMinSep:      80,
+  nodeGlowR:       45,
+  nodeCoreR:       2.8,
+  nodePulseHz:     0.4,
+
+  // Pulses
+  maxPulses:       25,
+  pulseSpeed:      0.006,
+  pulseLen:        0.15,
+  pulseGlowR:      18,
+  pulseSpawnRate:  0.07,
+
+  // Spores (floating particles)
+  sporeCount:      60,
+  sporeMinR:       0.4,
+  sporeMaxR:       1.6,
+  sporeDrift:      0.15,
+  sporeAlpha:      0.25,
+
+  // Bloom
+  bloomMs:         1800,
+
+  // Breathing
+  breathHz:        0.25,
+  breathAmp:       0.18,
+};
+
+// ---- Boot stages ----
+const FIRST_TIME = [
+  { id:'silence',     text:'',                         ms:1000,  thr:0,    nod:0 },
+  { id:'germinating', text:'germinating',              ms:2500,  thr:8,    nod:0 },
+  { id:'rooting',     text:'taking root',              ms:3000,  thr:30,   nod:0 },
+  { id:'spreading',   text:'spreading underground',    ms:3500,  thr:80,   nod:0 },
+  { id:'weaving',     text:'weaving the network',      ms:5000,  thr:180,  nod:0 },
+  { id:'awakening',   text:'awakening',                ms:2500,  thr:220,  nod:3 },
+  { id:'connecting',  text:'connecting',               ms:2000,  thr:220,  nod:6 },
+  { id:'alive',       text:'',                         ms:1800,  thr:220,  nod:7 },
+  { id:'bloom',       text:'',                         ms:2000,  thr:220,  nod:7 },
+];
+
+const RETURNING = [
+  { id:'sleep',       text:'',            ms:600,  thr:220, nod:0, prebuilt:true },
+  { id:'awakening',   text:'awakening',   ms:2200, thr:220, nod:4 },
+  { id:'connecting',  text:'',            ms:1400, thr:220, nod:7 },
+  { id:'bloom',       text:'',            ms:1600, thr:220, nod:7 },
+];
+
+// ============================================================
+//  CANVAS SETUP
+// ============================================================
+const bgCanvas    = document.getElementById('bg');
+const mainCanvas  = document.getElementById('main');
+const glowCanvas  = document.getElementById('glow');
+const sporeCanvas = document.getElementById('spore');
+
+const bgCtx    = bgCanvas.getContext('2d');
+const mainCtx  = mainCanvas.getContext('2d');
+const glowCtx  = glowCanvas.getContext('2d');
+const sporeCtx = sporeCanvas.getContext('2d');
+
+const statusEl = document.getElementById('status');
+
+let W, H, cx, cy, dpr;
+let diag; // viewport diagonal for scaling
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  cx = W * 0.5;
+  cy = H * 0.48; // slightly above center — feels more grounded
+  diag = Math.hypot(W, H);
+
+  for (const cvs of [bgCanvas, mainCanvas, glowCanvas, sporeCanvas]) {
+    cvs.width  = W * dpr;
+    cvs.height = H * dpr;
+    cvs.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ============================================================
+//  MATH HELPERS
+// ============================================================
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const rand  = (lo, hi) => lo + Math.random() * (hi - lo);
+const pick  = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+function easeInOutQuad(t) { return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2; }
+
+function rgb(c, a) { return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+function lerpColor(a, b, t) {
+  return [
+    Math.round(lerp(a[0], b[0], t)),
+    Math.round(lerp(a[1], b[1], t)),
+    Math.round(lerp(a[2], b[2], t)),
+  ];
+}
+
+// Quadratic bezier point
+function bezPt(seg, t) {
+  const m = 1 - t;
+  return {
+    x: m*m*seg.x1 + 2*m*t*seg.cx + t*t*seg.x2,
+    y: m*m*seg.y1 + 2*m*t*seg.cy + t*t*seg.y2,
+  };
+}
+
+// ============================================================
+//  NETWORK GENERATION
+// ============================================================
+let threads = [];
+let nodes   = [];
+let pulses  = [];
+let spores  = [];
+
+function makeThread(sx, sy, angle, layer) {
+  const segs = [];
+  let x = sx, y = sy, a = angle;
+  const n = C.threadSegs + Math.floor(rand(-3, 4));
+  const w = C.threadBaseWidth + Math.random() * C.threadWidthRange;
+
+  for (let i = 0; i < n; i++) {
+    const len = rand(C.segMinLen, C.segMaxLen) * (diag / 1800);
+    a += (Math.random() - 0.5) * C.wobble;
+
+    // Slight gravity toward center on outer threads
+    const dxc = cx - x, dyc = cy - y;
+    const distC = Math.hypot(dxc, dyc);
+    if (distC > diag * 0.2) {
+      a += Math.atan2(dyc, dxc) * 0.03;
+    }
+
+    const ex = x + Math.cos(a) * len;
+    const ey = y + Math.sin(a) * len;
+    const cpOff = len * rand(0.2, 0.5);
+    const cpA   = a + rand(-1.0, 1.0);
+    const cx2   = (x + ex) / 2 + Math.cos(cpA) * cpOff;
+    const cy2   = (y + ey) / 2 + Math.sin(cpA) * cpOff;
+
+    segs.push({ x1:x, y1:y, cx:cx2, cy:cy2, x2:ex, y2:ey });
+    x = ex; y = ey;
+  }
+
+  return {
+    segs, w, layer,
+    grow: 0,      // 0..1
+    opacity: 0,
+    tip: { x: sx, y: sy },
+  };
+}
+
+function buildNetwork(count) {
+  threads = [];
+  const spread = diag * 0.03;
+
+  // Seed origins near center
+  const origins = [];
+  for (let i = 0; i < 5; i++) {
+    origins.push({
+      x: cx + rand(-spread, spread),
+      y: cy + rand(-spread, spread),
+    });
+  }
+
+  // Initial radial burst
+  const initialCount = Math.min(count, 12);
+  for (let i = 0; i < initialCount; i++) {
+    const o = pick(origins);
+    const a = (Math.PI * 2 * i / initialCount) + rand(-0.3, 0.3);
+    const layer = Math.floor(rand(0, C.depthLayers));
+    threads.push(makeThread(o.x, o.y, a, layer));
+  }
+
+  // Branch from existing
+  let attempts = 0;
+  while (threads.length < count && attempts < count * 4) {
+    attempts++;
+    const parent = pick(threads);
+    const si = Math.floor(rand(1, parent.segs.length));
+    const seg = parent.segs[Math.min(si, parent.segs.length - 1)];
+    const t = rand(0.3, 0.9);
+    const bp = bezPt(seg, t);
+
+    // Keep within bounds
+    const edgePad = diag * 0.05;
+    if (bp.x < edgePad || bp.x > W - edgePad || bp.y < edgePad || bp.y > H - edgePad) continue;
+
+    const distFromCenter = Math.hypot(bp.x - cx, bp.y - cy);
+    if (distFromCenter > diag * 0.42) continue;
+
+    const baseAngle = Math.atan2(seg.y2 - seg.y1, seg.x2 - seg.x1);
+    const branchAngle = baseAngle + rand(-1.2, 1.2);
+    const layer = Math.min(parent.layer + (Math.random() > 0.6 ? 1 : 0), C.depthLayers - 1);
+
+    threads.push(makeThread(bp.x, bp.y, branchAngle, layer));
+  }
+}
+
+function placeNodes(count) {
+  nodes = [];
+  // Collect all segment junction points weighted by centrality
+  const pts = [];
+  for (const t of threads) {
+    for (let i = 1; i < t.segs.length - 1; i++) {
+      const s = t.segs[i];
+      const d = Math.hypot(s.x2 - cx, s.y2 - cy);
+      if (d < diag * 0.3) {
+        pts.push({ x: s.x2, y: s.y2, score: 1 / (d + 50) });
+      }
+    }
+  }
+  pts.sort((a, b) => b.score - a.score);
+
+  for (const p of pts) {
+    if (nodes.length >= count) break;
+    if (nodes.some(n => Math.hypot(n.x - p.x, n.y - p.y) < C.nodeMinSep)) continue;
+    nodes.push({
+      x: p.x, y: p.y,
+      phase: rand(0, Math.PI * 2),
+      active: 0,
+    });
+  }
+}
+
+function initSpores() {
+  spores = [];
+  for (let i = 0; i < C.sporeCount; i++) {
+    spores.push({
+      x: rand(0, W),
+      y: rand(0, H),
+      r: rand(C.sporeMinR, C.sporeMaxR),
+      vx: rand(-C.sporeDrift, C.sporeDrift),
+      vy: rand(-C.sporeDrift, C.sporeDrift) - 0.05, // slight upward drift
+      phase: rand(0, Math.PI * 2),
+      blinkHz: rand(0.1, 0.4),
+    });
+  }
+}
+
+// ============================================================
+//  DRAWING
+// ============================================================
+
+function drawBackground() {
+  const ctx = bgCtx;
+  ctx.clearRect(0, 0, W, H);
+
+  // Base
+  ctx.fillStyle = rgb(C.bg, 1);
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle warm center glow
+  const g1 = ctx.createRadialGradient(cx, cy, 0, cx, cy, diag * 0.45);
+  g1.addColorStop(0, 'rgba(30, 22, 16, 0.35)');
+  g1.addColorStop(0.4, 'rgba(18, 14, 11, 0.15)');
+  g1.addColorStop(1, 'rgba(8, 9, 11, 0)');
+  ctx.fillStyle = g1;
+  ctx.fillRect(0, 0, W, H);
+
+  // Vignette
+  const g2 = ctx.createRadialGradient(cx, cy, diag * 0.2, cx, cy, diag * 0.7);
+  g2.addColorStop(0, 'rgba(0,0,0,0)');
+  g2.addColorStop(1, 'rgba(0,0,0,0.5)');
+  ctx.fillStyle = g2;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawThreads(brightness, bloomFactor) {
+  const ctx = mainCtx;
+
+  for (const t of threads) {
+    if (t.grow <= 0 || t.opacity <= 0) continue;
+
+    const n = t.segs.length;
+    const shown = t.grow * n;
+    const layerDim = 1 - t.layer * 0.2;  // farther layers dimmer
+    const b = clamp(t.opacity * brightness * layerDim, 0, 1);
+
+    // Thread color based on brightness
+    const col = b < 0.4
+      ? lerpColor(C.threadDim, C.threadMid, b / 0.4)
+      : lerpColor(C.threadMid, C.threadBright, (b - 0.4) / 0.6);
+
+    const alpha = (0.15 + b * 0.65) * (0.7 + bloomFactor * 0.3);
+
+    for (let i = 0; i < Math.ceil(shown); i++) {
+      const seg = t.segs[i];
+      if (!seg) break;
+      const frac = clamp(shown - i, 0, 1);
+
+      ctx.beginPath();
+      ctx.moveTo(seg.x1, seg.y1);
+
+      if (frac < 1) {
+        const steps = 16;
+        const maxStep = Math.floor(steps * frac);
+        for (let s = 1; s <= maxStep; s++) {
+          const p = bezPt(seg, s / steps);
+          ctx.lineTo(p.x, p.y);
+        }
+      } else {
+        ctx.quadraticCurveTo(seg.cx, seg.cy, seg.x2, seg.y2);
+      }
+
+      ctx.strokeStyle = rgb(col, alpha);
+      ctx.lineWidth = t.w * (0.4 + b * 0.6) * (1 + t.layer * 0.1);
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+
+    // Growing tip glow
+    if (t.grow > 0.01 && t.grow < 0.98) {
+      const si = Math.floor(shown);
+      const seg = t.segs[Math.min(si, n - 1)];
+      if (seg) {
+        const frac = shown - Math.floor(shown);
+        const tip = bezPt(seg, clamp(frac, 0, 1));
+        const g = ctx.createRadialGradient(tip.x, tip.y, 0, tip.x, tip.y, 8 + b * 6);
+        g.addColorStop(0, rgb(C.threadHot, 0.3 * b));
+        g.addColorStop(1, rgb(C.threadBright, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(tip.x, tip.y, 8 + b * 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+function drawGlowLayer(brightness, bloomFactor) {
+  const ctx = glowCtx;
+  ctx.clearRect(0, 0, W, H);
+
+  // Draw bright threads again on glow layer with blur for bloom effect
+  ctx.filter = `blur(${4 + bloomFactor * 8}px)`;
+
+  for (const t of threads) {
+    if (t.grow <= 0 || t.opacity < 0.3) continue;
+
+    const n = t.segs.length;
+    const shown = t.grow * n;
+    const b = clamp(t.opacity * brightness, 0, 1);
+    if (b < 0.3) continue;
+
+    const col = lerpColor(C.threadMid, C.threadBright, clamp((b - 0.3) / 0.7, 0, 1));
+    const alpha = b * 0.2 * (1 + bloomFactor * 0.5);
+
+    ctx.beginPath();
+    const seg0 = t.segs[0];
+    ctx.moveTo(seg0.x1, seg0.y1);
+
+    for (let i = 0; i < Math.min(Math.ceil(shown), n); i++) {
+      const seg = t.segs[i];
+      ctx.quadraticCurveTo(seg.cx, seg.cy, seg.x2, seg.y2);
+    }
+
+    ctx.strokeStyle = rgb(col, alpha);
+    ctx.lineWidth = t.w * 3 + bloomFactor * 2;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+
+  // Node halos on glow layer
+  for (const nd of nodes) {
+    if (nd.active <= 0) continue;
+    const pulse = Math.sin(nd.phase + globalTime * 0.001 * C.nodePulseHz * Math.PI * 2) * 0.3 + 0.7;
+    const inten = nd.active * pulse;
+    const r = C.nodeGlowR * inten * (1 + bloomFactor * 0.4);
+
+    const g = ctx.createRadialGradient(nd.x, nd.y, 0, nd.x, nd.y, r);
+    g.addColorStop(0, rgb(C.nodeCore, 0.25 * inten));
+    g.addColorStop(0.3, rgb(C.nodeHalo, 0.1 * inten));
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(nd.x, nd.y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.filter = 'none';
+}
+
+function drawNodes(time) {
+  const ctx = mainCtx;
+
+  for (const nd of nodes) {
+    if (nd.active <= 0) continue;
+
+    const pulse = Math.sin(nd.phase + time * 0.001 * C.nodePulseHz * Math.PI * 2) * 0.3 + 0.7;
+    const inten = nd.active * pulse;
+
+    // Inner glow
+    const g = ctx.createRadialGradient(nd.x, nd.y, 0, nd.x, nd.y, C.nodeGlowR * 0.5 * inten);
+    g.addColorStop(0, rgb(C.nodeCore, 0.4 * inten));
+    g.addColorStop(0.5, rgb(C.nodeHalo, 0.08 * inten));
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(nd.x, nd.y, C.nodeGlowR * 0.5 * inten, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Core dot
+    ctx.beginPath();
+    ctx.arc(nd.x, nd.y, C.nodeCoreR * (0.5 + inten * 0.5), 0, Math.PI * 2);
+    ctx.fillStyle = rgb(C.nodeCore, inten * 0.95);
+    ctx.fill();
+
+    // Tiny bright ring
+    ctx.beginPath();
+    ctx.arc(nd.x, nd.y, C.nodeCoreR * 1.8 * inten, 0, Math.PI * 2);
+    ctx.strokeStyle = rgb(C.nodeCore, inten * 0.15);
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+}
+
+function drawPulses() {
+  const ctx = mainCtx;
+
+  for (const p of pulses) {
+    const t = threads[p.ti];
+    if (!t || t.grow < 0.4) continue;
+
+    const n = t.segs.length;
+    const head = p.pos;
+    const tail = head - C.pulseLen;
+
+    for (let i = 0; i < n; i++) {
+      const s0 = i / n, s1 = (i + 1) / n;
+      if (s1 < tail || s0 > head) continue;
+
+      const seg = t.segs[i];
+      const from = clamp((tail - s0) / (s1 - s0), 0, 1);
+      const to   = clamp((head - s0) / (s1 - s0), 0, 1);
+
+      ctx.beginPath();
+      let first = true;
+      const steps = 10;
+      for (let s = Math.floor(from * steps); s <= Math.ceil(to * steps); s++) {
+        const pt = bezPt(seg, clamp(s / steps, 0, 1));
+        if (first) { ctx.moveTo(pt.x, pt.y); first = false; }
+        else ctx.lineTo(pt.x, pt.y);
+      }
+
+      // Pulse brightness peaks at head
+      const localT = clamp((head - s0) / C.pulseLen, 0, 1);
+      const fade = Math.sin(localT * Math.PI);
+      const a = fade * p.inten * 0.85;
+
+      ctx.strokeStyle = rgb(C.threadHot, a);
+      ctx.lineWidth = t.w * 2.5;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = rgb(C.threadHot, a * 0.6);
+      ctx.shadowBlur = C.pulseGlowR * fade;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+  }
+}
+
+function drawSpores(time) {
+  const ctx = sporeCtx;
+  ctx.clearRect(0, 0, W, H);
+
+  for (const s of spores) {
+    const blink = Math.sin(s.phase + time * 0.001 * s.blinkHz * Math.PI * 2) * 0.5 + 0.5;
+    const a = C.sporeAlpha * blink;
+    if (a < 0.02) continue;
+
+    const col = lerpColor(C.threadDim, C.threadMid, blink);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = rgb(col, a);
+    ctx.fill();
+  }
+}
+
+function drawBloomOverlay(progress) {
+  if (progress <= 0) return;
+  const ctx = mainCtx;
+  const e = easeOutCubic(progress);
+
+  // Central radiant bloom
+  const r = diag * 0.5 * e;
+  const a = progress < 0.4
+    ? easeInOutQuad(progress / 0.4) * 0.2
+    : lerp(0.2, 0, easeInOutQuad((progress - 0.4) / 0.6));
+
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  g.addColorStop(0, rgb(C.threadHot, a));
+  g.addColorStop(0.25, rgb(C.threadBright, a * 0.5));
+  g.addColorStop(0.6, rgb(C.threadMid, a * 0.15));
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // Final fade
+  if (progress > 0.75) {
+    const fadeA = easeInOutQuad((progress - 0.75) / 0.25) * 0.8;
+    ctx.fillStyle = rgb(C.bg, fadeA);
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+// ============================================================
+//  STATE
+// ============================================================
+let animId = null;
+let currentStages = [];
+let stageIdx = 0;
+let stageStart = 0;
+let globalTime = 0;
+let targetThreads = 0;
+let targetNodes = 0;
+let bloomProg = 0;
+let isBloom = false;
+let isPrebuilt = false;
+let breathPhase = 0;
+let lastT = 0;
+
+// ---- Status ----
+let statusTimeout = null;
+function setStatus(text) {
+  if (statusTimeout) clearTimeout(statusTimeout);
+  if (!text) {
+    statusEl.className = 'fade';
+    return;
+  }
+  // Brief fade out before new text
+  statusEl.className = 'fade';
+  statusTimeout = setTimeout(() => {
+    statusEl.textContent = text;
+    statusEl.className = 'visible';
+  }, 150);
+}
+
+// ---- Stages ----
+function advanceStage() {
+  if (stageIdx >= currentStages.length) return;
+  const s = currentStages[stageIdx];
+  targetThreads = s.thr;
+  targetNodes = s.nod;
+
+  if (s.id === 'bloom') { isBloom = true; bloomProg = 0; }
+
+  setStatus(s.text);
+
+  if (s.prebuilt && threads.length === 0) {
+    buildNetwork(C.totalThreads);
+    for (const t of threads) { t.grow = 1; t.opacity = 0.15; }
+    isPrebuilt = true;
+    initSpores();
+  }
+
+  stageStart = performance.now();
+}
+
+function tickStages(now) {
+  if (stageIdx >= currentStages.length) return;
+  if (now - stageStart >= currentStages[stageIdx].ms) {
+    stageIdx++;
+    if (stageIdx < currentStages.length) advanceStage();
+    else setStatus('');
+  }
+}
+
+// ---- Update ----
+function spawnPulse() {
+  if (pulses.length >= C.maxPulses) return;
+  const ready = threads.filter(t => t.grow > 0.7);
+  if (!ready.length) return;
+  const t = pick(ready);
+  pulses.push({
+    ti: threads.indexOf(t),
+    pos: -C.pulseLen,
+    inten: rand(0.35, 1),
+  });
+}
+
+function update(dt) {
+  const dt60 = dt / 16.667; // normalize to 60fps
+
+  // Grow threads
+  if (threads.length < targetThreads) buildNetwork(targetThreads);
+  if (threads.length > 0 && spores.length === 0) initSpores();
+
+  for (let i = 0; i < threads.length; i++) {
+    const t = threads[i];
+    if (i < targetThreads) {
+      // Staggered growth — later threads start later
+      const delay = (i / targetThreads) * 0.4;
+      const effectiveGrow = C.growSpeed * dt60;
+      if (t.grow < 1) {
+        t.grow = clamp(t.grow + effectiveGrow * (t.grow > delay ? 1 : 0.1), 0, 1);
+      }
+      t.opacity = clamp(t.opacity + 0.012 * dt60, 0, 1);
+    }
+  }
+
+  // Nodes
+  if (nodes.length < targetNodes) placeNodes(targetNodes);
+  for (const n of nodes) {
+    n.active = clamp(n.active + 0.008 * dt60, 0, 1);
+  }
+
+  // Pulses
+  if (nodes.some(n => n.active > 0.3) && Math.random() < C.pulseSpawnRate) {
+    spawnPulse();
+  }
+  for (let i = pulses.length - 1; i >= 0; i--) {
+    pulses[i].pos += C.pulseSpeed * dt60;
+    if (pulses[i].pos > 1 + C.pulseLen) pulses.splice(i, 1);
+  }
+
+  // Spores
+  for (const s of spores) {
+    s.x += s.vx * dt60;
+    s.y += s.vy * dt60;
+    // Wrap around
+    if (s.x < -10) s.x = W + 10;
+    if (s.x > W + 10) s.x = -10;
+    if (s.y < -10) s.y = H + 10;
+    if (s.y > H + 10) s.y = -10;
+  }
+
+  // Bloom
+  if (isBloom) {
+    bloomProg = clamp(bloomProg + dt / C.bloomMs, 0, 1);
+  }
+
+  // Breathing (prebuilt sleeping state)
+  if (isPrebuilt) {
+    breathPhase += C.breathHz * dt * 0.001 * Math.PI * 2;
+    const bv = Math.sin(breathPhase) * C.breathAmp;
+    for (const t of threads) {
+      t.opacity = clamp(0.15 + bv * 0.1, 0.05, 0.3);
+    }
+    if (targetNodes > 0) {
+      isPrebuilt = false;
+      for (const t of threads) t.opacity = 0.35;
+    }
+  }
+
+  globalTime += dt;
+}
+
+// ---- Render ----
+function render() {
+  mainCtx.clearRect(0, 0, W, H);
+
+  drawBackground();
+
+  const brightness = isBloom
+    ? 0.65 + bloomProg * 0.35
+    : clamp(0.08 + (targetNodes / C.maxNodes) * 0.6, 0.08, 0.7);
+
+  const bf = isBloom ? easeOutCubic(bloomProg) : 0;
+
+  drawThreads(brightness, bf);
+  drawPulses();
+  drawNodes(globalTime);
+  drawGlowLayer(brightness, bf);
+  drawSpores(globalTime);
+
+  if (isBloom) drawBloomOverlay(bloomProg);
+}
+
+// ---- Loop ----
+function loop(now) {
+  const dt = lastT ? clamp(now - lastT, 0, 100) : 16;
+  lastT = now;
+
+  tickStages(now);
+  update(dt);
+  render();
+
+  animId = requestAnimationFrame(loop);
+}
+
+// ============================================================
+//  PUBLIC API (called by buttons)
+// ============================================================
+function resetAll() {
+  if (animId) { cancelAnimationFrame(animId); animId = null; }
+  threads = []; nodes = []; pulses = []; spores = [];
+  stageIdx = 0; stageStart = 0; globalTime = 0; lastT = 0;
+  targetThreads = 0; targetNodes = 0;
+  bloomProg = 0; isBloom = false; isPrebuilt = false; breathPhase = 0;
+  setStatus('');
+  for (const c of [bgCtx, mainCtx, glowCtx, sporeCtx]) {
+    c.clearRect(0, 0, W, H);
+  }
+  bgCtx.fillStyle = rgb(C.bg, 1);
+  bgCtx.fillRect(0, 0, W, H);
+}
+
+function runFirstTime() {
+  resetAll();
+  currentStages = FIRST_TIME;
+  advanceStage();
+  animId = requestAnimationFrame(loop);
+}
+
+function runReturning() {
+  resetAll();
+  currentStages = RETURNING;
+  advanceStage();
+  animId = requestAnimationFrame(loop);
+}
+
+function skipToStage(id) {
+  if (!currentStages.length) currentStages = FIRST_TIME;
+  const idx = currentStages.findIndex(s => s.id === id);
+  if (idx < 0) return;
+
+  // Fast-forward all prior stages
+  for (let i = 0; i <= idx; i++) {
+    const s = currentStages[i];
+    targetThreads = s.thr;
+    targetNodes = s.nod;
+  }
+
+  if (threads.length < targetThreads) buildNetwork(targetThreads);
+  for (const t of threads) { t.grow = 1; t.opacity = 0.6; }
+  placeNodes(targetNodes);
+  for (const n of nodes) n.active = 1;
+  initSpores();
+
+  stageIdx = idx;
+  stageStart = performance.now();
+  if (currentStages[idx].id === 'bloom') { isBloom = true; bloomProg = 0; }
+  setStatus(currentStages[idx].text);
+  if (!animId) animId = requestAnimationFrame(loop);
+}
+
+// Init
+bgCtx.fillStyle = rgb(C.bg, 1);
+bgCtx.fillRect(0, 0, W, H);
+</script>
+</body>
+</html>
