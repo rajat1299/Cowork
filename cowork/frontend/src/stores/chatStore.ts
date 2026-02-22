@@ -12,6 +12,7 @@ import type {
   NoticeData,
   AttachmentInfo,
   ToolApprovalData,
+  DecisionData,
 } from '../types/chat'
 import { generateId, createMessage, getStepLabel } from '../types/chat'
 import { isBlockedArtifact } from '../lib/artifacts'
@@ -164,6 +165,10 @@ interface ChatState {
   addApproval: (approval: ToolApprovalData) => void
   resolveApproval: (requestId: string, status: 'approved' | 'denied') => void
   removeApproval: (requestId: string) => void
+
+  // Actions - Decisions
+  pendingDecision: DecisionData | null
+  setDecision: (decision: DecisionData | null) => void
 
   // Actions - Connection State
   setConnecting: (connecting: boolean) => void
@@ -704,6 +709,13 @@ export const useChatStore = create<ChatState>()(
           delete next[requestId]
           return { pendingApprovals: next }
         })
+      },
+
+      // Decisions
+      pendingDecision: null,
+
+      setDecision: (decision) => {
+        set({ pendingDecision: decision })
       },
 
       // Connection State

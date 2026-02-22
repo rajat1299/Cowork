@@ -87,6 +87,15 @@ export const permission = {
       approved,
       ...(remember !== undefined && { remember }),
     }),
+
+  /**
+   * Submit a structured decision response for ask_user decision widgets.
+   */
+  submitDecision: (projectId: string, requestId: string, response: string): Promise<{ status: string }> =>
+    orchestratorApi.post(`/chat/${projectId}/permission`, {
+      request_id: requestId,
+      response,
+    }),
 }
 
 export const files = {

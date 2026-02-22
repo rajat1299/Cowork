@@ -344,3 +344,76 @@ async def _request_tool_permission(
     finally:
         task_lock.human_input.pop(request_id, None)
         task_lock.pending_approval_context.pop(request_id, None)
+
+
+# ---- Decision request (human-in-the-loop choices) ----
+
+
+class DecisionOption:
+    """A single option in a user decision prompt."""
+
+    __slots__ = ("id", "label", "description")
+
+    def __init__(self, id: str, label: str, description: str = ""):
+        self.id = id
+        self.label = label
+        self.description = description
+
+    def to_dict(self) -> dict[str, str]:
+        d: dict[str, str] = {"id": self.id, "label": self.label}
+        if self.description:
+            d["description"] = self.description
+        return d
+
+
+async def _request_user_decision(
+    task_lock: TaskLock,
+    event_stream: _PermissionEventStream,
+    question: str,
+    options: list[DecisionOption],
+    *,
+    mode: Literal["single_select", "multi_select", "rank"] = "single_select",
+    skippable: bool = True,
+    timeout_seconds: float = 60.0,
+    process_task_id: str = "",
+) -> str | None:
+    """Emit a decision prompt to the user and wait for their selection.
+
+    Returns the user's response string (option id, comma-separated ids for
+    multi_select, or freeform text), or ``None`` on timeout/skip/stop.
+    """
+    request_id = uuid.uuid4().hex
+    response_queue = task_lock.human_input.setdefault(
+        request_id, asyncio.Queue(maxsize=1)
+    )
+    event_stream.emit(
+        StepEvent.ask_user,
+        {
+            "type": "decision",
+            "question": question,
+            "request_id": request_id,
+            "mode": mode,
+            "options": [opt.to_dict() for opt in options],
+            "skippable": skippable,
+            "timeout": int(timeout_seconds),
+            "process_task_id": process_task_id,
+        },
+    )
+
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while True:
+            if task_lock.stop_requested:
+                return None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            try:
+                response = await asyncio.wait_for(
+                    response_queue.get(), timeout=min(1.0, remaining)
+                )
+            except asyncio.TimeoutError:
+                continue
+            return str(response).strip() if response else None
+    finally:
+        task_lock.human_input.pop(request_id, None)

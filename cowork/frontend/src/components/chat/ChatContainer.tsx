@@ -17,6 +17,7 @@ import { TypingIndicator } from './TypingIndicator'
 import { WelcomeScreen } from './WelcomeScreen'
 import { CompactingNotice } from './CompactingNotice'
 import { ToolApprovalCard } from './ToolApprovalCard'
+import { DecisionWidget } from './DecisionWidget'
 import { useChat } from '../../hooks'
 import type { ChatMessageOptions } from '../../hooks/useChat'
 import { useChatStore } from '../../stores/chatStore'
@@ -289,13 +290,14 @@ export function ChatContainer() {
   const pendingApprovals = useChatStore((s) => {
     return Object.values(s.pendingApprovals)
   })
+  const pendingDecision = useChatStore((s) => s.pendingDecision)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Auto-scroll on new messages and approvals
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isConnecting, isRunning, progressSteps, timeline.length, pendingApprovals.length])
+  }, [messages, isConnecting, isRunning, progressSteps, timeline.length, pendingApprovals.length, pendingDecision?.requestId])
 
   // Read activeProjectId to decide new-chat vs follow-up routing
   const activeProjectId = useChatStore((s) => s.activeProjectId)
@@ -434,6 +436,9 @@ export function ChatContainer() {
       {/* Input */}
       <div className="px-5 pb-5 pt-2">
         <div className={isWelcome ? 'max-w-[600px] mx-auto' : 'max-w-2xl mx-auto'}>
+          {pendingDecision ? (
+            <DecisionWidget key={pendingDecision.requestId} decision={pendingDecision} />
+          ) : null}
           <ChatInput
             onSend={handleSend}
             disabled={isConnecting}

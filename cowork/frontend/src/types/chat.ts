@@ -159,6 +159,26 @@ export interface ToolApprovalData {
   status: 'pending' | 'approved' | 'denied'
 }
 
+// ============ Decision Widget Types ============
+
+export interface DecisionOption {
+  id: string
+  label: string
+  description?: string
+}
+
+export type DecisionMode = 'single_select' | 'multi_select' | 'rank'
+
+export interface DecisionData {
+  requestId: string
+  question: string
+  mode: DecisionMode
+  options: DecisionOption[]
+  skippable: boolean
+  projectId: string
+  timeout: number
+}
+
 export interface TaskStateData {
   task_id: string
   state: 'running' | 'completed' | 'failed' | 'paused'

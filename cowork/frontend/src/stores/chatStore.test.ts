@@ -123,4 +123,27 @@ describe('chatStore state transitions', () => {
       expect(Object.keys(merged.tasks)).toEqual([freshTaskId])
     }
   })
+
+  it('stores and clears pending decision prompts', () => {
+    const store = useChatStore.getState()
+
+    store.setDecision({
+      requestId: 'decision-1',
+      question: 'Pick one option',
+      mode: 'single_select',
+      options: [
+        { id: '1', label: 'Option A' },
+        { id: '2', label: 'Option B' },
+      ],
+      skippable: true,
+      projectId: 'project-1',
+      timeout: 60,
+    })
+
+    expect(useChatStore.getState().pendingDecision?.requestId).toBe('decision-1')
+    expect(useChatStore.getState().pendingDecision?.options).toHaveLength(2)
+
+    store.setDecision(null)
+    expect(useChatStore.getState().pendingDecision).toBeNull()
+  })
 })

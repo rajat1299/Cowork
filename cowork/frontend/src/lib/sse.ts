@@ -656,8 +656,10 @@ function handleAsk(taskId: string, data: Record<string, unknown>): void {
   const requestId = data.request_id as string | undefined
   const question = (data.human_question as string) || (data.question as string) || 'The assistant has a question for you.'
 
+  const hasToolkitMetadata = typeof data.toolkit_name === 'string'
+
   // Tool approval events — route to ToolApprovalCard system
-  if (eventType === 'tool_approval' && requestId) {
+  if ((eventType === 'tool_approval' || (!eventType && hasToolkitMetadata)) && requestId) {
     const task = store.tasks[taskId]
     const projectId = task?.projectId || store.activeProjectId || ''
 
@@ -675,8 +677,30 @@ function handleAsk(taskId: string, data: Record<string, unknown>): void {
     return
   }
 
-  // Non-approval ask_user events (decisions, plain questions) — render as message
-  // This path will be replaced by DecisionWidget in Phase D.3
+  // Decision events — route to DecisionWidget
+  if (eventType === 'decision' && requestId) {
+    const task = store.tasks[taskId]
+    const projectId = task?.projectId || store.activeProjectId || ''
+    const rawOptions = data.options as Array<Record<string, string>> | undefined
+
+    store.setDecision({
+      requestId,
+      question,
+      mode: (data.mode as 'single_select' | 'multi_select' | 'rank') || 'single_select',
+      options: (rawOptions || []).map((opt) => ({
+        id: opt.id || '',
+        label: opt.label || '',
+        description: opt.description,
+      })),
+      skippable: data.skippable !== false,
+      projectId,
+      timeout: (data.timeout as number) || 60,
+    })
+    addProgressStepFromEvent(taskId, 'ask', 'active', data)
+    return
+  }
+
+  // Plain question fallback — render as assistant message
   store.addMessage(taskId, createMessage('assistant', question))
   addProgressStepFromEvent(taskId, 'ask', 'active', data)
 }
