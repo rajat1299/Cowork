@@ -47,6 +47,21 @@ function emitToRenderer(event: BackendEventName | string, payload?: unknown): vo
   }
 }
 
+function resolveDevServerUrl(): string | undefined {
+  if (!VITE_DEV_SERVER_URL) {
+    return undefined
+  }
+  try {
+    const url = new URL(VITE_DEV_SERVER_URL)
+    if (url.hostname === 'localhost' || url.hostname === '::1') {
+      url.hostname = '127.0.0.1'
+    }
+    return url.toString()
+  } catch {
+    return VITE_DEV_SERVER_URL
+  }
+}
+
 function buildRuntimeConfig(ports: BackendPorts): void {
   runtimeConfig = {
     coreApiUrl: `http://127.0.0.1:${ports.coreApi}`,
@@ -84,7 +99,7 @@ function createMainWindow(ports: BackendPorts | null): BrowserWindow {
   }
 
   if (VITE_DEV_SERVER_URL) {
-    window.loadURL(VITE_DEV_SERVER_URL)
+    window.loadURL(resolveDevServerUrl() || VITE_DEV_SERVER_URL)
   } else {
     window.loadFile(path.join(RENDERER_DIST, 'index.html'))
   }

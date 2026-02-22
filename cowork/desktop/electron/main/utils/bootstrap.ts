@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import log from 'electron-log'
+import { app } from 'electron'
 
 import {
   type ServiceName,
@@ -51,23 +52,53 @@ async function findSystemUvBinary(): Promise<string | null> {
   }
 }
 
+async function isRunnableUv(binaryPath: string): Promise<boolean> {
+  try {
+    await runCommand(binaryPath, ['--version'])
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function ensureUvBinary(): Promise<string> {
+  // In development we prefer the system uv directly to avoid race conditions
+  // while Electron main process hot-restarts.
+  if (!app.isPackaged) {
+    const systemUv = await findSystemUvBinary()
+    if (systemUv && (await isRunnableUv(systemUv))) {
+      return systemUv
+    }
+  }
+
   const managedPath = getManagedUvPath()
   if (await fileExists(managedPath)) {
     await ensureExecutable(managedPath)
-    return managedPath
+    if (await isRunnableUv(managedPath)) {
+      return managedPath
+    }
+    log.warn(`Managed uv at ${managedPath} exists but is not runnable, reinstalling`)
+    await rm(managedPath, { force: true })
   }
 
   const systemUv = await findSystemUvBinary()
-  if (systemUv) {
-    await copyFile(systemUv, managedPath)
-    await ensureExecutable(managedPath)
-    log.info(`Copied system uv binary from ${systemUv} -> ${managedPath}`)
-    return managedPath
+  if (systemUv && (await isRunnableUv(systemUv))) {
+    try {
+      await copyFile(systemUv, managedPath)
+      await ensureExecutable(managedPath)
+      if (await isRunnableUv(managedPath)) {
+        log.info(`Copied system uv binary from ${systemUv} -> ${managedPath}`)
+        return managedPath
+      }
+    } catch (error) {
+      log.warn(`Failed to copy system uv to managed path: ${String(error)}`)
+    }
+    log.info(`Falling back to system uv binary at ${systemUv}`)
+    return systemUv
   }
 
   const bundledPath = getBundledUvPath()
-  if (await fileExists(bundledPath)) {
+  if ((await fileExists(bundledPath)) && (await isRunnableUv(bundledPath))) {
     await copyFile(bundledPath, managedPath)
     await ensureExecutable(managedPath)
     log.info(`Copied bundled uv binary from ${bundledPath} -> ${managedPath}`)
