@@ -231,6 +231,10 @@ function handleSSEEvent(taskId: string, event: SSEEvent): void {
       handleTurnCancelled(taskId, data as Record<string, unknown>)
       break
 
+    case 'compose_message':
+      handleCompose(taskId, data as Record<string, unknown>)
+      break
+
     default:
       // Log unhandled step types for debugging
       console.log(`[SSE] Unhandled step type: ${step}`, data)
@@ -703,6 +707,39 @@ function handleAsk(taskId: string, data: Record<string, unknown>): void {
   // Plain question fallback — render as assistant message
   store.addMessage(taskId, createMessage('assistant', question))
   addProgressStepFromEvent(taskId, 'ask', 'active', data)
+}
+
+function handleCompose(taskId: string, data: Record<string, unknown>): void {
+  const store = useChatStore.getState()
+  const VALID_PLATFORMS = new Set(['email', 'slack', 'linkedin', 'text', 'generic'])
+  const rawPlatform = (data.platform as string) || 'generic'
+  const platform = VALID_PLATFORMS.has(rawPlatform) ? rawPlatform as 'email' | 'slack' | 'linkedin' | 'text' | 'generic' : 'generic' as const
+  const rawVariants = data.variants as Array<Record<string, string>> | undefined
+  const metadata = data.metadata as Record<string, string> | undefined
+
+  if (!rawVariants || rawVariants.length === 0) return
+
+  // Store compose data as a structured progress step so ComposeWidget can render it inline
+  const composePayload = {
+    platform,
+    variants: rawVariants.map((v) => ({
+      id: v.id || '',
+      label: v.label || '',
+      subject: v.subject,
+      body: v.body || '',
+    })),
+    metadata,
+  }
+
+  // Add as a special assistant message with compose metadata
+  store.addMessage(taskId, {
+    id: generateId(),
+    role: 'assistant',
+    content: '',
+    timestamp: Date.now(),
+    composeData: composePayload,
+  })
+  addProgressStepFromEvent(taskId, 'compose_message', 'completed', data)
 }
 
 function handleNotice(taskId: string, data: Record<string, unknown>): void {

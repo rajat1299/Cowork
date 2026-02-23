@@ -417,3 +417,47 @@ async def _request_user_decision(
             return str(response).strip() if response else None
     finally:
         task_lock.human_input.pop(request_id, None)
+
+
+# ---- Compose message (display-only, no response queue) ----
+
+
+class ComposeVariant:
+    """A single variant of a composed message."""
+
+    __slots__ = ("id", "label", "subject", "body")
+
+    def __init__(self, id: str, label: str, body: str, subject: str = ""):
+        self.id = id
+        self.label = label
+        self.subject = subject
+        self.body = body
+
+    def to_dict(self) -> dict[str, str]:
+        d: dict[str, str] = {"id": self.id, "label": self.label, "body": self.body}
+        if self.subject:
+            d["subject"] = self.subject
+        return d
+
+
+def _emit_compose_message(
+    event_stream: _PermissionEventStream,
+    platform: str,
+    variants: list[ComposeVariant],
+    *,
+    metadata: dict[str, str] | None = None,
+) -> None:
+    """Emit a compose_message event for the frontend to render.
+
+    This is display-only — no response queue. The user copies or sends
+    the message themselves via the widget's action buttons.
+    """
+    event_stream.emit(
+        StepEvent.compose_message,
+        {
+            "type": "compose_message",
+            "platform": platform,
+            "variants": [v.to_dict() for v in variants],
+            "metadata": metadata or {},
+        },
+    )

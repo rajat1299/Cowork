@@ -36,6 +36,8 @@ export type StepType =
   | 'ask_user'            // Agent asks user a question (normalized)
   | 'wait_confirm'        // Waiting for user confirmation
   | 'turn_cancelled'      // Turn cancelled
+  // Compose
+  | 'compose_message'     // Message compose widget (email, slack, etc.)
   // System
   | 'notice'              // System notice
   | 'context_too_long'    // Context limit exceeded
@@ -179,6 +181,23 @@ export interface DecisionData {
   timeout: number
 }
 
+// ============ Compose Widget Types ============
+
+export type ComposePlatform = 'email' | 'slack' | 'linkedin' | 'text' | 'generic'
+
+export interface ComposeVariant {
+  id: string
+  label: string
+  subject?: string
+  body: string
+}
+
+export interface ComposeData {
+  platform: ComposePlatform
+  variants: ComposeVariant[]
+  metadata?: Record<string, string>
+}
+
 export interface TaskStateData {
   task_id: string
   state: 'running' | 'completed' | 'failed' | 'paused'
@@ -212,6 +231,8 @@ export interface Message {
   artifacts?: ArtifactInfo[]
   // For attachments
   attachments?: AttachmentInfo[]
+  // For compose widget (email/message drafts)
+  composeData?: ComposeData
 }
 
 export interface ArtifactInfo {
@@ -392,6 +413,7 @@ export function getStepLabel(step: StepType): string {
     ask_user: 'Asking question',
     wait_confirm: 'Waiting for confirmation',
     turn_cancelled: 'Cancelled',
+    compose_message: 'Composing message',
     notice: 'Notice',
     context_too_long: 'Context limit exceeded',
     budget_not_enough: 'Budget exhausted',

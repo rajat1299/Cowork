@@ -36,6 +36,7 @@ function reorderIds(ids: string[], draggedId: string, targetId: string): string[
 export const DecisionWidget = memo(function DecisionWidget({ decision }: DecisionWidgetProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const freeformInputRef = useRef<HTMLInputElement>(null)
+  const submitLockRef = useRef(false)
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -68,9 +69,32 @@ export const DecisionWidget = memo(function DecisionWidget({ decision }: Decisio
     })
   }, [decision.requestId])
 
+  useEffect(() => {
+    if (decision.timeout <= 0) {
+      useChatStore.getState().setDecision(null)
+      return
+    }
+
+    const timeoutId = setTimeout(() => {
+      if (submitLockRef.current) return
+      const store = useChatStore.getState()
+      if (store.pendingDecision?.requestId !== decision.requestId) return
+      store.setDecision(null)
+      if (store.activeTaskId) {
+        store.addMessage(
+          store.activeTaskId,
+          createMessage('system', 'Decision timed out. Continuing automatically.')
+        )
+      }
+    }, decision.timeout * 1000)
+
+    return () => clearTimeout(timeoutId)
+  }, [decision.requestId, decision.timeout])
+
   const submit = useCallback(
     async (response: string, userMessage: string) => {
-      if (isSubmitting) return
+      if (submitLockRef.current || isSubmitting) return
+      submitLockRef.current = true
 
       setIsSubmitting(true)
       setError(null)
@@ -88,6 +112,7 @@ export const DecisionWidget = memo(function DecisionWidget({ decision }: Decisio
         console.error('Failed to submit decision response:', err)
         setError('Failed to submit. Please try again.')
         setIsSubmitting(false)
+        submitLockRef.current = false
       }
     },
     [decision.projectId, decision.requestId, isSubmitting]

@@ -5,8 +5,10 @@ import asyncio
 import pytest
 
 from app.runtime.config_helpers import (
+    DecisionOption,
     _human_readable_permission,
     _request_tool_permission,
+    _request_user_decision,
     _tool_approval_tier,
 )
 from app.runtime.events import StepEvent
@@ -128,3 +130,133 @@ async def test_request_tool_permission_skips_ask_once_when_toolkit_already_remem
 
     assert approved is True
     assert stream.events == []
+
+
+@pytest.mark.asyncio
+async def test_request_tool_permission_timeout_emits_notice_and_uses_default_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TOOL_PERMISSION_TIMEOUT_SECONDS", "0.01")
+    monkeypatch.setenv("TOOL_PERMISSION_DEFAULT_ALLOW", "false")
+
+    task_lock = TaskLock(project_id="proj-permission-timeout")
+    stream = _EventStreamStub()
+
+    approved = await _request_tool_permission(
+        task_lock=task_lock,
+        event_stream=stream,
+        toolkit_name="TerminalToolkitWithEvents",
+        method_name="shell_exec",
+        message="command='rm -rf /tmp/scratch'",
+        agent_name="developer_agent",
+        process_task_id="subtask-timeout",
+    )
+
+    assert approved is False
+    assert len(stream.events) >= 2
+    ask_step, ask_payload = stream.events[0]
+    notice_step, notice_payload = stream.events[-1]
+    assert ask_step == StepEvent.ask_user
+    assert notice_step == StepEvent.notice
+    assert notice_payload["request_id"] == ask_payload["request_id"]
+    assert "timed out" in str(notice_payload.get("message", "")).lower()
+    assert ask_payload["request_id"] not in task_lock.human_input
+
+
+@pytest.mark.asyncio
+async def test_request_tool_permission_concurrent_requests_keep_responses_isolated() -> None:
+    task_lock = TaskLock(project_id="proj-permission-concurrent")
+    stream = _EventStreamStub()
+
+    first = asyncio.create_task(
+        _request_tool_permission(
+            task_lock=task_lock,
+            event_stream=stream,
+            toolkit_name="TerminalToolkitWithEvents",
+            method_name="shell_exec",
+            message="command='echo first'",
+            agent_name="developer_agent",
+            process_task_id="subtask-1",
+        )
+    )
+    second = asyncio.create_task(
+        _request_tool_permission(
+            task_lock=task_lock,
+            event_stream=stream,
+            toolkit_name="GmailToolkit",
+            method_name="send_email",
+            message="to='team@example.com'",
+            agent_name="document_agent",
+            process_task_id="subtask-2",
+        )
+    )
+
+    await asyncio.sleep(0)
+    ask_events = [payload for step, payload in stream.events if step == StepEvent.ask_user]
+    assert len(ask_events) == 2
+
+    request_by_subtask = {
+        str(payload["process_task_id"]): str(payload["request_id"])
+        for payload in ask_events
+    }
+    task_lock.human_input[request_by_subtask["subtask-2"]].put_nowait("deny")
+    task_lock.human_input[request_by_subtask["subtask-1"]].put_nowait("approve")
+
+    first_result = await first
+    second_result = await second
+
+    assert first_result is True
+    assert second_result is False
+
+
+@pytest.mark.asyncio
+async def test_request_user_decision_emits_contract_and_returns_response() -> None:
+    task_lock = TaskLock(project_id="proj-decision")
+    stream = _EventStreamStub()
+
+    pending = asyncio.create_task(
+        _request_user_decision(
+            task_lock=task_lock,
+            event_stream=stream,
+            question="What kind of task?",
+            options=[
+                DecisionOption(id="1", label="Write code"),
+                DecisionOption(id="2", label="Plan trip"),
+            ],
+            mode="single_select",
+            process_task_id="subtask-decision",
+        )
+    )
+
+    await asyncio.sleep(0)
+    assert stream.events
+    step, payload = stream.events[0]
+    assert step == StepEvent.ask_user
+    assert payload["type"] == "decision"
+    assert payload["mode"] == "single_select"
+    assert len(payload["options"]) == 2
+
+    request_id = str(payload["request_id"])
+    task_lock.human_input[request_id].put_nowait("2")
+    response = await pending
+
+    assert response == "2"
+    assert request_id not in task_lock.human_input
+
+
+@pytest.mark.asyncio
+async def test_request_user_decision_returns_none_on_timeout() -> None:
+    task_lock = TaskLock(project_id="proj-decision-timeout")
+    stream = _EventStreamStub()
+
+    response = await _request_user_decision(
+        task_lock=task_lock,
+        event_stream=stream,
+        question="Pick one",
+        options=[DecisionOption(id="1", label="A")],
+        mode="single_select",
+        timeout_seconds=0.01,
+        process_task_id="subtask-timeout",
+    )
+
+    assert response is None

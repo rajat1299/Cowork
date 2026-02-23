@@ -124,6 +124,35 @@ describe('chatStore state transitions', () => {
     }
   })
 
+  it('restores active project/task when hydrated task is still within TTL', () => {
+    const now = Date.now()
+    const store = useChatStore.getState()
+    const taskId = store.createTask('project-restore', 'Resume this thread')
+
+    const freshTask = {
+      ...useChatStore.getState().tasks[taskId],
+      startTime: now - 30_000,
+    }
+
+    const persistOptions = useChatStore.persist.getOptions()
+    if (typeof persistOptions.merge !== 'function') return
+
+    const merged = persistOptions.merge(
+      {
+        activeProjectId: 'project-restore',
+        activeTaskId: taskId,
+        tasks: {
+          [taskId]: freshTask,
+        },
+      },
+      useChatStore.getState()
+    )
+
+    expect(merged.activeTaskId).toBe(taskId)
+    expect(merged.activeProjectId).toBe('project-restore')
+    expect(Object.keys(merged.tasks)).toEqual([taskId])
+  })
+
   it('stores and clears pending decision prompts', () => {
     const store = useChatStore.getState()
 

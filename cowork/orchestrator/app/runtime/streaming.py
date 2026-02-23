@@ -83,6 +83,8 @@ def _map_step_to_agent_event(step: StepEvent) -> str | None:
         return "notice"
     if step == StepEvent.ask_user:
         return "ask_user"
+    if step == StepEvent.compose_message:
+        return "compose_message"
     if step == StepEvent.turn_cancelled:
         return "turn_cancelled"
     if step in {
@@ -124,6 +126,8 @@ def _agent_event_payload(step: StepEvent, data: dict) -> dict:
     if step == StepEvent.error:
         return {"message": data.get("error") or data.get("message")}
     if step == StepEvent.ask_user:
+        return data
+    if step == StepEvent.compose_message:
         return data
     if step == StepEvent.turn_cancelled:
         return {"reason": data.get("reason")}

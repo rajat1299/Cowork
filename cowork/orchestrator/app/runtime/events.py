@@ -17,6 +17,7 @@ class StepEvent(StrEnum):
     notice = "notice"
     ask_user = "ask_user"
     turn_cancelled = "turn_cancelled"
+    compose_message = "compose_message"
     end = "end"
     error = "error"
     context_too_long = "context_too_long"

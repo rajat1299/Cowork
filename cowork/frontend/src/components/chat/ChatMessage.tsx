@@ -6,6 +6,7 @@ import { canPreviewArtifact, dedupeArtifactsByCanonicalName, filterUserArtifacts
 import { cn } from '../../lib/utils'
 import { useViewerStore } from '../../stores/viewerStore'
 import type { Message, AttachmentInfo, ArtifactInfo } from '../../types/chat'
+import { ComposeWidget } from './ComposeWidget'
 
 interface ChatMessageProps {
   message: Message
@@ -77,6 +78,20 @@ export const ChatMessage = memo(function ChatMessage({ message }: ChatMessagePro
       <div className="flex justify-center">
         <div className="px-4 py-2 rounded-lg bg-accent text-muted-foreground text-[13px] max-w-[85%]">
           {message.content}
+        </div>
+      </div>
+    )
+  }
+
+  // Compose widget messages (structured assistant drafts)
+  if (!isUser && message.composeData) {
+    return (
+      <div className="flex justify-start">
+        <div className="w-full max-w-[90%] space-y-1.5">
+          <ComposeWidget composeData={message.composeData} />
+          {message.agentName ? (
+            <p className="text-[11px] text-muted-foreground">via {message.agentName}</p>
+          ) : null}
         </div>
       </div>
     )

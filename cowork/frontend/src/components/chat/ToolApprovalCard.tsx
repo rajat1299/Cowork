@@ -16,8 +16,10 @@ export const ToolApprovalCard = memo(function ToolApprovalCard({ approval }: Too
   const [remember, setRemember] = useState(true)
   const [secondsLeft, setSecondsLeft] = useState(APPROVAL_TIMEOUT_SECONDS)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const submitLockRef = useRef(false)
 
   const resolveApproval = useChatStore((s) => s.resolveApproval)
+  const removeApproval = useChatStore((s) => s.removeApproval)
 
   // Countdown timer for pending approvals
   useEffect(() => {
@@ -38,8 +40,16 @@ export const ToolApprovalCard = memo(function ToolApprovalCard({ approval }: Too
     }
   }, [approval.status])
 
+  // Gracefully remove stale cards when backend timeout window is exceeded.
+  useEffect(() => {
+    if (approval.status !== 'pending') return
+    if (secondsLeft > 0) return
+    removeApproval(approval.requestId)
+  }, [approval.requestId, approval.status, removeApproval, secondsLeft])
+
   const handleDecision = useCallback(async (approved: boolean) => {
-    if (isSubmitting || approval.status !== 'pending') return
+    if (submitLockRef.current || isSubmitting || approval.status !== 'pending' || secondsLeft <= 0) return
+    submitLockRef.current = true
     setIsSubmitting(true)
 
     try {
@@ -53,8 +63,9 @@ export const ToolApprovalCard = memo(function ToolApprovalCard({ approval }: Too
     } catch (err) {
       console.error('Failed to submit permission decision:', err)
       setIsSubmitting(false)
+      submitLockRef.current = false
     }
-  }, [approval, isSubmitting, remember, resolveApproval])
+  }, [approval, isSubmitting, remember, resolveApproval, secondsLeft])
 
   // Resolved state — compact single line
   if (approval.status === 'approved' || approval.status === 'denied') {
@@ -103,7 +114,7 @@ export const ToolApprovalCard = memo(function ToolApprovalCard({ approval }: Too
       <div className="flex items-center gap-2 px-4 py-3 border-t border-border/50 bg-muted/30">
         <button
           onClick={() => handleDecision(true)}
-          disabled={isSubmitting}
+          disabled={isSubmitting || secondsLeft <= 0}
           className={cn(
             'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium',
             'bg-emerald-600 text-white hover:bg-emerald-500',
@@ -116,7 +127,7 @@ export const ToolApprovalCard = memo(function ToolApprovalCard({ approval }: Too
         </button>
         <button
           onClick={() => handleDecision(false)}
-          disabled={isSubmitting}
+          disabled={isSubmitting || secondsLeft <= 0}
           className={cn(
             'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium',
             'bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80',
