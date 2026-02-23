@@ -68,7 +68,7 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const { switchTask, activeTask, resetActiveChat } = useChat()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [activeTab, setActiveTab] = useState('cowork')
-  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null)
+  const [loadingTaskId, setLoadingTaskId] = useState<string | null>(null)
   const userMenuRef = useRef<HTMLDivElement>(null)
 
   const activeTaskId = activeTask?.id ?? null
@@ -115,13 +115,13 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
     navigate('/')
   }
 
-  const handleSessionClick = useCallback(async (sessionId: string) => {
-    setLoadingSessionId(sessionId)
+  const handleSessionClick = useCallback(async (taskId: string) => {
+    setLoadingTaskId(taskId)
     try {
-      await switchTask(sessionId)
+      await switchTask(taskId)
       navigate('/')
     } finally {
-      setLoadingSessionId(null)
+      setLoadingTaskId(null)
     }
   }, [switchTask, navigate])
 
@@ -218,11 +218,11 @@ export function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
               <div className="space-y-1">
                 {sessions.slice(0, 10).map((session) => (
                   <SessionItem
-                    key={session.id}
+                    key={session.taskId}
                     session={session}
-                    isActive={session.id === activeTaskId}
-                    isLoading={session.id === loadingSessionId}
-                    onClick={() => handleSessionClick(session.id)}
+                    isActive={session.taskId === activeTaskId}
+                    isLoading={session.taskId === loadingTaskId}
+                    onClick={() => handleSessionClick(session.taskId)}
                   />
                 ))}
                 {sessions.length > 10 && (
@@ -325,6 +325,7 @@ function MenuItem({ icon: Icon, label, onClick, to }: MenuItemProps) {
 interface SessionItemProps {
   session: {
     id: string
+    taskId: string
     title: string
     preview: string
     status: 'ongoing' | 'completed'

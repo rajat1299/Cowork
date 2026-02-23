@@ -121,6 +121,33 @@ def _approval_memory_key(toolkit_name: str) -> str:
     return "".join(ch for ch in toolkit if ch.isalnum())
 
 
+def _approval_memory_group(toolkit_name: str, method_name: str) -> str | None:
+    toolkit, method = _normalize_tool_method(toolkit_name, method_name)
+
+    if "terminal" in toolkit:
+        return "terminal_command"
+    if "codeexecution" in toolkit or "code_execution" in toolkit:
+        return "code_execution"
+    if "pyautogui" in toolkit:
+        return "computer_control"
+    if _contains_any(toolkit, _COMMUNICATION_TOOLKIT_KEYWORDS):
+        return "communication_send"
+    if "memory" in toolkit and _contains_any(method, _MEMORY_EDIT_KEYWORDS):
+        return "memory_edit"
+    if "file" in toolkit:
+        if _contains_any(method, _FILE_DESTRUCTIVE_KEYWORDS):
+            return "file_destructive"
+        if _contains_any(method, _FILE_ASK_ONCE_KEYWORDS):
+            return "file_write"
+        return None
+    if "github" in toolkit:
+        return "github_write" if _github_is_write_action(method) else None
+    if _contains_any(toolkit, _ASK_ONCE_TOOLKIT_KEYWORDS):
+        toolkit_key = _approval_memory_key(toolkit_name)
+        return f"toolkit_{toolkit_key}" if toolkit_key else None
+    return None
+
+
 def _contains_any(text: str, keywords: set[str]) -> bool:
     compact_text = text.replace("_", "")
     return any(
@@ -269,8 +296,10 @@ async def _request_tool_permission(
     tier = _tool_approval_tier(toolkit_name, method_name)
     if tier == "never_ask":
         return True
+    memory_group = _approval_memory_group(toolkit_name, method_name)
     toolkit_key = _approval_memory_key(toolkit_name)
-    if tier == "ask_once" and toolkit_key in task_lock.remembered_approvals:
+    remembered_key = memory_group or toolkit_key
+    if remembered_key and remembered_key in task_lock.remembered_approvals:
         return True
 
     human_question, detail = _human_readable_permission(toolkit_name, method_name, message)
@@ -282,6 +311,7 @@ async def _request_tool_permission(
     task_lock.pending_approval_context[request_id] = {
         "tier": tier,
         "toolkit_key": toolkit_key,
+        "memory_group": memory_group or "",
     }
     event_stream.emit(
         StepEvent.ask_user,

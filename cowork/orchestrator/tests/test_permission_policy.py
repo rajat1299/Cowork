@@ -101,6 +101,7 @@ async def test_request_tool_permission_emits_enriched_payload_and_tracks_ask_onc
 
     request_id = payload["request_id"]
     assert request_id in task_lock.pending_approval_context
+    assert task_lock.pending_approval_context[request_id]["memory_group"] == "file_write"
     response_queue = task_lock.human_input[request_id]
     response_queue.put_nowait("approve")
 
@@ -111,25 +112,58 @@ async def test_request_tool_permission_emits_enriched_payload_and_tracks_ask_onc
 
 
 @pytest.mark.asyncio
-async def test_request_tool_permission_skips_ask_once_when_toolkit_already_remembered() -> None:
+async def test_request_tool_permission_skips_when_permission_group_is_remembered() -> None:
     task_lock = TaskLock(
         project_id="proj-permission",
-        remembered_approvals={"filetoolkitwithevents"},
+        remembered_approvals={"terminal_command"},
     )
     stream = _EventStreamStub()
 
     approved = await _request_tool_permission(
         task_lock=task_lock,
         event_stream=stream,
-        toolkit_name="FileToolkitWithEvents",
-        method_name="write_to_file",
-        message="path='/tmp/report.md'",
-        agent_name="document_agent",
+        toolkit_name="TerminalToolkitWithEvents",
+        method_name="shell_exec",
+        message="command='echo hello'",
+        agent_name="developer_agent",
         process_task_id="subtask-1",
     )
 
     assert approved is True
     assert stream.events == []
+
+
+@pytest.mark.asyncio
+async def test_request_tool_permission_remembered_file_write_does_not_skip_file_delete() -> None:
+    task_lock = TaskLock(
+        project_id="proj-permission-boundary",
+        remembered_approvals={"file_write"},
+    )
+    stream = _EventStreamStub()
+
+    pending = asyncio.create_task(
+        _request_tool_permission(
+            task_lock=task_lock,
+            event_stream=stream,
+            toolkit_name="FileToolkitWithEvents",
+            method_name="delete_file",
+            message="path='/tmp/report.md'",
+            agent_name="developer_agent",
+            process_task_id="subtask-2",
+        )
+    )
+
+    await asyncio.sleep(0)
+    assert stream.events
+    step, payload = stream.events[0]
+    assert step == StepEvent.ask_user
+    assert payload["tier"] == "always_ask"
+
+    request_id = str(payload["request_id"])
+    task_lock.human_input[request_id].put_nowait("approve")
+
+    approved = await pending
+    assert approved is True
 
 
 @pytest.mark.asyncio

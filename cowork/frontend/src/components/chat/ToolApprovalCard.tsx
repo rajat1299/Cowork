@@ -57,7 +57,7 @@ export const ToolApprovalCard = memo(function ToolApprovalCard({ approval }: Too
         approval.projectId,
         approval.requestId,
         approved,
-        approved && approval.tier === 'ask_once' ? remember : false,
+        approved ? remember : false,
       )
       resolveApproval(approval.requestId, approved ? 'approved' : 'denied')
     } catch (err) {
@@ -139,18 +139,15 @@ export const ToolApprovalCard = memo(function ToolApprovalCard({ approval }: Too
           Deny
         </button>
 
-        {/* Remember checkbox — only for ask_once tier */}
-        {approval.tier === 'ask_once' && (
-          <label className="flex items-center gap-1.5 ml-auto cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={remember}
-              onChange={(e) => setRemember(e.target.checked)}
-              className="rounded border-border text-emerald-600 focus:ring-emerald-500/20 h-3.5 w-3.5"
-            />
-            <span className="text-[11px] text-muted-foreground">Remember for this session</span>
-          </label>
-        )}
+        <label className="flex items-center gap-1.5 ml-auto cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            className="rounded border-border text-emerald-600 focus:ring-emerald-500/20 h-3.5 w-3.5"
+          />
+          <span className="text-[11px] text-muted-foreground">Remember for this session</span>
+        </label>
       </div>
     </div>
   )

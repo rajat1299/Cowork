@@ -287,9 +287,11 @@ export function ChatContainer() {
     return taskId ? s.tasks[taskId]?.notice ?? null : null
   })
 
-  const pendingApprovals = useChatStore((s) => {
-    return Object.values(s.pendingApprovals)
-  })
+  const pendingApprovalsMap = useChatStore((s) => s.pendingApprovals)
+  const pendingApprovals = useMemo(
+    () => Object.values(pendingApprovalsMap),
+    [pendingApprovalsMap]
+  )
   const pendingDecision = useChatStore((s) => s.pendingDecision)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)

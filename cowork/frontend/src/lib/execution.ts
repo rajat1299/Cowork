@@ -258,6 +258,23 @@ function deriveSubtasks(turnSteps: ProgressStep[]): TaskInfo[] {
     }
   })
 
+  const hasEnd = turnSteps.some((step) => step.step === 'end')
+  const hasTerminalError = turnSteps.some(
+    (step) => step.step === 'error' || step.step === 'context_too_long'
+  )
+  const hasFailedSubtask = subtasks.some((task) => task.status === 'failed')
+
+  // Some workflows emit `end` without explicit completed events for every subtask.
+  // Treat unresolved subtasks as completed when the overall turn ended successfully.
+  if (hasEnd && !hasTerminalError && !hasFailedSubtask) {
+    return subtasks.map((task) => {
+      if (task.status === 'pending' || task.status === 'running' || task.status === 'paused') {
+        return { ...task, status: 'completed' }
+      }
+      return task
+    })
+  }
+
   return subtasks
 }
 

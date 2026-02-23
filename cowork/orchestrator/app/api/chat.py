@@ -165,14 +165,10 @@ async def submit_permission_decision(
         raise HTTPException(status_code=409, detail="Permission request already resolved")
 
     pending_context = task_lock.pending_approval_context.get(request.request_id) or {}
-    if (
-        request.remember
-        and pending_context.get("tier") == "ask_once"
-        and _is_permission_approved(decision)
-    ):
-        toolkit_key = pending_context.get("toolkit_key")
-        if toolkit_key:
-            task_lock.remembered_approvals.add(toolkit_key)
+    if request.remember and _is_permission_approved(decision):
+        remembered_key = pending_context.get("memory_group") or pending_context.get("toolkit_key")
+        if remembered_key:
+            task_lock.remembered_approvals.add(remembered_key)
 
     return {"status": "recorded"}
 

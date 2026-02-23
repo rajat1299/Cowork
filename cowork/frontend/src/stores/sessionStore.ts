@@ -1,12 +1,13 @@
 import { create } from 'zustand'
 import { history } from '../api/coreApi'
-import type { HistoryTask, ProjectGroup } from '../api/coreApi'
+import type { HistoryTask } from '../api/coreApi'
 import { useChatStore } from './chatStore'
 
 // ============ Session Item Type ============
 
 export interface SessionItem {
   id: string
+  taskId: string
   projectId: string
   title: string
   preview: string
@@ -51,6 +52,7 @@ function truncateText(text: string, maxLength: number): string {
 function historyTaskToSession(task: HistoryTask): SessionItem {
   return {
     id: task.task_id,
+    taskId: task.task_id,
     projectId: task.project_id,
     title: task.project_name || truncateText(task.question, 50),
     preview: task.summary || truncateText(task.question, 100),
@@ -60,20 +62,6 @@ function historyTaskToSession(task: HistoryTask): SessionItem {
     taskCount: 1,
     isLocal: false,
     historyId: typeof task.id === 'number' ? task.id : undefined,
-  }
-}
-
-function projectGroupToSession(group: ProjectGroup): SessionItem {
-  return {
-    id: group.project_id,
-    projectId: group.project_id,
-    title: group.project_name || truncateText(group.last_prompt, 50),
-    preview: truncateText(group.last_prompt, 100),
-    status: group.total_ongoing_tasks > 0 ? 'ongoing' : 'completed',
-    tokens: group.total_tokens,
-    updatedAt: group.latest_task_date,
-    taskCount: group.task_count,
-    isLocal: false,
   }
 }
 
@@ -91,6 +79,7 @@ function getLocalSessions(): SessionItem[] {
 
     return {
       id: task.id,
+      taskId: task.id,
       projectId: task.projectId,
       title: truncateText(question, 50),
       preview: truncateText(question, 100),
@@ -104,7 +93,7 @@ function getLocalSessions(): SessionItem[] {
 }
 
 /**
- * Merge local and remote sessions, deduplicating by ID
+ * Merge local and remote sessions, deduplicating by task ID
  * Local sessions take precedence for ongoing tasks
  */
 function mergeSessions(local: SessionItem[], remote: SessionItem[]): SessionItem[] {
@@ -112,15 +101,15 @@ function mergeSessions(local: SessionItem[], remote: SessionItem[]): SessionItem
 
   // Add remote sessions first
   remote.forEach((session) => {
-    sessionMap.set(session.id, session)
+    sessionMap.set(session.taskId, session)
   })
 
   // Overlay local sessions (they have fresher state)
   local.forEach((session) => {
-    const existing = sessionMap.get(session.id)
+    const existing = sessionMap.get(session.taskId)
     // Local ongoing sessions should override remote
     if (!existing || session.status === 'ongoing') {
-      sessionMap.set(session.id, session)
+      sessionMap.set(session.taskId, session)
     }
   })
 
@@ -131,21 +120,6 @@ function mergeSessions(local: SessionItem[], remote: SessionItem[]): SessionItem
 }
 
 async function fetchRemoteSessions(limit: number = 20, offset: number = 0): Promise<SessionItem[]> {
-  if (offset > 0) {
-    const listResponse = await history.list(limit, offset)
-    if (!Array.isArray(listResponse)) return []
-    return listResponse.map(historyTaskToSession)
-  }
-
-  try {
-    const groupedResponse = await history.listGrouped(false)
-    if (groupedResponse.projects) {
-      return groupedResponse.projects.map(projectGroupToSession)
-    }
-  } catch {
-    // Fall back to flat list
-  }
-
   const listResponse = await history.list(limit, offset)
   if (!Array.isArray(listResponse)) return []
   return listResponse.map(historyTaskToSession)
@@ -272,7 +246,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   deleteSession: async (sessionId) => {
     // Find the session to get its backend historyId
-    const session = get().sessions.find((s) => s.id === sessionId)
+    const session = get().sessions.find((s) => s.taskId === sessionId)
 
     if (session?.historyId) {
       try {
@@ -286,7 +260,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // Remove from local state
     set((state) => ({
-      sessions: state.sessions.filter((s) => s.id !== sessionId),
+      sessions: state.sessions.filter((s) => s.taskId !== sessionId),
     }))
 
     // Also remove from chatStore if it exists there
