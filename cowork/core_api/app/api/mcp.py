@@ -124,18 +124,6 @@ def list_mcps(
     return [McpServerOut(**record.__dict__) for record in records]
 
 
-@router.get("/mcp/{mcp_id}", response_model=McpServerOut)
-def get_mcp(
-    mcp_id: int,
-    user=Depends(get_current_user),
-    session: Session = Depends(get_session),
-) -> McpServerOut:
-    record = session.exec(select(McpServer).where(McpServer.id == mcp_id)).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="MCP server not found")
-    return McpServerOut(**record.__dict__)
-
-
 @router.post("/mcp", response_model=McpServerOut)
 def create_mcp(
     request: McpServerCreate,
@@ -305,3 +293,15 @@ def delete_mcp_user(
     session.delete(record)
     session.commit()
     return Response(status_code=204)
+
+
+@router.get("/mcp/{mcp_id}", response_model=McpServerOut)
+def get_mcp(
+    mcp_id: int,
+    user=Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> McpServerOut:
+    record = session.exec(select(McpServer).where(McpServer.id == mcp_id)).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    return McpServerOut(**record.__dict__)

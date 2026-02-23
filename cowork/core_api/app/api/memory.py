@@ -434,7 +434,7 @@ def _sqlite_fts5_search(
 ) -> list[ChatSearchResultOut]:
     _ensure_sqlite_fts(session)
 
-    match_query = " ".join(part for part in query.strip().split() if part)
+    match_query = _build_sqlite_match_query(query)
     if not match_query:
         return []
 
@@ -491,6 +491,15 @@ def _sqlite_fts5_search(
             )
         )
     return payload
+
+
+def _build_sqlite_match_query(query: str) -> str:
+    # Quote every token to avoid FTS5 syntax errors for punctuation (e.g. ".md").
+    terms = [term.strip() for term in query.strip().split() if term.strip()]
+    if not terms:
+        return ""
+    escaped = [f"\"{term.replace('"', '""')}\"" for term in terms]
+    return " ".join(escaped)
 
 
 def _ensure_sqlite_fts(session: Session) -> None:

@@ -120,3 +120,36 @@ def test_list_grouped_histories_supports_excluding_tasks(
     assert payload["total_projects"] == 1
     assert payload["total_tasks"] == 1
     assert payload["projects"][0]["tasks"] == []
+
+
+def test_create_history_is_idempotent_for_same_task(
+    client: TestClient,
+    auth_headers: dict[str, str],
+) -> None:
+    first = _create_history(
+        client,
+        auth_headers,
+        task_id="task-idempotent-1",
+        project_id="project-idempotent",
+        question="Initial question",
+        project_name="Idempotent",
+        tokens=0,
+        status=1,
+    )
+    second = _create_history(
+        client,
+        auth_headers,
+        task_id="task-idempotent-1",
+        project_id="project-idempotent",
+        question="Follow-up question",
+        project_name="Idempotent",
+        tokens=99,
+        status=2,
+    )
+
+    assert second["id"] == first["id"]
+
+    list_response = client.get("/chat/histories?limit=20&offset=0", headers=auth_headers)
+    assert list_response.status_code == 200
+    rows = [row for row in list_response.json() if row["task_id"] == "task-idempotent-1"]
+    assert len(rows) == 1

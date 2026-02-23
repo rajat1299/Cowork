@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.auth import get_current_user
@@ -86,6 +87,15 @@ def create_history(
     user=Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> ChatHistoryOut:
+    existing = session.exec(
+        select(ChatHistory).where(
+            ChatHistory.task_id == request.task_id,
+            ChatHistory.user_id == user.id,
+        )
+    ).first()
+    if existing:
+        return ChatHistoryOut(**existing.__dict__)
+
     project_id = request.project_id or request.task_id
     record = ChatHistory(
         user_id=user.id,
@@ -107,7 +117,16 @@ def create_history(
         status=request.status,
     )
     session.add(record)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        duplicate = session.exec(
+            select(ChatHistory).where(ChatHistory.task_id == request.task_id)
+        ).first()
+        if duplicate and duplicate.user_id == user.id:
+            return ChatHistoryOut(**duplicate.__dict__)
+        raise HTTPException(status_code=409, detail="Task history already exists")
     session.refresh(record)
     return ChatHistoryOut(**record.__dict__)
 

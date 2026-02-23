@@ -9,8 +9,9 @@ from sqlmodel import Session, select
 
 from app.auth import get_current_user
 from app.config import settings
+from app.config_catalog import group_aliases
 from app.db import get_session
-from app.models import SearchUsage
+from app.models import Config, SearchUsage
 from shared.ratelimit import SlidingWindowLimiter, ip_key, rate_limit
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -82,6 +83,32 @@ def _require_server_exa_key() -> str:
     return api_key
 
 
+def _resolve_exa_key(session: Session, user_id: int) -> tuple[str, bool]:
+    aliases = group_aliases("search")
+    if aliases:
+        statement = (
+            select(Config)
+            .where(
+                Config.user_id == user_id,
+                Config.group.in_(aliases),
+                Config.name == "EXA_API_KEY",
+            )
+            .order_by(Config.updated_at.desc())
+        )
+        record = session.exec(statement).first()
+        if record and record.value and record.value.strip():
+            return record.value.strip(), True
+    try:
+        return _require_server_exa_key(), False
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            raise HTTPException(
+                status_code=503,
+                detail="Exa key is not configured. Add EXA_API_KEY in Search connector settings or server env.",
+            ) from exc
+        raise
+
+
 def _reserve_usage(
     session: Session,
     user_id: int,
@@ -90,47 +117,47 @@ def _reserve_usage(
 ) -> None:
     today = _utc_today()
     now = datetime.now(timezone.utc)
-    with session.begin():
-        statement = (
-            select(SearchUsage)
-            .where(
-                SearchUsage.user_id == user_id,
-                SearchUsage.provider == _PROVIDER_EXA,
-                SearchUsage.date == today,
-            )
-            .with_for_update()
+    statement = (
+        select(SearchUsage)
+        .where(
+            SearchUsage.user_id == user_id,
+            SearchUsage.provider == _PROVIDER_EXA,
+            SearchUsage.date == today,
         )
-        usage = session.exec(statement).first()
-        if not usage:
-            usage = SearchUsage(
-                user_id=user_id,
-                provider=_PROVIDER_EXA,
-                date=today,
-                requests_count=0,
-                results_count=0,
-                cost_usd_estimate=0.0,
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(usage)
-
-        if usage.requests_count >= _USER_DAILY_CAP:
-            raise HTTPException(status_code=429, detail="Daily search limit reached")
-
-        global_cost = session.exec(
-            select(func.coalesce(func.sum(SearchUsage.cost_usd_estimate), 0.0)).where(
-                SearchUsage.provider == _PROVIDER_EXA,
-                SearchUsage.date == today,
-            )
-        ).one()
-        if global_cost + estimated_cost > _GLOBAL_DAILY_CAP_USD:
-            raise HTTPException(status_code=402, detail="Global search budget exhausted")
-
-        usage.requests_count += 1
-        usage.results_count += num_results
-        usage.cost_usd_estimate += estimated_cost
-        usage.updated_at = now
+        .with_for_update()
+    )
+    usage = session.exec(statement).first()
+    if not usage:
+        usage = SearchUsage(
+            user_id=user_id,
+            provider=_PROVIDER_EXA,
+            date=today,
+            requests_count=0,
+            results_count=0,
+            cost_usd_estimate=0.0,
+            created_at=now,
+            updated_at=now,
+        )
         session.add(usage)
+
+    if usage.requests_count >= _USER_DAILY_CAP:
+        raise HTTPException(status_code=429, detail="Daily search limit reached")
+
+    global_cost = session.exec(
+        select(func.coalesce(func.sum(SearchUsage.cost_usd_estimate), 0.0)).where(
+            SearchUsage.provider == _PROVIDER_EXA,
+            SearchUsage.date == today,
+        )
+    ).one()
+    if global_cost + estimated_cost > _GLOBAL_DAILY_CAP_USD:
+        raise HTTPException(status_code=402, detail="Global search budget exhausted")
+
+    usage.requests_count += 1
+    usage.results_count += num_results
+    usage.cost_usd_estimate += estimated_cost
+    usage.updated_at = now
+    session.add(usage)
+    session.commit()
 
 
 def _rollback_usage(
@@ -141,24 +168,24 @@ def _rollback_usage(
 ) -> None:
     today = _utc_today()
     now = datetime.now(timezone.utc)
-    with session.begin():
-        statement = (
-            select(SearchUsage)
-            .where(
-                SearchUsage.user_id == user_id,
-                SearchUsage.provider == _PROVIDER_EXA,
-                SearchUsage.date == today,
-            )
-            .with_for_update()
+    statement = (
+        select(SearchUsage)
+        .where(
+            SearchUsage.user_id == user_id,
+            SearchUsage.provider == _PROVIDER_EXA,
+            SearchUsage.date == today,
         )
-        usage = session.exec(statement).first()
-        if not usage:
-            return
-        usage.requests_count = max(0, usage.requests_count - 1)
-        usage.results_count = max(0, usage.results_count - num_results)
-        usage.cost_usd_estimate = max(0.0, usage.cost_usd_estimate - estimated_cost)
-        usage.updated_at = now
-        session.add(usage)
+        .with_for_update()
+    )
+    usage = session.exec(statement).first()
+    if not usage:
+        return
+    usage.requests_count = max(0, usage.requests_count - 1)
+    usage.results_count = max(0, usage.results_count - num_results)
+    usage.cost_usd_estimate = max(0.0, usage.cost_usd_estimate - estimated_cost)
+    usage.updated_at = now
+    session.add(usage)
+    session.commit()
 
 
 @router.post("/exa", dependencies=[Depends(_search_rate_limit)])
@@ -168,10 +195,11 @@ def exa_search(
     session: Session = Depends(get_session),
 ):
     _validate_exa_request(search)
-    api_key = _require_server_exa_key()
+    api_key, using_user_key = _resolve_exa_key(session, user.id)
     estimated_cost = _estimate_cost(search.num_results)
 
-    _reserve_usage(session, user.id, search.num_results, estimated_cost)
+    if not using_user_key:
+        _reserve_usage(session, user.id, search.num_results, estimated_cost)
 
     payload = {
         "query": search.query,
@@ -192,7 +220,8 @@ def exa_search(
         )
         response.raise_for_status()
     except httpx.HTTPError:
-        _rollback_usage(session, user.id, search.num_results, estimated_cost)
+        if not using_user_key:
+            _rollback_usage(session, user.id, search.num_results, estimated_cost)
         raise HTTPException(status_code=502, detail="Exa API request failed")
 
     return response.json()

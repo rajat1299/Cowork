@@ -16,6 +16,7 @@ from camel.societies.workforce.workforce import (
 from camel.tasks.task import Task, TaskState
 
 from app.clients.core_api import ProviderConfig
+from app.config import settings
 from app.runtime.camel_agent import CoworkChatAgent
 from app.runtime.events import StepEvent
 from app.runtime.streaming import EventStream, TokenTracker
@@ -139,6 +140,13 @@ class CoworkWorkforce(BaseWorkforce):
         self._event_stream = event_stream
         self._token_tracker = token_tracker
         self._node_to_agent_id: dict[str, str] = {}
+        failure_strategies = [
+            value.strip()
+            for value in settings.workforce_failure_strategies.split(",")
+            if value.strip()
+        ]
+        if not failure_strategies:
+            failure_strategies = ["retry"]
         super().__init__(
             description=description,
             children=None,
@@ -148,7 +156,11 @@ class CoworkWorkforce(BaseWorkforce):
             graceful_shutdown_timeout=graceful_shutdown_timeout,
             share_memory=share_memory,
             use_structured_output_handler=False,
-            failure_handling_config=FailureHandlingConfig(enabled_strategies=["retry", "replan"]),
+            failure_handling_config=FailureHandlingConfig(
+                enabled_strategies=failure_strategies,
+                max_retries=max(0, settings.workforce_max_retries),
+                halt_on_max_retries=settings.workforce_halt_on_max_retries,
+            ),
         )
         if getattr(self, "task_agent", None):
             try:
@@ -312,5 +324,12 @@ def _build_agent(
         timeout=60,
         model_config_dict=model_config,
     )
-    agent = CoworkChatAgent(system_message=system_prompt, model=model, agent_id=agent_id, tools=tools)
+    agent = CoworkChatAgent(
+        system_message=system_prompt,
+        model=model,
+        agent_id=agent_id,
+        tools=tools,
+        max_iteration=max(1, settings.agent_max_iterations),
+        step_timeout=max(1.0, settings.agent_step_timeout_seconds),
+    )
     return agent

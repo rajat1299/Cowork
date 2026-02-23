@@ -10,6 +10,11 @@ class OrchestratorSettings(BaseSettings):
     core_api_url: str = "http://localhost:3001"
     core_api_internal_key: str = ""
     rate_limit_chat_per_minute: int = 30
+    agent_max_iterations: int = 6
+    agent_step_timeout_seconds: float = 120.0
+    workforce_failure_strategies: str = "retry,replan"
+    workforce_max_retries: int = 2
+    workforce_halt_on_max_retries: bool = True
 
     @field_validator("core_api_internal_key")
     @classmethod

@@ -16,6 +16,7 @@ from camel.toolkits.terminal_toolkit import TerminalToolkit
 
 from app.config import settings
 from app.clients.core_api import search_chat_messages
+from app.runtime.config_helpers import ComposeVariant, _emit_compose_message
 from app.runtime.events import StepEvent
 from app.runtime.tool_context import (
     current_agent_name,
@@ -26,6 +27,8 @@ from app.runtime.tool_context import (
 from app.runtime.toolkits.camel_listen import auto_listen_toolkit
 
 logger = logging.getLogger(__name__)
+
+_COMPOSE_PLATFORMS = {"email", "slack", "linkedin", "text", "generic"}
 
 # Thread-local storage for event loops used by sync tool wrappers
 _thread_local = threading.local()
@@ -69,6 +72,13 @@ def _coerce_limit(value: int | None, default: int = 5, max_limit: int = 20) -> i
     except (TypeError, ValueError):
         limit = default
     return max(1, min(limit, max_limit))
+
+
+def _normalize_compose_platform(value: str | None) -> str:
+    platform = (value or "").strip().lower()
+    if platform in _COMPOSE_PLATFORMS:
+        return platform
+    return "generic"
 
 
 async def search_past_chats(
@@ -130,6 +140,51 @@ async def search_exa(
             return resp.json()
     except httpx.HTTPError as exc:
         return {"results": [], "count": 0, "error": str(exc)}
+
+
+def _build_compose_message_tool(event_stream: Any) -> FunctionTool:
+    def compose_message(
+        body: str,
+        subject: str = "",
+        platform: str = "email",
+        label: str = "Draft",
+        recipient: str = "",
+    ) -> dict[str, Any]:
+        """Render a compose widget in the UI with subject/body text.
+
+        Use this when the user asks for a draft message to appear directly in the app.
+        """
+        normalized_platform = _normalize_compose_platform(platform)
+        clean_body = (body or "").strip()
+        if not clean_body:
+            return {"status": "error", "error": "body is required"}
+
+        clean_subject = (subject or "").strip()
+        variant = ComposeVariant(
+            id="variant_1",
+            label=(label or "").strip() or "Draft",
+            subject=clean_subject,
+            body=clean_body,
+        )
+        metadata: dict[str, str] = {}
+        clean_recipient = (recipient or "").strip()
+        if clean_recipient:
+            metadata["recipient"] = clean_recipient
+
+        _emit_compose_message(
+            event_stream,
+            platform=normalized_platform,
+            variants=[variant],
+            metadata=metadata or None,
+        )
+
+        return {
+            "status": "rendered",
+            "platform": normalized_platform,
+            "variant_count": 1,
+        }
+
+    return FunctionTool(compose_message)
 
 
 @auto_listen_toolkit(SearchToolkit)
@@ -434,6 +489,7 @@ SUPPORTED_TOOL_NAMES = {
     "pyautogui",
     "screenshot",
     "web_deploy",
+    "compose_message",
     "mcp",
 }
 
@@ -483,6 +539,9 @@ TOOL_ALIASES = {
     "pyautogui_toolkit": "pyautogui",
     "screenshot_toolkit": "screenshot",
     "web_deploy_toolkit": "web_deploy",
+    "compose_toolkit": "compose_message",
+    "compose_message_toolkit": "compose_message",
+    "compose": "compose_message",
     "mcp_toolkit": "mcp",
 }
 
@@ -522,6 +581,14 @@ def build_agent_tools(
                 _safe_extend(tools, toolkit.get_tools())
             except Exception as exc:
                 logger.warning("Search toolkit unavailable: %s", exc)
+
+    if "compose_message" in expanded:
+        try:
+            tool = _build_compose_message_tool(event_stream)
+            wrapped = _wrap_function_tool(tool, event_stream, agent_name, "compose_message")
+            _safe_extend(tools, [wrapped])
+        except Exception as exc:
+            logger.warning("Compose message toolkit unavailable: %s", exc)
 
     if "memory_search" in expanded:
         try:

@@ -43,3 +43,30 @@ def test_memory_search_works_with_sqlite_backend(
     assert len(payload) >= 1
     assert payload[0]["project_id"] == "project-search"
     assert "vector" in payload[0]["content"].lower()
+
+
+def test_memory_search_handles_filename_punctuation_in_query(
+    client,
+    db_session: Session,
+    test_user: User,
+    auth_headers: dict[str, str],
+) -> None:
+    db_session.add(
+        ChatMessage(
+            user_id=test_user.id,
+            project_id="project-search",
+            task_id="task-search-3",
+            role="assistant",
+            content="Saved draft as Product_Launch_Announcement_Draft.md in workdir.",
+            message_type="assistant",
+        )
+    )
+    db_session.commit()
+
+    response = client.get(
+        "/memory/search?query=Product+Launch+Announcement+Draft.md&project_id=project-search&limit=10",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)

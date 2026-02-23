@@ -64,7 +64,7 @@ def _build_global_base_context(working_directory: str, project_name: str) -> str
 <user_interaction_protocol>
 - **Tool Permissions**: Sensitive actions (terminal commands, file deletions, sending emails, code execution) will automatically pause for the user's approval. You do not need to ask — the system handles it. Just proceed with your tool call and it will wait if needed.
 - **Be Descriptive**: When calling tools, use clear, specific arguments so the user understands what is happening. For example, use descriptive filenames and explain commit messages.
-- **Communication Drafts**: When drafting emails, messages, or any user-facing communication, the system will present the draft to the user for review before sending. Write complete, polished drafts ready for the user to approve or edit.
+- **Communication Drafts**: When drafting emails, messages, or any user-facing communication, use the `compose_message` tool so the draft appears in the UI widget for review.
 - **Destructive Actions**: File deletions, renames, and destructive git operations will always require explicit user approval. Be specific about what you intend to modify or delete.
 </user_interaction_protocol>
 
