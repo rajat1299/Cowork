@@ -51,6 +51,15 @@ export const DecisionWidget = memo(function DecisionWidget({ decision }: Decisio
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [freeformValue, setFreeformValue] = useState('')
   const [secondsLeft, setSecondsLeft] = useState(decision.timeout)
+  const [timerDecisionKey, setTimerDecisionKey] = useState(
+    `${decision.requestId}:${decision.timeout}`
+  )
+
+  const nextTimerDecisionKey = `${decision.requestId}:${decision.timeout}`
+  if (timerDecisionKey !== nextTimerDecisionKey) {
+    setTimerDecisionKey(nextTimerDecisionKey)
+    setSecondsLeft(decision.timeout)
+  }
 
   const optionMap = useMemo(() => {
     return new Map(decision.options.map((option) => [option.id, option]))
@@ -93,12 +102,11 @@ export const DecisionWidget = memo(function DecisionWidget({ decision }: Decisio
   }, [decision.requestId, decision.timeout])
 
   useEffect(() => {
-    setSecondsLeft(decision.timeout)
     const ticker = setInterval(() => {
       setSecondsLeft((prev) => (prev > 0 ? prev - 1 : 0))
     }, 1000)
     return () => clearInterval(ticker)
-  }, [decision.requestId, decision.timeout])
+  }, [timerDecisionKey])
 
   const submit = useCallback(
     async (response: string, userMessage: string) => {
