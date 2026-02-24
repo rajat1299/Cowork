@@ -23,6 +23,7 @@ PRODUCT_REPORT.md
 ENGINEERING_PLAN.md
 uimocks/
 docs/adr/
+docs/operations/
 
 # Python
 __pycache__/
