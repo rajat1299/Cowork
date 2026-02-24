@@ -16,10 +16,12 @@ import type {
   AgentConfig,
   AttachmentInfo,
   AttachmentPayload,
+  PermissionMode,
 } from '../types/chat'
 
 /** Options for sending a chat message */
 export interface ChatMessageOptions {
+  permissionMode?: PermissionMode
   searchEnabled?: boolean
   agents?: AgentConfig[]
   files?: File[]
@@ -200,6 +202,7 @@ export function useChat(): UseChatReturn {
           projectId: pid,
           taskId,
           question: message,
+          permissionMode: options?.permissionMode,
           searchEnabled: options?.searchEnabled,
           agents: options?.agents,
           attachments: attachmentPayloads,
@@ -279,6 +282,7 @@ export function useChat(): UseChatReturn {
           projectId,
           taskId,
           question: message,
+          permissionMode: options?.permissionMode,
           searchEnabled: options?.searchEnabled,
           agents: options?.agents,
           attachments: attachmentPayloads,

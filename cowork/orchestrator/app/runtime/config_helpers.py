@@ -4,7 +4,7 @@ import asyncio
 import os
 import time
 import uuid
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypedDict
 
 from app.runtime.events import StepEvent
 from app.runtime.task_lock import TaskLock
@@ -37,6 +37,17 @@ _PERMISSION_DENY_VALUES = {
     "stop",
 }
 ToolApprovalTier = Literal["always_ask", "ask_once", "never_ask"]
+ToolPermissionMode = Literal["default", "accept_edits", "plan"]
+ToolPolicyDecision = Literal["allow", "ask", "deny"]
+
+
+class ToolPolicyEvaluation(TypedDict):
+    decision: ToolPolicyDecision
+    tier: ToolApprovalTier
+    policy_mode: ToolPermissionMode
+    toolkit_key: str
+    memory_group: str
+    reason: str
 
 _FILE_DESTRUCTIVE_KEYWORDS = {"delete", "remove", "rename", "move"}
 _FILE_ASK_ONCE_KEYWORDS = {"write", "edit", "append", "create", "mkdir", "touch", "copy"}
@@ -230,8 +241,95 @@ def _tool_approval_tier(toolkit_name: str, method_name: str) -> ToolApprovalTier
     return "never_ask"
 
 
-def _requires_tool_permission(toolkit_name: str, method_name: str) -> bool:
-    return _tool_approval_tier(toolkit_name, method_name) != "never_ask"
+def _normalize_permission_mode(permission_mode: str | None) -> ToolPermissionMode:
+    if permission_mode is None:
+        return "default"
+    normalized = str(permission_mode).strip().lower().replace("-", "_")
+    if normalized in {"acceptedits", "accept_edits", "accept_edits_like"}:
+        return "accept_edits"
+    if normalized in {"plan", "plan_mode"}:
+        return "plan"
+    return "default"
+
+
+def _evaluate_tool_permission_policy(
+    toolkit_name: str,
+    method_name: str,
+    *,
+    permission_mode: str | None = None,
+    remembered_approvals: set[str] | None = None,
+) -> ToolPolicyEvaluation:
+    remembered_approvals = remembered_approvals or set()
+    normalized_mode = _normalize_permission_mode(permission_mode)
+    tier = _tool_approval_tier(toolkit_name, method_name)
+    toolkit, _method = _normalize_tool_method(toolkit_name, method_name)
+    toolkit_key = _approval_memory_key(toolkit_name)
+    memory_group = _approval_memory_group(toolkit_name, method_name) or ""
+    remembered_key = memory_group or toolkit_key
+
+    if normalized_mode == "plan":
+        return {
+            "decision": "deny",
+            "tier": tier,
+            "policy_mode": normalized_mode,
+            "toolkit_key": toolkit_key,
+            "memory_group": memory_group,
+            "reason": "plan_mode_blocks_tool_execution",
+        }
+
+    if normalized_mode == "accept_edits" and "file" in toolkit:
+        return {
+            "decision": "allow",
+            "tier": tier,
+            "policy_mode": normalized_mode,
+            "toolkit_key": toolkit_key,
+            "memory_group": memory_group,
+            "reason": "accept_edits_auto_approves_file_tool",
+        }
+
+    if tier == "never_ask":
+        return {
+            "decision": "allow",
+            "tier": tier,
+            "policy_mode": normalized_mode,
+            "toolkit_key": toolkit_key,
+            "memory_group": memory_group,
+            "reason": "tier_never_ask",
+        }
+
+    if remembered_key and remembered_key in remembered_approvals:
+        return {
+            "decision": "allow",
+            "tier": tier,
+            "policy_mode": normalized_mode,
+            "toolkit_key": toolkit_key,
+            "memory_group": memory_group,
+            "reason": "remembered_approval",
+        }
+
+    return {
+        "decision": "ask",
+        "tier": tier,
+        "policy_mode": normalized_mode,
+        "toolkit_key": toolkit_key,
+        "memory_group": memory_group,
+        "reason": "requires_user_approval",
+    }
+
+
+def _requires_tool_permission(
+    toolkit_name: str,
+    method_name: str,
+    *,
+    permission_mode: str | None = None,
+    remembered_approvals: set[str] | None = None,
+) -> bool:
+    return _evaluate_tool_permission_policy(
+        toolkit_name,
+        method_name,
+        permission_mode=permission_mode,
+        remembered_approvals=remembered_approvals,
+    )["decision"] == "ask"
 
 
 def _is_permission_approved(value: Any) -> bool:
@@ -328,15 +426,48 @@ async def _request_tool_permission(
     message: str,
     agent_name: str,
     process_task_id: str,
+    permission_mode: str | None = None,
 ) -> bool:
-    tier = _tool_approval_tier(toolkit_name, method_name)
-    if tier == "never_ask":
+    policy = _evaluate_tool_permission_policy(
+        toolkit_name,
+        method_name,
+        permission_mode=permission_mode,
+        remembered_approvals=task_lock.remembered_approvals,
+    )
+    tier = policy["tier"]
+    memory_group = policy["memory_group"] or ""
+    toolkit_key = policy["toolkit_key"]
+
+    if policy["decision"] == "allow":
         return True
-    memory_group = _approval_memory_group(toolkit_name, method_name)
-    toolkit_key = _approval_memory_key(toolkit_name)
-    remembered_key = memory_group or toolkit_key
-    if remembered_key and remembered_key in task_lock.remembered_approvals:
-        return True
+
+    if policy["decision"] == "deny":
+        event_stream.emit(
+            StepEvent.notice,
+            {
+                "message": (
+                    f"Blocked {toolkit_name}.{method_name}: tool execution is disabled in "
+                    f"{policy['policy_mode'].replace('_', ' ')} mode."
+                ),
+                "policy_mode": policy["policy_mode"],
+                "toolkit_name": toolkit_name,
+                "method_name": method_name,
+                "process_task_id": process_task_id,
+            },
+        )
+        _emit_audit_log(
+            event_stream,
+            event_name="permission_policy_denied",
+            request_id=uuid.uuid4().hex,
+            channel="tool_approval",
+            outcome="denied",
+            toolkit_name=toolkit_name,
+            method_name=method_name,
+            tier=tier,
+            message=policy["reason"],
+            process_task_id=process_task_id,
+        )
+        return False
 
     human_question, detail = _human_readable_permission(toolkit_name, method_name, message)
     agent_display_name = _friendly_agent_name(agent_name)
@@ -348,7 +479,8 @@ async def _request_tool_permission(
         "channel": "tool_approval",
         "tier": tier,
         "toolkit_key": toolkit_key,
-        "memory_group": memory_group or "",
+        "memory_group": memory_group,
+        "policy_mode": policy["policy_mode"],
         "contract_version": INTERACTION_CONTRACT_VERSION,
     }
     event_stream.emit(

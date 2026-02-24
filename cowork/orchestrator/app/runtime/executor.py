@@ -256,6 +256,7 @@ async def _run_camel_complex(
                 message=str(payload.get("message") or ""),
                 agent_name=str(payload.get("agent_name") or ""),
                 process_task_id=str(payload.get("process_task_id") or ""),
+                permission_mode=action.permission_mode,
             )
 
         for spec in agent_specs:

@@ -108,6 +108,8 @@ def _map_step_to_agent_event(step: StepEvent) -> str | None:
         return "compose_message"
     if step == StepEvent.turn_cancelled:
         return "turn_cancelled"
+    if step == StepEvent.audit_log:
+        return "audit_log"
     if step in {
         StepEvent.context_too_long,
         StepEvent.to_sub_tasks,
@@ -152,6 +154,15 @@ def _agent_event_payload(step: StepEvent, data: dict) -> dict:
         return data
     if step == StepEvent.turn_cancelled:
         return {"reason": data.get("reason")}
+    if step == StepEvent.audit_log:
+        return {
+            "event_name": data.get("event_name"),
+            "outcome": data.get("outcome"),
+            "channel": data.get("channel"),
+            "toolkit_name": data.get("toolkit_name"),
+            "method_name": data.get("method_name"),
+            "request_id": data.get("request_id"),
+        }
     if step == StepEvent.end:
         return data
     return {"kind": step.value, "data": data}

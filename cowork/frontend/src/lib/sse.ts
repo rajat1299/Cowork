@@ -119,6 +119,7 @@ interface SSEConnectionOptions {
   projectId: string
   taskId: string
   question: string
+  permissionMode?: StartChatRequest['permission_mode']
   // Optional features
   searchEnabled?: boolean
   agents?: Array<{ name: string; tools: string[] }>
@@ -814,7 +815,7 @@ function clearCompactingNotice(taskId: string): void {
  * Start an SSE connection to the orchestrator
  */
 export async function startSSEConnection(options: SSEConnectionOptions): Promise<void> {
-  const { projectId, taskId, question, searchEnabled, agents, attachments, onOpen, onError, onClose } = options
+  const { projectId, taskId, question, permissionMode, searchEnabled, agents, attachments, onOpen, onError, onClose } = options
 
   const store = useChatStore.getState()
 
@@ -842,6 +843,7 @@ export async function startSSEConnection(options: SSEConnectionOptions): Promise
     project_id: projectId,
     task_id: taskId,
     question,
+    ...(permissionMode && { permission_mode: permissionMode }),
     language: navigator.language,
     ...(searchEnabled !== undefined && { search_enabled: searchEnabled }),
     ...(agents && { agents }),
@@ -949,6 +951,7 @@ export async function sendImproveMessage(
   question: string,
   taskId?: string,
   options?: {
+    permissionMode?: ImproveChatRequest['permission_mode']
     searchEnabled?: boolean
     agents?: Array<{ name: string; tools: string[] }>
     attachments?: ImproveChatRequest['attachments']
@@ -965,6 +968,7 @@ export async function sendImproveMessage(
       body: JSON.stringify({
         question,
         task_id: taskId,
+        ...(options?.permissionMode && { permission_mode: options.permissionMode }),
         ...(options?.searchEnabled !== undefined && { search_enabled: options.searchEnabled }),
         ...(options?.agents && { agents: options.agents }),
         ...(options?.attachments && { attachments: options.attachments }),

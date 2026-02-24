@@ -31,6 +31,7 @@ class ChatRequest(BaseModel):
     project_id: str
     task_id: str
     question: str
+    permission_mode: str | None = None
     search_enabled: bool | None = None
     attachments: list["AttachmentPayload"] | None = None
     provider_id: int | None = None
@@ -88,6 +89,7 @@ async def start_chat(
                 project_id=request.project_id,
                 task_id=request.task_id,
                 question=request.question,
+                permission_mode=request.permission_mode,
                 request_id=request_id,
                 search_enabled=request.search_enabled,
                 attachments=request.attachments,
@@ -113,6 +115,7 @@ async def start_chat(
 class ImproveRequest(BaseModel):
     task_id: str
     question: str
+    permission_mode: str | None = None
     search_enabled: bool | None = None
     attachments: list[AttachmentPayload] | None = None
     provider_id: int | None = None
@@ -151,6 +154,7 @@ async def improve_chat(
             project_id=project_id,
             task_id=request.task_id,
             question=request.question,
+            permission_mode=request.permission_mode,
             request_id=request_id,
             search_enabled=request.search_enabled,
             attachments=request.attachments,

@@ -97,6 +97,33 @@ def test_improve_chat_with_valid_token_queues_action(monkeypatch):
     remove(project_id)
 
 
+def test_improve_chat_passes_permission_mode_into_action(monkeypatch):
+    from app import auth as auth_module
+
+    project_id = "proj-auth-permission-mode"
+
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
+        return None
+
+    monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/chat/{project_id}/improve",
+            json={"task_id": "task-auth", "question": "hello", "permission_mode": "plan"},
+            headers={"Authorization": "Bearer valid-token"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+
+    task_lock = get(project_id)
+    assert task_lock is not None
+    queued_action = task_lock.queue.get_nowait()
+    assert queued_action.permission_mode == "plan"
+    remove(project_id)
+
+
 def test_start_chat_with_valid_token_streams_events(monkeypatch):
     from app import auth as auth_module
 

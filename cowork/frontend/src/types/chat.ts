@@ -343,10 +343,13 @@ export interface AgentConfig {
   tools: string[]
 }
 
+export type PermissionMode = 'default' | 'acceptEdits' | 'plan'
+
 export interface StartChatRequest {
   project_id: string
   task_id: string
   question: string
+  permission_mode?: PermissionMode
   // Model selection (BYOK)
   model_provider?: string
   model_type?: string
@@ -363,6 +366,7 @@ export interface StartChatRequest {
 export interface ImproveChatRequest {
   question: string
   task_id?: string
+  permission_mode?: PermissionMode
   // Features (same as StartChatRequest)
   search_enabled?: boolean
   attachments?: AttachmentPayload[]

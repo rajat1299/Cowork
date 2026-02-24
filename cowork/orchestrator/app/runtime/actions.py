@@ -37,6 +37,7 @@ class ActionImprove(BaseModel):
     project_id: str
     task_id: str
     question: str
+    permission_mode: str | None = None
     request_id: str | None = None
     search_enabled: bool | None = None
     attachments: list[AttachmentPayload] | None = None

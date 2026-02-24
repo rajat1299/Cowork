@@ -8,6 +8,7 @@ export interface StartChatRequest {
   project_id: string
   task_id: string
   question: string
+  permission_mode?: 'default' | 'acceptEdits' | 'plan'
   // Phase 5 additions (optional for now)
   model_provider?: string
   model_type?: string
@@ -16,6 +17,7 @@ export interface StartChatRequest {
 
 export interface ImproveRequest {
   question: string
+  permission_mode?: 'default' | 'acceptEdits' | 'plan'
 }
 
 export interface UploadedFileInfo {

@@ -6,12 +6,14 @@ import inspect
 import json
 import logging
 import threading
+import uuid
 from functools import wraps
 from inspect import iscoroutinefunction, signature
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, TypeVar, TypedDict
 
-from app.runtime.events import StepEvent
+from app.runtime.events import StepEvent, ToolAuditEvent, ToolHookPhase
 from app.runtime.tool_context import current_agent_name, current_process_task_id
+from app.runtime.toolkits.registry import ToolHookAuditEntry, run_tool_hooks
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,7 @@ def _run_async_in_sync(coro):
         loop = _thread_local.loop
         try:
             return ctx.run(loop.run_until_complete, coro)
-        except Exception:
+        except RuntimeError:
             loop = asyncio.new_event_loop()
             _thread_local.loop = loop
             return ctx.run(loop.run_until_complete, coro)
@@ -57,6 +59,17 @@ EXCLUDED_METHODS = {
 }
 
 T = TypeVar("T")
+
+
+class ToolExecutionContext(TypedDict):
+    toolkit_name: str
+    method_name: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    message: str
+    agent_name: str
+    process_task_id: str
+    request_id: str
 
 
 def _format_args(args: tuple, kwargs: dict) -> str:
@@ -84,17 +97,51 @@ def _safe_result_message(result: Any, error: Exception | None) -> str:
         return result_str
 
 
+def _resolve_toolkit_name(toolkit: Any) -> str:
+    toolkit_name = getattr(toolkit, "toolkit_name", None)
+    if callable(toolkit_name):
+        toolkit_name = toolkit_name()
+    if not toolkit_name:
+        toolkit_name = toolkit.__class__.__name__
+    return str(toolkit_name)
+
+
+def _short_audit_message(message: str) -> str:
+    normalized = " ".join(str(message or "").split())
+    if len(normalized) > 200:
+        return f"{normalized[:197]}..."
+    return normalized
+
+
+def _build_tool_execution_context(
+    toolkit: Any,
+    method_name: str,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> ToolExecutionContext:
+    toolkit_name = _resolve_toolkit_name(toolkit)
+    agent_name = getattr(toolkit, "agent_name", "") or current_agent_name.get("")
+    process_task_id = current_process_task_id.get("")
+    message = _format_args((toolkit, *args), kwargs)
+    return {
+        "toolkit_name": toolkit_name,
+        "method_name": method_name,
+        "args": tuple(args),
+        "kwargs": dict(kwargs),
+        "message": message,
+        "agent_name": agent_name,
+        "process_task_id": process_task_id,
+        "request_id": uuid.uuid4().hex,
+    }
+
+
 def _emit_tool_event(toolkit: Any, step: StepEvent, message: str) -> None:
     event_stream = getattr(toolkit, "event_stream", None)
     if event_stream is None:
         return
     agent_name = getattr(toolkit, "agent_name", "") or current_agent_name.get("")
     process_task_id = current_process_task_id.get("")
-    toolkit_name = getattr(toolkit, "toolkit_name", None)
-    if callable(toolkit_name):
-        toolkit_name = toolkit_name()
-    if not toolkit_name:
-        toolkit_name = toolkit.__class__.__name__
+    toolkit_name = _resolve_toolkit_name(toolkit)
     method_name = getattr(toolkit, "current_method_name", "")
     event_stream.emit(
         step,
@@ -108,54 +155,164 @@ def _emit_tool_event(toolkit: Any, step: StepEvent, message: str) -> None:
     )
 
 
-async def _ensure_tool_approval(toolkit: Any, method_name: str, args: tuple, kwargs: dict) -> None:
-    callback = getattr(toolkit, "approval_callback", None)
-    if not callable(callback):
+def _emit_tool_audit(
+    toolkit: Any,
+    *,
+    context: ToolExecutionContext,
+    event_name: ToolAuditEvent,
+    outcome: str,
+    message: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    event_stream = getattr(toolkit, "event_stream", None)
+    if event_stream is None:
         return
-
-    toolkit_name = getattr(toolkit, "toolkit_name", None)
-    if callable(toolkit_name):
-        toolkit_name = toolkit_name()
-    if not toolkit_name:
-        toolkit_name = toolkit.__class__.__name__
-
-    decision = callback(
-        toolkit_name=toolkit_name,
-        method_name=method_name,
-        args=args,
-        kwargs=kwargs,
-        message=_format_args((toolkit, *args), kwargs),
-        agent_name=getattr(toolkit, "agent_name", "") or current_agent_name.get(""),
-        process_task_id=current_process_task_id.get(""),
+    event_stream.emit(
+        StepEvent.audit_log,
+        {
+            "type": "audit_log",
+            "event_name": event_name.value,
+            "request_id": context["request_id"],
+            "channel": "tool_execution",
+            "outcome": outcome,
+            "actor": "assistant",
+            "toolkit_name": context["toolkit_name"],
+            "method_name": context["method_name"],
+            "agent_name": context["agent_name"],
+            "process_task_id": context["process_task_id"],
+            "message": _short_audit_message(message or context["message"]),
+            "audit_metadata": metadata or {},
+        },
     )
-    if inspect.iscoroutine(decision):
-        decision = await decision
-
-    if decision is False:
-        raise PermissionError(f"Tool execution denied for {toolkit_name}.{method_name}")
 
 
-def _ensure_tool_approval_sync(toolkit: Any, method_name: str, args: tuple, kwargs: dict) -> None:
+def _emit_hook_audits(
+    toolkit: Any,
+    *,
+    context: ToolExecutionContext,
+    audit_entries: list[ToolHookAuditEntry],
+) -> None:
+    for entry in audit_entries:
+        hook_metadata = dict(entry["metadata"])
+        hook_metadata.update(
+            {
+                "hook_name": entry["hook_name"],
+                "hook_phase": entry["phase"].value,
+            }
+        )
+        _emit_tool_audit(
+            toolkit,
+            context=context,
+            event_name=ToolAuditEvent.hook,
+            outcome=entry["decision"],
+            message=entry["reason"] or context["message"],
+            metadata=hook_metadata,
+        )
+
+
+async def _run_pre_tool_pipeline(
+    toolkit: Any,
+    method_name: str,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> ToolExecutionContext:
+    context = _build_tool_execution_context(toolkit, method_name, args, kwargs)
+    _emit_tool_audit(
+        toolkit,
+        context=context,
+        event_name=ToolAuditEvent.request,
+        outcome="requested",
+    )
+
+    hook_outcome = await run_tool_hooks(
+        ToolHookPhase.pre_tool_use,
+        context={
+            "toolkit_name": context["toolkit_name"],
+            "method_name": context["method_name"],
+            "args": context["args"],
+            "kwargs": context["kwargs"],
+            "message": context["message"],
+            "agent_name": context["agent_name"],
+            "process_task_id": context["process_task_id"],
+        },
+    )
+    _emit_hook_audits(toolkit, context=context, audit_entries=hook_outcome["audit_entries"])
+    if not hook_outcome["allowed"]:
+        reason = hook_outcome["reason"] or "pre_tool_hook_denied"
+        _emit_tool_audit(
+            toolkit,
+            context=context,
+            event_name=ToolAuditEvent.decision,
+            outcome="denied",
+            message=reason,
+            metadata={"source": "pre_tool_hook"},
+        )
+        raise PermissionError(f"Tool execution denied by hook for {context['toolkit_name']}.{method_name}")
+
+    context["args"] = hook_outcome["args"]
+    context["kwargs"] = hook_outcome["kwargs"]
+    context["message"] = _format_args((toolkit, *context["args"]), context["kwargs"])
+
     callback = getattr(toolkit, "approval_callback", None)
-    if not callable(callback):
-        return
+    if callable(callback):
+        decision = callback(
+            toolkit_name=context["toolkit_name"],
+            method_name=method_name,
+            args=context["args"],
+            kwargs=context["kwargs"],
+            message=context["message"],
+            agent_name=context["agent_name"],
+            process_task_id=context["process_task_id"],
+        )
+        if inspect.iscoroutine(decision):
+            decision = await decision
+        if decision is False:
+            _emit_tool_audit(
+                toolkit,
+                context=context,
+                event_name=ToolAuditEvent.decision,
+                outcome="denied",
+                message="approval_callback_denied",
+                metadata={"source": "approval_callback"},
+            )
+            raise PermissionError(f"Tool execution denied for {context['toolkit_name']}.{method_name}")
 
-    decision = callback(
-        toolkit_name=(
-            toolkit.toolkit_name() if callable(getattr(toolkit, "toolkit_name", None)) else toolkit.__class__.__name__
-        ),
-        method_name=method_name,
-        args=args,
-        kwargs=kwargs,
-        message=_format_args((toolkit, *args), kwargs),
-        agent_name=getattr(toolkit, "agent_name", "") or current_agent_name.get(""),
-        process_task_id=current_process_task_id.get(""),
+    _emit_tool_audit(
+        toolkit,
+        context=context,
+        event_name=ToolAuditEvent.decision,
+        outcome="approved",
     )
-    if inspect.iscoroutine(decision):
-        decision = _run_async_in_sync(decision)
+    return context
 
-    if decision is False:
-        raise PermissionError(f"Tool execution denied for {toolkit.__class__.__name__}.{method_name}")
+
+async def _run_post_tool_pipeline(
+    toolkit: Any,
+    *,
+    context: ToolExecutionContext,
+    result: Any | None = None,
+    error: Exception | None = None,
+) -> None:
+    phase = ToolHookPhase.post_tool_use_failure if error is not None else ToolHookPhase.post_tool_use
+    hook_context = {
+        "toolkit_name": context["toolkit_name"],
+        "method_name": context["method_name"],
+        "args": context["args"],
+        "kwargs": context["kwargs"],
+        "message": context["message"],
+        "agent_name": context["agent_name"],
+        "process_task_id": context["process_task_id"],
+    }
+    if error is not None:
+        hook_context["error"] = str(error)
+    else:
+        hook_context["result"] = result
+
+    hook_outcome = await run_tool_hooks(phase, context=hook_context)
+    _emit_hook_audits(toolkit, context=context, audit_entries=hook_outcome["audit_entries"])
+    if not hook_outcome["allowed"]:
+        reason = hook_outcome["reason"] or "post_tool_hook_denied"
+        raise PermissionError(f"{reason} for {context['toolkit_name']}.{context['method_name']}")
 
 
 def listen_toolkit(base_method: Callable[..., Any]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -165,14 +322,45 @@ def listen_toolkit(base_method: Callable[..., Any]) -> Callable[[Callable[..., A
             async def async_wrapper(*args, **kwargs):
                 toolkit = args[0]
                 toolkit.current_method_name = func.__name__
-                await _ensure_tool_approval(toolkit, func.__name__, args[1:], kwargs)
-                _emit_tool_event(toolkit, StepEvent.activate_toolkit, _format_args(args, kwargs))
+                execution_context = await _run_pre_tool_pipeline(
+                    toolkit,
+                    func.__name__,
+                    tuple(args[1:]),
+                    dict(kwargs),
+                )
+                _emit_tool_audit(
+                    toolkit,
+                    context=execution_context,
+                    event_name=ToolAuditEvent.execution,
+                    outcome="started",
+                )
+                _emit_tool_event(toolkit, StepEvent.activate_toolkit, execution_context["message"])
                 error = None
                 result = None
                 try:
-                    result = await func(*args, **kwargs)
+                    result = await func(toolkit, *execution_context["args"], **execution_context["kwargs"])
+                    await _run_post_tool_pipeline(
+                        toolkit,
+                        context=execution_context,
+                        result=result,
+                    )
                 except Exception as exc:
                     error = exc
+                    try:
+                        await _run_post_tool_pipeline(
+                            toolkit,
+                            context=execution_context,
+                            error=exc,
+                        )
+                    except Exception as post_exc:
+                        error = post_exc
+                    _emit_tool_audit(
+                        toolkit,
+                        context=execution_context,
+                        event_name=ToolAuditEvent.failure,
+                        outcome="failed",
+                        message=str(error),
+                    )
                 _emit_tool_event(toolkit, StepEvent.deactivate_toolkit, _safe_result_message(result, error))
                 if error is not None:
                     raise error
@@ -185,18 +373,55 @@ def listen_toolkit(base_method: Callable[..., Any]) -> Callable[[Callable[..., A
         def sync_wrapper(*args, **kwargs):
             toolkit = args[0]
             toolkit.current_method_name = func.__name__
-            _ensure_tool_approval_sync(toolkit, func.__name__, args[1:], kwargs)
-            _emit_tool_event(toolkit, StepEvent.activate_toolkit, _format_args(args, kwargs))
+            execution_context = _run_async_in_sync(
+                _run_pre_tool_pipeline(
+                    toolkit,
+                    func.__name__,
+                    tuple(args[1:]),
+                    dict(kwargs),
+                )
+            )
+            _emit_tool_audit(
+                toolkit,
+                context=execution_context,
+                event_name=ToolAuditEvent.execution,
+                outcome="started",
+            )
+            _emit_tool_event(toolkit, StepEvent.activate_toolkit, execution_context["message"])
             error = None
             result = None
             try:
-                result = func(*args, **kwargs)
+                result = func(toolkit, *execution_context["args"], **execution_context["kwargs"])
                 # Handle async functions called from sync context
                 if inspect.iscoroutine(result):
                     logger.debug(f"Running async method {func.__name__} in sync context")
                     result = _run_async_in_sync(result)
+                _run_async_in_sync(
+                    _run_post_tool_pipeline(
+                        toolkit,
+                        context=execution_context,
+                        result=result,
+                    )
+                )
             except Exception as exc:
                 error = exc
+                try:
+                    _run_async_in_sync(
+                        _run_post_tool_pipeline(
+                            toolkit,
+                            context=execution_context,
+                            error=exc,
+                        )
+                    )
+                except Exception as post_exc:
+                    error = post_exc
+                _emit_tool_audit(
+                    toolkit,
+                    context=execution_context,
+                    event_name=ToolAuditEvent.failure,
+                    outcome="failed",
+                    message=str(error),
+                )
             _emit_tool_event(toolkit, StepEvent.deactivate_toolkit, _safe_result_message(result, error))
             if error is not None:
                 raise error

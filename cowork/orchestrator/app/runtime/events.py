@@ -22,3 +22,17 @@ class StepEvent(StrEnum):
     end = "end"
     error = "error"
     context_too_long = "context_too_long"
+
+
+class ToolHookPhase(StrEnum):
+    pre_tool_use = "pre_tool_use"
+    post_tool_use = "post_tool_use"
+    post_tool_use_failure = "post_tool_use_failure"
+
+
+class ToolAuditEvent(StrEnum):
+    request = "tool_execution_request"
+    decision = "tool_execution_decision"
+    execution = "tool_execution_started"
+    failure = "tool_execution_failure"
+    hook = "tool_hook_evaluated"
