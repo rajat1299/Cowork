@@ -63,6 +63,57 @@ _SEMANTIC_STOPWORDS = {
     "draft",
     "write",
 }
+_SEMANTIC_HINTS_BY_SKILL: dict[str, set[str]] = {
+    "research_web_v1": {
+        "research",
+        "source",
+        "sources",
+        "citation",
+        "citations",
+        "corroborate",
+        "corroboration",
+        "benchmark",
+        "benchmarks",
+        "investigate",
+        "investigation",
+        "compare",
+        "comparison",
+        "latest",
+        "pricing",
+        "analyze",
+        "analysis",
+        "lookup",
+        "look",
+        "find",
+        "browse",
+        "web",
+        "online",
+        "claim",
+        "claims",
+    },
+    "doc_markdown_v1": {
+        "markdown",
+        "report",
+        "summary",
+        "summarize",
+        "document",
+        "findings",
+        "retrospective",
+        "references",
+        "notes",
+    },
+    "doc_docx_v1": {"docx", "word", "microsoft"},
+    "doc_pdf_v1": {"pdf", "portable", "brief", "export"},
+    "doc_revision_v1": {"revise", "revision", "edit", "update", "preserve", "structure"},
+    "spreadsheet_v1": {"spreadsheet", "excel", "xlsx", "csv", "tsv", "sheet"},
+}
+_SEMANTIC_EXPLICIT_TOKENS_BY_SKILL: dict[str, set[str]] = {
+    "doc_markdown_v1": {"markdown", "report", "summary"},
+    "doc_docx_v1": {"docx", "word"},
+    "doc_pdf_v1": {"pdf"},
+    "doc_revision_v1": {"revise", "revision", "edit", "update"},
+    "spreadsheet_v1": {"spreadsheet", "excel", "xlsx", "csv", "tsv"},
+}
 
 _FILE_DELIVERABLE_INTENT = re.compile(
     r"\b(create|build|generate|draft|prepare|save|export|write)\b.*\b(file|document|doc|report|deck|slides?|spreadsheet|sheet|pdf|docx|pptx|xlsx)\b",
@@ -539,14 +590,21 @@ class RuntimeSkillEngine:
                     skill.name,
                     skill.description,
                     " ".join(skill.domains),
-                    " ".join(skill.prompt_instructions),
                 ]
             )
         )
+        hint_tokens = _SEMANTIC_HINTS_BY_SKILL.get(skill.id, set())
+        if hint_tokens:
+            skill_tokens |= hint_tokens
         if not skill_tokens:
             return 0.0, []
         overlap = question_tokens & skill_tokens
         if not overlap:
+            return 0.0, []
+
+        explicit_tokens = _SEMANTIC_EXPLICIT_TOKENS_BY_SKILL.get(skill.id, set())
+        minimum_overlap = 1 if overlap & explicit_tokens else 2
+        if len(overlap) < minimum_overlap:
             return 0.0, []
 
         coverage = len(overlap) / len(question_tokens)
