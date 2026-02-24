@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime, timezone
+import logging
 
 from app.clients.core_api import SkillEntry
 from app.runtime.skill_catalog_matching import (
@@ -37,6 +38,20 @@ def test_detect_skills_by_query_and_extension():
         attachments=[{"name": "notes.pdf", "path": "/tmp/notes.pdf"}],
     )
     assert any(skill.id == "doc_pdf_v1" or skill.id == "doc_revision_v1" for skill in attachment_skills)
+
+
+def test_detect_skills_by_semantic_intent_without_keyword_trigger():
+    engine = RuntimeSkillEngine(mode="on")
+    skills = engine.detect("Corroborate factual claims and provide citations from independent sources")
+    assert any(skill.id == "research_web_v1" for skill in skills)
+
+
+def test_detect_logs_trigger_explainability(caplog):
+    engine = RuntimeSkillEngine(mode="on")
+    with caplog.at_level(logging.INFO):
+        engine.detect("Corroborate factual claims and provide citations from independent sources")
+    assert any("skill_detect_match" in record.message for record in caplog.records)
+    assert any("research_web_v1" in record.message for record in caplog.records)
 
 
 def test_load_skill_packs_rejects_invalid_toml(tmp_path: Path):

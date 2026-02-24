@@ -27,6 +27,42 @@ from app.runtime.tool_context import current_request_id
 
 logger = logging.getLogger(__name__)
 _MAX_REFERENCED_CONTENT_CHARS = 1200
+_SEMANTIC_MIN_SCORE = 0.24
+_SEMANTIC_TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9]{4,}")
+_SEMANTIC_STOPWORDS = {
+    "this",
+    "that",
+    "with",
+    "from",
+    "have",
+    "will",
+    "what",
+    "when",
+    "where",
+    "which",
+    "please",
+    "could",
+    "would",
+    "should",
+    "about",
+    "into",
+    "your",
+    "ours",
+    "them",
+    "they",
+    "then",
+    "than",
+    "need",
+    "want",
+    "just",
+    "also",
+    "like",
+    "make",
+    "create",
+    "build",
+    "draft",
+    "write",
+}
 
 _FILE_DELIVERABLE_INTENT = re.compile(
     r"\b(create|build|generate|draft|prepare|save|export|write)\b.*\b(file|document|doc|report|deck|slides?|spreadsheet|sheet|pdf|docx|pptx|xlsx)\b",
@@ -133,15 +169,45 @@ class RuntimeSkillEngine:
         question_extensions = {ext.lower() for ext in _QUESTION_EXTENSION_PATTERN.findall(question)}
         attachment_extensions = self._extract_extensions_from_attachments(attachments)
         all_extensions = question_extensions | attachment_extensions
+        semantic_tokens = self._semantic_tokens(f"{question}\n{context}")
 
         selected: list[RuntimeSkill] = []
+        explanations: dict[str, dict[str, Any]] = {}
         for skill in self.skills:
-            if skill.matches_question(question) or skill.matches_extensions(all_extensions):
+            reasons: list[str] = []
+            if skill.matches_question(question):
+                reasons.append("regex")
+            if skill.matches_extensions(all_extensions):
+                reasons.append("extension")
+
+            semantic_score, semantic_terms = self._semantic_skill_score(skill, semantic_tokens)
+            if not reasons and semantic_score < _SEMANTIC_MIN_SCORE:
+                continue
+
+            if semantic_score >= _SEMANTIC_MIN_SCORE:
+                reasons.append("semantic")
+
+            if reasons:
                 selected.append(skill)
+                explanations[skill.id] = {
+                    "reasons": reasons,
+                    "semantic_score": semantic_score,
+                    "semantic_terms": semantic_terms,
+                }
 
         # Keep deterministic ordering by the loaded skillpack order.
         selected_ids = {skill.id for skill in selected}
-        return [skill for skill in self.skills if skill.id in selected_ids]
+        ordered = [skill for skill in self.skills if skill.id in selected_ids]
+        for skill in ordered:
+            explanation = explanations.get(skill.id) or {}
+            logger.info(
+                "skill_detect_match skill_id=%s reasons=%s semantic_score=%.3f semantic_terms=%s",
+                skill.id,
+                explanation.get("reasons", []),
+                float(explanation.get("semantic_score") or 0.0),
+                explanation.get("semantic_terms", []),
+            )
+        return ordered
 
     def prepare_plan(
         self,
@@ -454,6 +520,39 @@ class RuntimeSkillEngine:
                 loaded = loaded.with_loaded_resources(resource_refs, errors=self.load_errors)
             hydrated.append(loaded)
         return hydrated
+
+    @staticmethod
+    def _semantic_tokens(text: str) -> set[str]:
+        return {
+            token.lower()
+            for token in _SEMANTIC_TOKEN_PATTERN.findall(text or "")
+            if token.lower() not in _SEMANTIC_STOPWORDS
+        }
+
+    def _semantic_skill_score(self, skill: RuntimeSkill, question_tokens: set[str]) -> tuple[float, list[str]]:
+        if not question_tokens:
+            return 0.0, []
+        skill_tokens = self._semantic_tokens(
+            " ".join(
+                [
+                    skill.id.replace("_", " "),
+                    skill.name,
+                    skill.description,
+                    " ".join(skill.domains),
+                    " ".join(skill.prompt_instructions),
+                ]
+            )
+        )
+        if not skill_tokens:
+            return 0.0, []
+        overlap = question_tokens & skill_tokens
+        if not overlap:
+            return 0.0, []
+
+        coverage = len(overlap) / len(question_tokens)
+        precision = len(overlap) / len(skill_tokens)
+        score = (coverage * 0.65) + (precision * 0.35)
+        return score, sorted(overlap)
 
     @staticmethod
     def _referenced_template_names(skill: RuntimeSkill, reference_text: str) -> set[str]:

@@ -100,3 +100,135 @@ def test_context_budget_snapshot_uses_token_thresholds(monkeypatch: pytest.Monke
     assert snapshot["is_over_limit"] is True
     assert snapshot["compaction_trigger_tokens"] == 80
     assert snapshot["max_context_tokens"] == 100
+
+
+def test_build_context_prunes_stale_low_value_tool_output() -> None:
+    lock = TaskLock(project_id="proj-memory-prune")
+    lock.conversation_history = [
+        {
+            "role": "assistant",
+            "content": '{"results": [' + ('{"title":"x"},' * 80) + '], "count": 80}',
+            "timestamp": "2026-02-01T00:00:00+00:00",
+        }
+    ]
+    for idx in range(1, 10):
+        role = "user" if idx % 2 == 0 else "assistant"
+        lock.conversation_history.append(
+            {
+                "role": role,
+                "content": f"message-{idx}",
+                "timestamp": f"2026-02-01T00:00:0{idx}+00:00",
+            }
+        )
+
+    context = _build_context(lock)
+    assert '"count": 80' not in context
+    assert "message-9" in context
+
+
+def test_build_context_preserves_intent_critical_slice_beyond_recent_window() -> None:
+    lock = TaskLock(project_id="proj-memory-intent")
+    lock.conversation_history = [
+        {
+            "role": "assistant",
+            "content": "Noted: Nimbus release date is 2026-09-01.",
+            "timestamp": "2026-02-01T00:00:00+00:00",
+        }
+    ]
+    for idx in range(1, 36):
+        role = "user" if idx % 2 == 0 else "assistant"
+        lock.conversation_history.append(
+            {
+                "role": role,
+                "content": f"filler-{idx}",
+                "timestamp": f"2026-02-01T00:01:{idx:02d}+00:00",
+            }
+        )
+    lock.conversation_history.extend(
+        [
+            {
+                "role": "user",
+                "content": "Can you remind me of the Nimbus release date for the announcement?",
+                "timestamp": "2026-02-01T00:03:00+00:00",
+            },
+            {
+                "role": "assistant",
+                "content": "Working on announcement draft.",
+                "timestamp": "2026-02-01T00:03:01+00:00",
+            },
+        ]
+    )
+
+    context = _build_context(lock)
+    assert "Nimbus release date is 2026-09-01" in context
+
+
+@pytest.mark.asyncio
+async def test_compact_context_rejects_too_short_structured_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = TaskLock(project_id="proj-memory-short-summary")
+    lock.conversation_history = [
+        {"role": "user", "content": "Please prepare release plan."},
+        {"role": "assistant", "content": "Sure, I will do it."},
+    ]
+    too_short_structured = """
+Goal: x
+Decisions: y
+Outputs: z
+Open Questions: a
+Next Steps: b
+""".strip()
+
+    async def fake_collect(*_args, **_kwargs):
+        return (too_short_structured, {"total_tokens": 10})
+
+    async def fake_upsert(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("app.runtime.memory.collect_chat_completion", fake_collect)
+    monkeypatch.setattr("app.runtime.memory.upsert_thread_summary", fake_upsert)
+
+    updated = await _compact_context(lock, _provider(), "Bearer token", "proj-memory-short-summary")
+    assert updated is False
+
+
+@pytest.mark.asyncio
+async def test_compact_context_preserves_intent_critical_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = TaskLock(project_id="proj-memory-compact-intent")
+    lock.conversation_history = [
+        {"role": "assistant", "content": "Reminder: Nimbus release date is 2026-09-01."},
+    ]
+    lock.conversation_history.extend(
+        {"role": "user" if idx % 2 == 0 else "assistant", "content": f"filler-{idx}"}
+        for idx in range(1, 30)
+    )
+    lock.conversation_history.append(
+        {
+            "role": "user",
+            "content": "Now finalize launch messaging with Nimbus release date details.",
+        }
+    )
+    structured = """
+Goal: ship production release messaging for Nimbus
+Decisions: include exact date in announcement
+Outputs: launch copy and checklist
+Open Questions: final approver
+Next Steps: publish after review
+""".strip()
+
+    async def fake_collect(*_args, **_kwargs):
+        return (structured, {"total_tokens": 10})
+
+    async def fake_upsert(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("app.runtime.memory.collect_chat_completion", fake_collect)
+    monkeypatch.setattr("app.runtime.memory.upsert_thread_summary", fake_upsert)
+
+    updated = await _compact_context(lock, _provider(), "Bearer token", "proj-memory-compact-intent")
+    assert updated is True
+    retained = " ".join(str(item.get("content", "")) for item in lock.conversation_history)
+    assert "Nimbus release date is 2026-09-01" in retained

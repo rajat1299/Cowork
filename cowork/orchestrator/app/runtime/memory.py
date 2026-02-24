@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 from app.clients.core_api import (
     ProviderConfig,
@@ -32,6 +33,54 @@ _MIN_COMPACTION_SECTION_HITS = 3
 _COMPACTION_REQUIRED_HEADERS = ("goal", "decisions", "outputs", "open questions", "next steps")
 _DEFAULT_COMPACTION_TRIGGER_TOKENS = 20000
 _DEFAULT_MAX_CONTEXT_TOKENS = 25000
+_MIN_COMPACTION_SUMMARY_CHARS = 90
+_STALE_EDIT_KEEP_RECENT = 8
+_INTENT_CRITICAL_LIMIT = 4
+_INTENT_CRITICAL_MIN_OVERLAP = 2
+_COMPACTION_INTENT_PRESERVE_LIMIT = 2
+_LOW_VALUE_TOOL_OUTPUT_MIN_CHARS = 300
+_LOW_VALUE_TOOL_OUTPUT_MARKERS = (
+    '"results":',
+    '"count":',
+    '"toolkit_name":',
+    '"method_name":',
+    "content successfully written to file",
+    "command executed successfully",
+)
+_INTENT_TOKEN_PATTERN = re.compile(r"[a-z0-9]{4,}")
+_INTENT_STOPWORDS = {
+    "this",
+    "that",
+    "with",
+    "from",
+    "have",
+    "will",
+    "what",
+    "when",
+    "where",
+    "which",
+    "please",
+    "could",
+    "would",
+    "should",
+    "about",
+    "into",
+    "your",
+    "ours",
+    "them",
+    "they",
+    "then",
+    "than",
+    "need",
+    "want",
+    "just",
+    "also",
+    "like",
+    "make",
+    "finalize",
+    "message",
+    "messages",
+}
 
 
 def _usage_total(usage: dict | None) -> int:
@@ -79,26 +128,120 @@ def _history_window_size() -> int:
         return _MAX_HISTORY_TURNS
 
 
-def _select_history_window(history: list[dict[str, str]]) -> list[dict[str, str]]:
-    if len(history) <= _history_window_size():
-        return history
-    # Keep strong recency while preserving user intent density.
-    recent = history[-_history_window_size():]
-    users = [item for item in history if item.get("role") == "user"][-4:]
-    merged = users + recent
+def _content_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in _INTENT_TOKEN_PATTERN.findall((text or "").lower())
+        if token not in _INTENT_STOPWORDS
+    }
+
+
+def _latest_user_intent_tokens(history: list[dict[str, str]]) -> set[str]:
+    for entry in reversed(history):
+        if str(entry.get("role") or "") != "user":
+            continue
+        return _content_tokens(str(entry.get("content") or ""))
+    return set()
+
+
+def _entry_key(entry: dict[str, str]) -> tuple[str, str, str]:
+    return (
+        str(entry.get("role") or ""),
+        str(entry.get("content") or ""),
+        str(entry.get("timestamp") or ""),
+    )
+
+
+def _dedupe_history(entries: list[dict[str, str]]) -> list[dict[str, str]]:
     deduped: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
-    for entry in merged:
-        key = (
-            str(entry.get("role") or ""),
-            str(entry.get("content") or ""),
-            str(entry.get("timestamp") or ""),
-        )
+    for entry in entries:
+        key = _entry_key(entry)
         if key in seen:
             continue
         seen.add(key)
         deduped.append(entry)
     return deduped
+
+
+def _is_low_value_tool_output(entry: dict[str, str]) -> bool:
+    if str(entry.get("role") or "") != "assistant":
+        return False
+    content = str(entry.get("content") or "")
+    if len(content) < _LOW_VALUE_TOOL_OUTPUT_MIN_CHARS:
+        return False
+    lower = content.lower()
+    if any(marker in lower for marker in _LOW_VALUE_TOOL_OUTPUT_MARKERS):
+        return True
+    return lower.startswith("{") and '"results"' in lower
+
+
+def _select_intent_critical_entries(
+    history: list[dict[str, str]],
+    intent_tokens: set[str],
+    *,
+    limit: int,
+) -> list[dict[str, str]]:
+    if not history or not intent_tokens or limit <= 0:
+        return []
+    scored: list[tuple[int, int]] = []
+    for index, entry in enumerate(history):
+        if _is_low_value_tool_output(entry):
+            continue
+        overlap = len(_content_tokens(str(entry.get("content") or "")) & intent_tokens)
+        if overlap < _INTENT_CRITICAL_MIN_OVERLAP:
+            continue
+        scored.append((overlap, index))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    selected_indexes = sorted(index for _, index in scored[:limit])
+    return [history[index] for index in selected_indexes]
+
+
+def _apply_context_edit_policy(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    if len(history) <= _STALE_EDIT_KEEP_RECENT:
+        return list(history)
+    cutoff = len(history) - _STALE_EDIT_KEEP_RECENT
+    intent_tokens = _latest_user_intent_tokens(history)
+    edited: list[dict[str, str]] = []
+    for index, entry in enumerate(history):
+        if index >= cutoff:
+            edited.append(entry)
+            continue
+        if not _is_low_value_tool_output(entry):
+            edited.append(entry)
+            continue
+        overlap = len(_content_tokens(str(entry.get("content") or "")) & intent_tokens)
+        if overlap >= _INTENT_CRITICAL_MIN_OVERLAP:
+            edited.append(entry)
+    return edited
+
+
+def _compaction_retained_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    if len(history) <= _COMPACTION_KEEP_LAST:
+        return _dedupe_history(history)
+    recent = history[-_COMPACTION_KEEP_LAST:]
+    older = history[:-_COMPACTION_KEEP_LAST]
+    intent_tokens = _latest_user_intent_tokens(history)
+    intent = _select_intent_critical_entries(
+        older,
+        intent_tokens,
+        limit=_COMPACTION_INTENT_PRESERVE_LIMIT,
+    )
+    return _dedupe_history(intent + recent)
+
+
+def _select_history_window(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    edited_history = _apply_context_edit_policy(history)
+    if len(edited_history) <= _history_window_size():
+        return _dedupe_history(edited_history)
+
+    # Keep strong recency while preserving user-intent-critical slices.
+    recent = edited_history[-_history_window_size():]
+    users = [item for item in edited_history if item.get("role") == "user"][-4:]
+    older = edited_history[:-_history_window_size()]
+    intent_tokens = _latest_user_intent_tokens(edited_history)
+    intent = _select_intent_critical_entries(older, intent_tokens, limit=_INTENT_CRITICAL_LIMIT)
+    return _dedupe_history(users + intent + recent)
 
 
 def _build_context(task_lock: TaskLock) -> str:
@@ -285,8 +428,11 @@ async def _compact_context(
 ) -> bool:
     if not task_lock.conversation_history:
         return False
+    edited_history = _apply_context_edit_policy(task_lock.conversation_history)
+    if not edited_history:
+        return False
     history_lines = []
-    for entry in task_lock.conversation_history:
+    for entry in edited_history:
         role = entry.get("role") or "assistant"
         content = entry.get("content") or ""
         history_lines.append(f"{role}: {content}")
@@ -314,6 +460,8 @@ Return a concise summary with sections:
     summary_text = summary_text.strip()
     if not summary_text:
         return False
+    if len(summary_text) < _MIN_COMPACTION_SUMMARY_CHARS:
+        return False
     summary_lc = summary_text.lower()
     section_hits = sum(1 for marker in _COMPACTION_REQUIRED_HEADERS if marker in summary_lc)
     if section_hits < _MIN_COMPACTION_SECTION_HITS:
@@ -321,7 +469,7 @@ Return a concise summary with sections:
         return False
     task_lock.thread_summary = summary_text
     await upsert_thread_summary(auth_token, project_id, summary_text)
-    task_lock.conversation_history = task_lock.conversation_history[-_COMPACTION_KEEP_LAST:]
+    task_lock.conversation_history = _compaction_retained_history(edited_history)
     return True
 
 
