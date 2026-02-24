@@ -8,7 +8,7 @@ from app.clients.core_api import (
     ProviderConfig,
     create_history,
     fetch_configs,
-    fetch_mcp_users,
+    fetch_mcp_users,  # noqa: F401 - kept for test/module compatibility
     fetch_provider,
     fetch_provider_features,
     fetch_skills,
@@ -16,22 +16,22 @@ from app.clients.core_api import (
     upsert_task_summary,
 )
 from app.runtime.actions import ActionType, TaskStatus
-from app.runtime.agents import CoworkWorkforce, _build_agent
+from app.runtime.agents import CoworkWorkforce, _build_agent  # noqa: F401 - compatibility
 from app.runtime.artifacts import (
-    _build_generated_file_url,
+    _build_generated_file_url,  # noqa: F401 - kept for test/module compatibility
     _cleanup_artifact_cache,
-    _collect_tool_artifacts,
-    _extract_file_artifacts,
+    _collect_tool_artifacts,  # noqa: F401 - kept for test/module compatibility
+    _extract_file_artifacts,  # noqa: F401 - kept for test/module compatibility
 )
 from app.runtime.config_helpers import (
     _config_flag,
-    _is_permission_approved,
-    _requires_tool_permission,
+    _is_permission_approved,  # noqa: F401 - kept for test/module compatibility
+    _requires_tool_permission,  # noqa: F401 - kept for test/module compatibility
 )
 from app.runtime.context import _attachments_context, _normalize_attachments, _resolve_workdir
 from app.runtime.events import StepEvent
 from app.runtime.executor import _run_camel_complex
-from app.runtime.llm_client import collect_chat_completion, stream_chat
+from app.runtime.llm_client import collect_chat_completion, stream_chat  # noqa: F401 - compatibility
 from app.runtime.memory import (
     _build_memory_governance_policy,
     _build_context,
@@ -45,7 +45,7 @@ from app.runtime.memory import (
     _persist_message,
     _usage_total,
 )
-from app.runtime.mcp_config import _build_mcp_config, _load_mcp_tools
+from app.runtime.mcp_config import _build_mcp_config, _load_mcp_tools  # noqa: F401 - compatibility
 from app.runtime.skill_catalog_matching import (
     catalog_skill_matches_request,
     extensions_for_skill_detection,
@@ -54,7 +54,7 @@ from app.runtime.skill_catalog_matching import (
 from app.runtime.skill_engine import get_runtime_skill_engine
 from app.runtime.skills import (
     RuntimeSkill,
-    apply_runtime_skills,
+    apply_runtime_skills,  # noqa: F401 - kept for test/module compatibility
     build_runtime_skill_context,
     detect_runtime_skills,
     requires_complex_execution,
@@ -73,16 +73,16 @@ from app.runtime.task_analysis import (
     _build_native_search_params,
     _detect_custom_runtime_skills,
     _detect_search_intent,
-    _ensure_tool,
+    _ensure_tool,  # noqa: F401 - kept for test/module compatibility
     _is_complex_task,
-    _merge_agent_specs,
+    _merge_agent_specs,  # noqa: F401 - kept for test/module compatibility
 )
 from app.runtime.task_lock import TaskLock
 from app.runtime.tool_context import current_auth_token, current_project_id, current_request_id
-from app.runtime.toolkits.camel_tools import build_agent_tools
+from app.runtime.toolkits.camel_tools import build_agent_tools  # noqa: F401 - compatibility
 from app.runtime.tracing import _trace_log
-from app.runtime.workforce import build_default_agents, parse_subtasks
-from app.runtime.sync import fire_and_forget, fire_and_forget_artifact
+from app.runtime.workforce import build_default_agents, parse_subtasks  # noqa: F401 - compatibility
+from app.runtime.sync import fire_and_forget, fire_and_forget_artifact  # noqa: F401 - compatibility
 from shared.schemas import StepEvent as StepEventModel
 
 
@@ -233,7 +233,11 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 },
             )
 
-            context_budget = _context_budget_snapshot(task_lock)
+            context_budget = _context_budget_snapshot(
+                task_lock,
+                model_name=provider.model_type,
+                provider_name=provider.provider_name,
+            )
             yield _emit(
                 action.task_id,
                 StepEvent.audit_log,
@@ -270,7 +274,11 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 policy=memory_policy,
             )
 
-            context_budget = _context_budget_snapshot(task_lock)
+            context_budget = _context_budget_snapshot(
+                task_lock,
+                model_name=provider.model_type,
+                provider_name=provider.provider_name,
+            )
             yield _emit(
                 action.task_id,
                 StepEvent.audit_log,

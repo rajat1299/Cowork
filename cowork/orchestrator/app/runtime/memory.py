@@ -531,27 +531,61 @@ def _context_token_thresholds() -> tuple[int, int]:
     return compaction_trigger_tokens, max_context_tokens
 
 
-def _conversation_tokens(task_lock: TaskLock) -> int:
+def _conversation_tokens(
+    task_lock: TaskLock,
+    *,
+    model_name: str | None = None,
+    provider_name: str | None = None,
+) -> int:
     total_tokens = 0
     if task_lock.thread_summary:
-        total_tokens += estimate_text_tokens(task_lock.thread_summary)
+        total_tokens += estimate_text_tokens(
+            task_lock.thread_summary,
+            model_name=model_name,
+            provider_name=provider_name,
+        )
     if task_lock.last_task_summary:
-        total_tokens += estimate_text_tokens(task_lock.last_task_summary)
+        total_tokens += estimate_text_tokens(
+            task_lock.last_task_summary,
+            model_name=model_name,
+            provider_name=provider_name,
+        )
     for note in task_lock.memory_notes:
         content = note.get("content", "")
-        total_tokens += estimate_text_tokens(str(content))
+        total_tokens += estimate_text_tokens(
+            str(content),
+            model_name=model_name,
+            provider_name=provider_name,
+        )
     for note in task_lock.global_memory_notes:
         content = note.get("content", "")
-        total_tokens += estimate_text_tokens(str(content))
+        total_tokens += estimate_text_tokens(
+            str(content),
+            model_name=model_name,
+            provider_name=provider_name,
+        )
     for entry in task_lock.conversation_history:
         content = entry.get("content", "")
-        total_tokens += estimate_text_tokens(str(content))
+        total_tokens += estimate_text_tokens(
+            str(content),
+            model_name=model_name,
+            provider_name=provider_name,
+        )
     return total_tokens
 
 
-def _context_budget_snapshot(task_lock: TaskLock) -> dict[str, int | bool]:
+def _context_budget_snapshot(
+    task_lock: TaskLock,
+    *,
+    model_name: str | None = None,
+    provider_name: str | None = None,
+) -> dict[str, int | bool]:
     compaction_trigger_tokens, max_context_tokens = _context_token_thresholds()
-    current_tokens = _conversation_tokens(task_lock)
+    current_tokens = _conversation_tokens(
+        task_lock,
+        model_name=model_name,
+        provider_name=provider_name,
+    )
     remaining_tokens = max(0, max_context_tokens - current_tokens)
     return {
         "current_tokens": current_tokens,

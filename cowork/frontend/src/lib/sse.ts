@@ -27,14 +27,27 @@ import type {
   ArtifactData,
   EndData,
   ErrorData,
+  StopReason,
   TaskStateData,
   ContextTooLongData,
   AgentEvent,
+  ToolResultData,
 } from '../types/chat'
 import { createMessage, generateId } from '../types/chat'
 import { isBlockedArtifact, normalizeArtifactUrl } from './artifacts'
 
 const REQUEST_ID_HEADER = 'X-Request-Id'
+const KNOWN_STOP_REASONS = new Set<StopReason>([
+  'completed',
+  'user_stop',
+  'provider_not_configured',
+  'decomposition_failed',
+  'result_summary_failed',
+  'model_call_failed',
+  'skill_validation_failed',
+  'workforce_execution_failed',
+  'unknown',
+])
 
 function requestId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -80,7 +93,42 @@ function asAgentData(data: unknown): AgentData | null {
 
 function asToolkitData(data: unknown): ToolkitData | null {
   if (!isRecord(data)) return null
-  return data as unknown as ToolkitData
+  if (
+    typeof data.agent_name !== 'string'
+    || typeof data.process_task_id !== 'string'
+    || typeof data.toolkit_name !== 'string'
+    || typeof data.method_name !== 'string'
+    || typeof data.message !== 'string'
+  ) {
+    return null
+  }
+  const payload: ToolkitData = {
+    agent_name: data.agent_name,
+    process_task_id: data.process_task_id,
+    toolkit_name: data.toolkit_name,
+    method_name: data.method_name,
+    message: data.message,
+  }
+  if (data.contract_version === 'tool_result_v1') payload.contract_version = 'tool_result_v1'
+  if (typeof data.success === 'boolean') payload.success = data.success
+  if (typeof data.output === 'string') payload.output = data.output
+  if (typeof data.error === 'string') payload.error = data.error
+  if (typeof data.result === 'string') payload.result = data.result
+  return payload
+}
+
+function asToolResultData(data: unknown): ToolResultData | null {
+  const base = asToolkitData(data)
+  if (!base) return null
+  if (base.contract_version !== 'tool_result_v1') return null
+  if (typeof base.success !== 'boolean') return null
+  return {
+    ...base,
+    contract_version: 'tool_result_v1',
+    success: base.success,
+    output: typeof base.output === 'string' ? base.output : '',
+    error: typeof base.error === 'string' ? base.error : undefined,
+  }
 }
 
 function asArtifactData(data: unknown): ArtifactData | null {
@@ -95,12 +143,38 @@ function asTaskStateData(data: unknown): TaskStateData | null {
 
 function asEndData(data: unknown): EndData | null {
   if (!isRecord(data)) return null
-  return data as unknown as EndData
+  const payload: EndData = {}
+  if (data.status === 'completed' || data.status === 'stopped' || data.status === 'error') {
+    payload.status = data.status
+  }
+  if (typeof data.reason === 'string') payload.reason = data.reason
+  if (typeof data.result === 'string') payload.result = data.result
+  if (typeof data.answer === 'string') payload.answer = data.answer
+  if (typeof data.tokens === 'number') payload.tokens = data.tokens
+  const stopReason = normalizeStopReason(data.stop_reason)
+  if (stopReason) payload.stop_reason = stopReason
+  return payload
 }
 
 function asErrorData(data: unknown): ErrorData | null {
   if (!isRecord(data)) return null
-  return data as unknown as ErrorData
+  if (typeof data.message !== 'string') return null
+  const payload: ErrorData = {
+    message: data.message,
+  }
+  if (typeof data.code === 'string') payload.code = data.code
+  const stopReason = normalizeStopReason(data.stop_reason)
+  if (stopReason) payload.stop_reason = stopReason
+  if (
+    data.error_type === 'runtime_error'
+    || data.error_type === 'validation_error'
+    || data.error_type === 'upstream_error'
+    || data.error_type === 'policy_error'
+  ) {
+    payload.error_type = data.error_type
+  }
+  if (typeof data.recoverable === 'boolean') payload.recoverable = data.recoverable
+  return payload
 }
 
 function asContextTooLongData(data: unknown): ContextTooLongData | null {
@@ -111,6 +185,14 @@ function asContextTooLongData(data: unknown): ContextTooLongData | null {
 function asAgentEvent(data: unknown): AgentEvent | null {
   if (!isRecord(data) || typeof data.type !== 'string') return null
   return data as unknown as AgentEvent
+}
+
+function normalizeStopReason(value: unknown): StopReason | undefined {
+  if (typeof value !== 'string') return undefined
+  if (KNOWN_STOP_REASONS.has(value as StopReason)) {
+    return value as StopReason
+  }
+  return 'unknown'
 }
 
 // ============ SSE Connection Options ============
@@ -192,7 +274,7 @@ function handleSSEEvent(taskId: string, event: SSEEvent): void {
     }
 
     case 'deactivate_toolkit': {
-      const typedData = asToolkitData(data)
+      const typedData = asToolResultData(data)
       if (typedData) handleToolkitDeactivate(taskId, typedData)
       break
     }
@@ -603,7 +685,8 @@ function handleAgentEvent(
       return true
     }
     case 'message_end': {
-      handleEnd(taskId, rawData as EndData)
+      const typedData = asEndData(rawData)
+      if (typedData) handleEnd(taskId, typedData)
       return true
     }
     case 'tool_exec_start': {
@@ -611,11 +694,13 @@ function handleAgentEvent(
       return true
     }
     case 'tool_exec_end': {
-      handleToolkitDeactivate(taskId, mapToolPayload(payload))
+      const typedData = asToolResultData(mapToolPayload(payload))
+      if (typedData) handleToolkitDeactivate(taskId, typedData)
       return true
     }
     case 'tool_result': {
-      handleToolkitDeactivate(taskId, mapToolPayload(payload))
+      const typedData = asToolResultData(mapToolPayload(payload))
+      if (typedData) handleToolkitDeactivate(taskId, typedData)
       return true
     }
     case 'ask_user': {
@@ -628,7 +713,10 @@ function handleAgentEvent(
     }
     case 'error': {
       const message = typeof payload.message === 'string' ? payload.message : 'An error occurred'
-      handleError(taskId, { message })
+      handleError(taskId, {
+        message,
+        stop_reason: normalizeStopReason(payload.stop_reason),
+      })
       return true
     }
     case 'notice': {
@@ -701,8 +789,14 @@ function mapToolPayload(payload: Record<string, unknown>): ToolkitData {
   const success = typeof payload.success === 'boolean' ? payload.success : undefined
   const output = typeof payload.output === 'string' ? payload.output : undefined
   const error = typeof payload.error === 'string' ? payload.error : undefined
+  const inferredContract =
+    payload.contract_version === 'tool_result_v1'
+      ? 'tool_result_v1'
+      : typeof success === 'boolean'
+      ? 'tool_result_v1'
+      : undefined
   const contract_version =
-    payload.contract_version === 'tool_result_v1' ? payload.contract_version : undefined
+    inferredContract
   return {
     toolkit_name,
     method_name,
@@ -710,7 +804,7 @@ function mapToolPayload(payload: Record<string, unknown>): ToolkitData {
     process_task_id,
     message,
     success,
-    output,
+    output: contract_version ? output || '' : output,
     error,
     contract_version,
     result,

@@ -96,18 +96,18 @@ Next Steps: run validation suite
 
 
 def test_context_budget_snapshot_uses_token_thresholds(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("COMPACTION_TRIGGER_TOKENS", "80")
-    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "100")
+    monkeypatch.setenv("COMPACTION_TRIGGER_TOKENS", "40")
+    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "50")
 
     lock = TaskLock(project_id="proj-memory-budget")
     lock.conversation_history = [{"role": "user", "content": "x" * 500}]
 
     snapshot = _context_budget_snapshot(lock)
-    assert snapshot["current_tokens"] > 100
+    assert snapshot["current_tokens"] > 50
     assert snapshot["should_compact"] is True
     assert snapshot["is_over_limit"] is True
-    assert snapshot["compaction_trigger_tokens"] == 80
-    assert snapshot["max_context_tokens"] == 100
+    assert snapshot["compaction_trigger_tokens"] == 40
+    assert snapshot["max_context_tokens"] == 50
 
 
 def test_build_context_prunes_stale_low_value_tool_output() -> None:

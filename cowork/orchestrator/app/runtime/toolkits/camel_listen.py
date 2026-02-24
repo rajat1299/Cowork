@@ -9,7 +9,9 @@ import threading
 import uuid
 from functools import wraps
 from inspect import iscoroutinefunction, signature
-from typing import Any, Callable, TypeVar, TypedDict
+from typing import Any, Callable, Literal, TypeVar, TypedDict
+
+from pydantic import BaseModel, ValidationError
 
 from app.runtime.events import StepEvent, ToolAuditEvent, ToolHookPhase
 from app.runtime.tool_context import current_agent_name, current_process_task_id
@@ -70,6 +72,21 @@ class ToolExecutionContext(TypedDict):
     agent_name: str
     process_task_id: str
     request_id: str
+
+
+class ToolLifecyclePayload(BaseModel):
+    agent_name: str
+    process_task_id: str
+    toolkit_name: str
+    method_name: str
+    message: str
+
+
+class ToolResultPayload(ToolLifecyclePayload):
+    contract_version: Literal["tool_result_v1"] = "tool_result_v1"
+    success: bool
+    output: str
+    error: str | None = None
 
 
 def _format_args(args: tuple, kwargs: dict) -> str:
@@ -150,19 +167,29 @@ def _emit_tool_event(
     process_task_id = current_process_task_id.get("")
     toolkit_name = _resolve_toolkit_name(toolkit)
     method_name = getattr(toolkit, "current_method_name", "")
-    payload: dict[str, Any] = {
-        "agent_name": agent_name,
-        "process_task_id": process_task_id,
-        "toolkit_name": toolkit_name,
-        "method_name": method_name.replace("_", " "),
-        "message": message,
-    }
-    if step == StepEvent.deactivate_toolkit:
-        payload["contract_version"] = "tool_result_v1"
-        payload["success"] = bool(success)
-        payload["output"] = message if success is not False else ""
-        if error:
-            payload["error"] = error
+    try:
+        if step == StepEvent.deactivate_toolkit:
+            payload = ToolResultPayload(
+                agent_name=agent_name,
+                process_task_id=process_task_id,
+                toolkit_name=toolkit_name,
+                method_name=method_name.replace("_", " "),
+                message=message,
+                success=bool(success),
+                output=message if success is not False else "",
+                error=error,
+            ).model_dump(exclude_none=True)
+        else:
+            payload = ToolLifecyclePayload(
+                agent_name=agent_name,
+                process_task_id=process_task_id,
+                toolkit_name=toolkit_name,
+                method_name=method_name.replace("_", " "),
+                message=message,
+            ).model_dump()
+    except ValidationError as exc:
+        logger.warning("tool_event_payload_validation_failed: %s", exc)
+        return
     event_stream.emit(step, payload)
 
 

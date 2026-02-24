@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import re
 from typing import Any, AsyncIterator, Callable
 
 import httpx
 
 from app.clients.core_api import ProviderConfig
+
+try:
+    import tiktoken
+except ImportError:  # pragma: no cover
+    tiktoken = None  # type: ignore[assignment]
 
 
 _OPENAI_COMPAT_DEFAULTS: dict[str, str] = {
@@ -31,6 +38,11 @@ _OPENAI_COMPAT_REQUIRES_ENDPOINT = {
 }
 _ANTHROPIC_NAMES = {"anthropic", "claude"}
 _STREAM_OPTIONS_RETRY_HINTS = ("stream_options", "include_usage")
+_DEFAULT_TOKEN_ENCODING = "cl100k_base"
+_TOKENIZER_CACHE: dict[str, Any] = {}
+_TOKEN_SPLIT_PATTERN = re.compile(r"\w+|[^\w\s]", re.UNICODE)
+_DEFAULT_ESTIMATE_HEADROOM = 1.08
+_ANTHROPIC_ESTIMATE_HEADROOM = 1.12
 
 
 def _normalize_provider_name(name: str | None) -> str:
@@ -39,11 +51,140 @@ def _normalize_provider_name(name: str | None) -> str:
     return name.strip().lower().replace(" ", "-").replace("_", "-")
 
 
-def estimate_text_tokens(text: str, *, chars_per_token: float = 4.0) -> int:
-    if not text:
-        return 0
+def _tokenization_model_candidates(
+    model_name: str | None,
+    provider_name: str | None,
+) -> list[tuple[str, bool]]:
+    candidates: list[tuple[str, bool]] = []
+
+    def add_candidate(value: str, *, from_model: bool) -> None:
+        normalized = value.strip()
+        if not normalized:
+            return
+        candidates.append((normalized, from_model))
+
+    raw_model = (model_name or "").strip()
+    if raw_model:
+        add_candidate(raw_model, from_model=True)
+        if "/" in raw_model:
+            add_candidate(raw_model.split("/", 1)[1], from_model=True)
+            add_candidate(raw_model.split("/")[-1], from_model=True)
+        if ":" in raw_model:
+            add_candidate(raw_model.split(":", 1)[0], from_model=True)
+
+    normalized_provider = _normalize_provider_name(provider_name)
+    if normalized_provider in {"openai", "openrouter", "google", "gemini"}:
+        add_candidate("gpt-4o-mini", from_model=False)
+        add_candidate("gpt-4o", from_model=False)
+    elif normalized_provider in _ANTHROPIC_NAMES:
+        add_candidate("gpt-4o-mini", from_model=False)
+        add_candidate("gpt-4o", from_model=False)
+    elif normalized_provider in {"qwen", "tongyi-qianwen", "deepseek"}:
+        add_candidate("gpt-4o-mini", from_model=False)
+
+    # Preserve insertion order while deduplicating.
+    deduped: list[tuple[str, bool]] = []
+    seen: set[str] = set()
+    for candidate, from_model in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append((candidate, from_model))
+    return deduped
+
+
+def _resolve_tiktoken_encoder(
+    model_name: str | None,
+    provider_name: str | None,
+) -> tuple[Any | None, bool, bool]:
+    """Return (encoder, model_derived, default_encoding_fallback)."""
+    if tiktoken is None:
+        return None, False, False
+    for candidate, from_model in _tokenization_model_candidates(model_name, provider_name):
+        cache_key = f"model:{candidate}"
+        if cache_key in _TOKENIZER_CACHE:
+            return _TOKENIZER_CACHE[cache_key], from_model, False
+        try:
+            encoder = tiktoken.encoding_for_model(candidate)
+        except Exception:
+            continue
+        _TOKENIZER_CACHE[cache_key] = encoder
+        return encoder, from_model, False
+
+    cache_key = f"encoding:{_DEFAULT_TOKEN_ENCODING}"
+    if cache_key in _TOKENIZER_CACHE:
+        return _TOKENIZER_CACHE[cache_key], False, True
+    try:
+        encoder = tiktoken.get_encoding(_DEFAULT_TOKEN_ENCODING)
+    except Exception:
+        return None, False, False
+    _TOKENIZER_CACHE[cache_key] = encoder
+    return encoder, False, True
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    if value <= 1.0:
+        return 1.0
+    return value
+
+
+def _estimate_headroom_multiplier(
+    provider_name: str | None,
+    *,
+    used_fallback: bool,
+    model_derived: bool,
+) -> float:
+    normalized_provider = _normalize_provider_name(provider_name)
+    if normalized_provider in _ANTHROPIC_NAMES:
+        return _float_env("ANTHROPIC_TOKEN_HEADROOM", _ANTHROPIC_ESTIMATE_HEADROOM)
+    if used_fallback or not model_derived:
+        return _float_env("TOKEN_ESTIMATE_HEADROOM", _DEFAULT_ESTIMATE_HEADROOM)
+    return 1.0
+
+
+def _fallback_estimate_tokens(text: str, *, chars_per_token: float = 4.0) -> int:
+    # Hybrid fallback when tokenizer bindings are unavailable.
+    # This is intentionally conservative and less char-ratio-sensitive.
+    chunks = _TOKEN_SPLIT_PATTERN.findall(text)
+    if chunks:
+        return max(1, len(chunks))
     safe_chars_per_token = max(chars_per_token, 1.0)
     return max(1, int(math.ceil(len(text) / safe_chars_per_token)))
+
+
+def estimate_text_tokens(
+    text: str,
+    *,
+    chars_per_token: float = 4.0,
+    model_name: str | None = None,
+    provider_name: str | None = None,
+) -> int:
+    if not text:
+        return 0
+    encoder, model_derived, used_fallback = _resolve_tiktoken_encoder(model_name, provider_name)
+    multiplier = _estimate_headroom_multiplier(
+        provider_name,
+        used_fallback=used_fallback,
+        model_derived=model_derived,
+    )
+    if encoder is not None:
+        try:
+            base_count = max(1, len(encoder.encode(text, disallowed_special=())))
+            return max(1, int(math.ceil(base_count * multiplier)))
+        except TypeError:
+            base_count = max(1, len(encoder.encode(text)))
+            return max(1, int(math.ceil(base_count * multiplier)))
+        except Exception:
+            pass
+    base_count = _fallback_estimate_tokens(text, chars_per_token=chars_per_token)
+    return max(1, int(math.ceil(base_count * multiplier)))
 
 
 def _resolve_openai_base(provider: ProviderConfig) -> str:

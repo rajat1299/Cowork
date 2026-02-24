@@ -21,6 +21,22 @@ class StopReason(StrEnum):
     workforce_execution_failed = "workforce_execution_failed"
 
 
+_KNOWN_STOP_REASONS = {item.value for item in StopReason}
+
+
+def normalize_stop_reason(
+    value: str | StopReason | None,
+    *,
+    default: StopReason,
+) -> StopReason:
+    if isinstance(value, StopReason):
+        return value
+    normalized = str(value or "").strip()
+    if normalized in _KNOWN_STOP_REASONS:
+        return StopReason(normalized)
+    return default
+
+
 def build_completed_end(
     result: str,
     *,
@@ -41,16 +57,17 @@ def build_completed_end(
 
 
 def build_stopped_end(
-    stop_reason: str = StopReason.user_stop.value,
+    stop_reason: str | StopReason = StopReason.user_stop.value,
     *,
     reason: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    resolved_stop_reason = normalize_stop_reason(stop_reason, default=StopReason.user_stop)
     payload: dict[str, Any] = {
         "status": StopStatus.stopped.value,
-        "stop_reason": stop_reason,
+        "stop_reason": resolved_stop_reason.value,
         "result": StopStatus.stopped.value,
-        "reason": reason or stop_reason,
+        "reason": reason or resolved_stop_reason.value,
     }
     if extra:
         payload.update(extra)
@@ -58,14 +75,15 @@ def build_stopped_end(
 
 
 def build_error_end(
-    stop_reason: str,
+    stop_reason: str | StopReason,
     reason: str,
     *,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    resolved_stop_reason = normalize_stop_reason(stop_reason, default=StopReason.model_call_failed)
     payload: dict[str, Any] = {
         "status": StopStatus.error.value,
-        "stop_reason": stop_reason,
+        "stop_reason": resolved_stop_reason.value,
         "result": StopStatus.error.value,
         "reason": reason,
     }
@@ -77,7 +95,7 @@ def build_error_end(
 def build_error_event(
     message: str,
     *,
-    stop_reason: str | None = None,
+    stop_reason: str | StopReason | None = None,
     error_type: str = "runtime_error",
     recoverable: bool = False,
     extra: dict[str, Any] | None = None,
@@ -89,7 +107,10 @@ def build_error_event(
         "recoverable": recoverable,
     }
     if stop_reason:
-        payload["stop_reason"] = stop_reason
+        payload["stop_reason"] = normalize_stop_reason(
+            stop_reason,
+            default=StopReason.model_call_failed,
+        ).value
     if extra:
         payload.update(extra)
     return payload

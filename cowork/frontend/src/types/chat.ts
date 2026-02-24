@@ -128,6 +128,13 @@ export interface ToolkitData {
   result?: string
 }
 
+export interface ToolResultData extends ToolkitData {
+  contract_version: 'tool_result_v1'
+  success: boolean
+  output: string
+  error?: string
+}
+
 export interface ArtifactData {
   id: string
   type: 'file' | 'code' | 'image'
@@ -137,9 +144,20 @@ export interface ArtifactData {
   action?: 'created' | 'modified'
 }
 
+export type StopReason =
+  | 'completed'
+  | 'user_stop'
+  | 'provider_not_configured'
+  | 'decomposition_failed'
+  | 'result_summary_failed'
+  | 'model_call_failed'
+  | 'skill_validation_failed'
+  | 'workforce_execution_failed'
+  | 'unknown'
+
 export interface EndData {
   status?: 'completed' | 'stopped' | 'error'
-  stop_reason?: string
+  stop_reason?: StopReason
   reason?: string
   result?: string
   answer?: string
@@ -149,7 +167,7 @@ export interface EndData {
 export interface ErrorData {
   message: string
   code?: string
-  stop_reason?: string
+  stop_reason?: StopReason
   error_type?: 'runtime_error' | 'validation_error' | 'upstream_error' | 'policy_error'
   recoverable?: boolean
 }
