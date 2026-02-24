@@ -400,12 +400,16 @@ function handleToolkitActivate(taskId: string, data: ToolkitData): void {
 }
 
 function handleToolkitDeactivate(taskId: string, data: ToolkitData): void {
-  addProgressStepFromEvent(taskId, 'deactivate_toolkit', 'completed', {
+  const success = data.success !== false
+  addProgressStepFromEvent(taskId, 'deactivate_toolkit', success ? 'completed' : 'failed', {
     toolkit: data.toolkit_name,
     method: data.method_name,
     agent: data.agent_name,
     process_task_id: data.process_task_id,
-    result: data.result ?? data.message,
+    result: data.output ?? data.result ?? data.message,
+    success,
+    error: data.error,
+    contract_version: data.contract_version,
   })
 }
 
@@ -466,24 +470,48 @@ function handleEnd(taskId: string, data: EndData): void {
     store.updateMessage(taskId, lastMessage.id, { isStreaming: false })
   }
 
-  // Add final answer if provided and different from last message
-  if (data.answer && data.answer !== lastMessage?.content) {
-    store.addMessage(taskId, createMessage('assistant', data.answer))
-  } else if (data.result && data.result !== lastMessage?.content) {
-    store.addMessage(taskId, createMessage('assistant', data.result))
-  }
+  const resolvedStatus =
+    data.status
+    || (data.result === 'error' ? 'error' : data.result === 'stopped' ? 'stopped' : 'completed')
 
   // Update tokens if provided
   if (data.tokens) {
     store.setTaskTokens(taskId, data.tokens)
   }
 
-  // Mark task as completed
-  store.setTaskStatus(taskId, 'completed')
-  addProgressStepFromEvent(taskId, 'end', 'completed', { tokens: data.tokens })
+  if (resolvedStatus === 'completed') {
+    // Add final answer if provided and different from last message
+    if (data.answer && data.answer !== lastMessage?.content) {
+      store.addMessage(taskId, createMessage('assistant', data.answer))
+    } else if (data.result && data.result !== lastMessage?.content) {
+      store.addMessage(taskId, createMessage('assistant', data.result))
+    }
+
+    store.setTaskStatus(taskId, 'completed')
+    addProgressStepFromEvent(taskId, 'end', 'completed', {
+      tokens: data.tokens,
+      status: resolvedStatus,
+      stop_reason: data.stop_reason,
+    })
+  } else if (resolvedStatus === 'stopped') {
+    store.setTaskStatus(taskId, 'paused')
+    addProgressStepFromEvent(taskId, 'end', 'completed', {
+      tokens: data.tokens,
+      status: resolvedStatus,
+      stop_reason: data.stop_reason,
+      reason: data.reason,
+    })
+  } else {
+    store.setTaskStatus(taskId, 'failed')
+    addProgressStepFromEvent(taskId, 'end', 'failed', {
+      status: resolvedStatus,
+      stop_reason: data.stop_reason,
+      reason: data.reason,
+    })
+  }
 
   // Desktop notification when window is not focused
-  if (isDesktop && !document.hasFocus()) {
+  if (resolvedStatus === 'completed' && isDesktop && !document.hasFocus()) {
     const desktop = (window as { coworkDesktop?: { showNotification: (opts: { title: string; body?: string }) => void } }).coworkDesktop
     const raw = task.messages.find((m) => m.role === 'user')?.content ?? ''
     const body = raw ? `${raw.slice(0, 80)}${raw.length > 80 ? '…' : ''}` : 'Your task has finished.'
@@ -546,7 +574,7 @@ function handleTurnCancelled(taskId: string, data: Record<string, unknown>): voi
     return
   }
   const reason = typeof data.reason === 'string' ? data.reason : 'cancelled'
-  store.setTaskStatus(taskId, 'completed')
+  store.setTaskStatus(taskId, 'paused')
   store.addMessage(taskId, createMessage('system', `Cancelled: ${reason}`))
   addProgressStepFromEvent(taskId, 'turn_cancelled', 'failed', data)
   removeSSEController(taskId)
@@ -670,12 +698,21 @@ function mapToolPayload(payload: Record<string, unknown>): ToolkitData {
       ? payload.result
       : ''
   const result = typeof payload.result === 'string' ? payload.result : undefined
+  const success = typeof payload.success === 'boolean' ? payload.success : undefined
+  const output = typeof payload.output === 'string' ? payload.output : undefined
+  const error = typeof payload.error === 'string' ? payload.error : undefined
+  const contract_version =
+    payload.contract_version === 'tool_result_v1' ? payload.contract_version : undefined
   return {
     toolkit_name,
     method_name,
     agent_name,
     process_task_id,
     message,
+    success,
+    output,
+    error,
+    contract_version,
     result,
   }
 }

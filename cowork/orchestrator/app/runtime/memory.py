@@ -13,7 +13,7 @@ from app.clients.core_api import (
     fetch_thread_summary,
     upsert_thread_summary,
 )
-from app.runtime.llm_client import collect_chat_completion
+from app.runtime.llm_client import collect_chat_completion, estimate_text_tokens
 from app.runtime.task_lock import TaskLock
 
 
@@ -30,6 +30,8 @@ _MAX_NOTE_COUNT_PER_SECTION = 20
 _MAX_HISTORY_TURNS = 24
 _MIN_COMPACTION_SECTION_HITS = 3
 _COMPACTION_REQUIRED_HEADERS = ("goal", "decisions", "outputs", "open questions", "next steps")
+_DEFAULT_COMPACTION_TRIGGER_TOKENS = 20000
+_DEFAULT_MAX_CONTEXT_TOKENS = 25000
 
 
 def _usage_total(usage: dict | None) -> int:
@@ -156,6 +158,62 @@ def _conversation_length(task_lock: TaskLock) -> int:
         content = entry.get("content", "")
         total_length += len(content) if isinstance(content, str) else len(str(content))
     return total_length
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _context_token_thresholds() -> tuple[int, int]:
+    compaction_trigger_tokens = _int_env(
+        "COMPACTION_TRIGGER_TOKENS",
+        _DEFAULT_COMPACTION_TRIGGER_TOKENS,
+    )
+    max_context_tokens = _int_env(
+        "MAX_CONTEXT_TOKENS",
+        _DEFAULT_MAX_CONTEXT_TOKENS,
+    )
+    if compaction_trigger_tokens >= max_context_tokens:
+        compaction_trigger_tokens = max(1, max_context_tokens - 1)
+    return compaction_trigger_tokens, max_context_tokens
+
+
+def _conversation_tokens(task_lock: TaskLock) -> int:
+    total_tokens = 0
+    if task_lock.thread_summary:
+        total_tokens += estimate_text_tokens(task_lock.thread_summary)
+    if task_lock.last_task_summary:
+        total_tokens += estimate_text_tokens(task_lock.last_task_summary)
+    for note in task_lock.memory_notes:
+        content = note.get("content", "")
+        total_tokens += estimate_text_tokens(str(content))
+    for note in task_lock.global_memory_notes:
+        content = note.get("content", "")
+        total_tokens += estimate_text_tokens(str(content))
+    for entry in task_lock.conversation_history:
+        content = entry.get("content", "")
+        total_tokens += estimate_text_tokens(str(content))
+    return total_tokens
+
+
+def _context_budget_snapshot(task_lock: TaskLock) -> dict[str, int | bool]:
+    compaction_trigger_tokens, max_context_tokens = _context_token_thresholds()
+    current_tokens = _conversation_tokens(task_lock)
+    remaining_tokens = max(0, max_context_tokens - current_tokens)
+    return {
+        "current_tokens": current_tokens,
+        "compaction_trigger_tokens": compaction_trigger_tokens,
+        "max_context_tokens": max_context_tokens,
+        "remaining_tokens": remaining_tokens,
+        "should_compact": current_tokens > compaction_trigger_tokens,
+        "is_over_limit": current_tokens > max_context_tokens,
+    }
 
 
 async def _hydrate_conversation_history(

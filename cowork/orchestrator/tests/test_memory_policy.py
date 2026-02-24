@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.clients.core_api import ProviderConfig
-from app.runtime.memory import _build_context, _compact_context
+from app.runtime.memory import _build_context, _compact_context, _context_budget_snapshot
 from app.runtime.task_lock import TaskLock
 
 
@@ -85,3 +85,18 @@ Next Steps: run validation suite
     assert updated is True
     assert lock.thread_summary == structured
     assert len(lock.conversation_history) == 12
+
+
+def test_context_budget_snapshot_uses_token_thresholds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("COMPACTION_TRIGGER_TOKENS", "80")
+    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "100")
+
+    lock = TaskLock(project_id="proj-memory-budget")
+    lock.conversation_history = [{"role": "user", "content": "x" * 500}]
+
+    snapshot = _context_budget_snapshot(lock)
+    assert snapshot["current_tokens"] > 100
+    assert snapshot["should_compact"] is True
+    assert snapshot["is_over_limit"] is True
+    assert snapshot["compaction_trigger_tokens"] == 80
+    assert snapshot["max_context_tokens"] == 100

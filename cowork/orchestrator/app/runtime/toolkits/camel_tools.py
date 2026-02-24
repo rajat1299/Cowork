@@ -17,14 +17,19 @@ from camel.toolkits.terminal_toolkit import TerminalToolkit
 from app.config import settings
 from app.clients.core_api import search_chat_messages
 from app.runtime.config_helpers import ComposeVariant, _emit_compose_message
-from app.runtime.events import StepEvent
+from app.runtime.events import StepEvent, ToolAuditEvent
 from app.runtime.tool_context import (
     current_agent_name,
     current_auth_token,
-    current_process_task_id,
     current_project_id,
 )
-from app.runtime.toolkits.camel_listen import auto_listen_toolkit
+from app.runtime.toolkits.camel_listen import (
+    _emit_tool_audit,
+    _emit_tool_event,
+    _run_post_tool_pipeline,
+    _run_pre_tool_pipeline,
+    auto_listen_toolkit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +64,7 @@ def _run_async_in_sync(coro):
         loop = _thread_local.loop
         try:
             return ctx.run(loop.run_until_complete, coro)
-        except Exception:
+        except RuntimeError:
             # If the loop is problematic, create a fresh one
             loop = asyncio.new_event_loop()
             _thread_local.loop = loop
@@ -278,34 +283,12 @@ def _safe_extend(tools: list[FunctionTool], new_tools: Iterable[FunctionTool]) -
         seen.add(tool.func.__name__)
 
 
-def _emit_tool_event(
-    event_stream: Any,
-    step: StepEvent,
-    agent_name: str,
-    process_task_id: str,
-    toolkit_name: str,
-    method_name: str,
-    message: str,
-) -> None:
-    if event_stream is None:
-        return
-    event_stream.emit(
-        step,
-        {
-            "agent_name": agent_name,
-            "process_task_id": process_task_id,
-            "toolkit_name": toolkit_name,
-            "method_name": method_name.replace("_", " "),
-            "message": message,
-        },
-    )
-
-
 def _wrap_function_tool(
     tool: FunctionTool,
     event_stream: Any,
     agent_name: str,
     toolkit_name: str,
+    approval_callback: Callable[..., Any] | None = None,
 ) -> FunctionTool:
     func = tool.func
     function_name = (
@@ -321,6 +304,17 @@ def _wrap_function_tool(
         resolved_toolkit = "mcp"
     fallback_auth_token = current_auth_token.get()
     fallback_project_id = current_project_id.get()
+
+    class _WrappedToolContext:
+        def __init__(self, resolved_agent_name: str) -> None:
+            self.event_stream = event_stream
+            self.agent_name = resolved_agent_name
+            self.approval_callback = approval_callback
+            self.current_method_name = method_name
+            self._toolkit_name = resolved_toolkit
+
+        def toolkit_name(self) -> str:
+            return self._toolkit_name
 
     def _apply_fallback_context() -> tuple[object | None, object | None]:
         auth_token = current_auth_token.get()
@@ -341,85 +335,133 @@ def _wrap_function_tool(
 
     async def _async_wrapper(*args, **kwargs):
         resolved_agent = agent_name or current_agent_name.get("")
-        process_task_id = current_process_task_id.get("")
         auth_ctx, project_ctx = _apply_fallback_context()
-        _emit_tool_event(
-            event_stream,
-            StepEvent.activate_toolkit,
-            resolved_agent,
-            process_task_id,
-            resolved_toolkit,
-            method_name,
-            f"args={args}, kwargs={kwargs}",
-        )
         try:
-            result = func(*args, **kwargs)
-            if inspect.iscoroutine(result):
-                result = await result
-            _emit_tool_event(
-                event_stream,
-                StepEvent.deactivate_toolkit,
-                resolved_agent,
-                process_task_id,
-                resolved_toolkit,
+            tool_runtime = _WrappedToolContext(resolved_agent)
+            execution_context = await _run_pre_tool_pipeline(
+                tool_runtime,
                 method_name,
-                str(result),
+                tuple(args),
+                dict(kwargs),
             )
-            return result
-        except Exception as exc:
-            _emit_tool_event(
-                event_stream,
-                StepEvent.deactivate_toolkit,
-                resolved_agent,
-                process_task_id,
-                resolved_toolkit,
-                method_name,
-                str(exc),
+            _emit_tool_audit(
+                tool_runtime,
+                context=execution_context,
+                event_name=ToolAuditEvent.execution,
+                outcome="started",
             )
-            raise
+            _emit_tool_event(tool_runtime, StepEvent.activate_toolkit, execution_context["message"])
+            try:
+                result = func(*execution_context["args"], **execution_context["kwargs"])
+                if inspect.iscoroutine(result):
+                    result = await result
+                await _run_post_tool_pipeline(
+                    tool_runtime,
+                    context=execution_context,
+                    result=result,
+                )
+                _emit_tool_event(
+                    tool_runtime,
+                    StepEvent.deactivate_toolkit,
+                    str(result),
+                    success=True,
+                )
+                return result
+            except Exception as exc:
+                error = exc
+                try:
+                    await _run_post_tool_pipeline(
+                        tool_runtime,
+                        context=execution_context,
+                        error=exc,
+                    )
+                except Exception as post_exc:
+                    error = post_exc
+                _emit_tool_audit(
+                    tool_runtime,
+                    context=execution_context,
+                    event_name=ToolAuditEvent.failure,
+                    outcome="failed",
+                    message=str(error),
+                )
+                _emit_tool_event(
+                    tool_runtime,
+                    StepEvent.deactivate_toolkit,
+                    str(error),
+                    success=False,
+                    error=str(error),
+                )
+                raise error
         finally:
             _reset_fallback_context(auth_ctx, project_ctx)
 
     def _sync_wrapper(*args, **kwargs):
         resolved_agent = agent_name or current_agent_name.get("")
-        process_task_id = current_process_task_id.get("")
         auth_ctx, project_ctx = _apply_fallback_context()
-        _emit_tool_event(
-            event_stream,
-            StepEvent.activate_toolkit,
-            resolved_agent,
-            process_task_id,
-            resolved_toolkit,
-            method_name,
-            f"args={args}, kwargs={kwargs}",
-        )
         try:
-            result = func(*args, **kwargs)
-            # Handle async functions called from sync context
-            if inspect.iscoroutine(result):
-                logger.debug(f"Running async tool {method_name} in sync context")
-                result = _run_async_in_sync(result)
-            _emit_tool_event(
-                event_stream,
-                StepEvent.deactivate_toolkit,
-                resolved_agent,
-                process_task_id,
-                resolved_toolkit,
-                method_name,
-                str(result),
+            tool_runtime = _WrappedToolContext(resolved_agent)
+            execution_context = _run_async_in_sync(
+                _run_pre_tool_pipeline(
+                    tool_runtime,
+                    method_name,
+                    tuple(args),
+                    dict(kwargs),
+                )
             )
-            return result
-        except Exception as exc:
-            _emit_tool_event(
-                event_stream,
-                StepEvent.deactivate_toolkit,
-                resolved_agent,
-                process_task_id,
-                resolved_toolkit,
-                method_name,
-                str(exc),
+            _emit_tool_audit(
+                tool_runtime,
+                context=execution_context,
+                event_name=ToolAuditEvent.execution,
+                outcome="started",
             )
-            raise
+            _emit_tool_event(tool_runtime, StepEvent.activate_toolkit, execution_context["message"])
+            try:
+                result = func(*execution_context["args"], **execution_context["kwargs"])
+                # Handle async functions called from sync context
+                if inspect.iscoroutine(result):
+                    logger.debug(f"Running async tool {method_name} in sync context")
+                    result = _run_async_in_sync(result)
+                _run_async_in_sync(
+                    _run_post_tool_pipeline(
+                        tool_runtime,
+                        context=execution_context,
+                        result=result,
+                    )
+                )
+                _emit_tool_event(
+                    tool_runtime,
+                    StepEvent.deactivate_toolkit,
+                    str(result),
+                    success=True,
+                )
+                return result
+            except Exception as exc:
+                error = exc
+                try:
+                    _run_async_in_sync(
+                        _run_post_tool_pipeline(
+                            tool_runtime,
+                            context=execution_context,
+                            error=exc,
+                        )
+                    )
+                except Exception as post_exc:
+                    error = post_exc
+                _emit_tool_audit(
+                    tool_runtime,
+                    context=execution_context,
+                    event_name=ToolAuditEvent.failure,
+                    outcome="failed",
+                    message=str(error),
+                )
+                _emit_tool_event(
+                    tool_runtime,
+                    StepEvent.deactivate_toolkit,
+                    str(error),
+                    success=False,
+                    error=str(error),
+                )
+                raise error
         finally:
             _reset_fallback_context(auth_ctx, project_ctx)
 
@@ -571,7 +613,13 @@ def build_agent_tools(
         if search_backend == "exa":
             try:
                 tool = FunctionTool(search_exa)
-                wrapped = _wrap_function_tool(tool, event_stream, agent_name, "search")
+                wrapped = _wrap_function_tool(
+                    tool,
+                    event_stream,
+                    agent_name,
+                    "search",
+                    approval_callback=approval_callback,
+                )
                 _safe_extend(tools, [wrapped])
             except Exception as exc:
                 logger.warning("Exa search toolkit unavailable: %s", exc)
@@ -585,7 +633,13 @@ def build_agent_tools(
     if "compose_message" in expanded:
         try:
             tool = _build_compose_message_tool(event_stream)
-            wrapped = _wrap_function_tool(tool, event_stream, agent_name, "compose_message")
+            wrapped = _wrap_function_tool(
+                tool,
+                event_stream,
+                agent_name,
+                "compose_message",
+                approval_callback=approval_callback,
+            )
             _safe_extend(tools, [wrapped])
         except Exception as exc:
             logger.warning("Compose message toolkit unavailable: %s", exc)
@@ -593,7 +647,13 @@ def build_agent_tools(
     if "memory_search" in expanded:
         try:
             tool = FunctionTool(search_past_chats)
-            wrapped = _wrap_function_tool(tool, event_stream, agent_name, "memory")
+            wrapped = _wrap_function_tool(
+                tool,
+                event_stream,
+                agent_name,
+                "memory",
+                approval_callback=approval_callback,
+            )
             _safe_extend(tools, [wrapped])
         except Exception as exc:
             logger.warning("Memory search toolkit unavailable: %s", exc)
@@ -1063,7 +1123,13 @@ def build_agent_tools(
     if "mcp" in expanded and mcp_tools:
         for tool in mcp_tools:
             try:
-                wrapped = _wrap_function_tool(tool, event_stream, agent_name, "")
+                wrapped = _wrap_function_tool(
+                    tool,
+                    event_stream,
+                    agent_name,
+                    "",
+                    approval_callback=approval_callback,
+                )
                 _safe_extend(tools, [wrapped])
             except Exception as exc:
                 logger.warning("MCP tool wrapper unavailable: %s", exc)

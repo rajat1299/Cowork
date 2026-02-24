@@ -121,7 +121,10 @@ export interface ToolkitData {
   toolkit_name: string
   method_name: string
   message: string              // args/kwargs as string
-  output?: string              // Present in deactivate_toolkit
+  contract_version?: 'tool_result_v1'
+  success?: boolean
+  output?: string
+  error?: string
   result?: string
 }
 
@@ -135,6 +138,9 @@ export interface ArtifactData {
 }
 
 export interface EndData {
+  status?: 'completed' | 'stopped' | 'error'
+  stop_reason?: string
+  reason?: string
   result?: string
   answer?: string
   tokens?: number
@@ -143,6 +149,7 @@ export interface EndData {
 export interface ErrorData {
   message: string
   code?: string
+  stop_reason?: string
   error_type?: 'runtime_error' | 'validation_error' | 'upstream_error' | 'policy_error'
   recoverable?: boolean
 }

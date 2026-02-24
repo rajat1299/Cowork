@@ -27,6 +27,14 @@ from app.runtime.skills import RuntimeSkill, apply_runtime_skills, build_runtime
 from app.runtime.streaming import EventStream, TokenTracker
 from app.runtime.task_analysis import _ensure_tool, _merge_agent_specs, _strip_search_tools
 from app.runtime.task_lock import TaskLock
+from app.runtime.stop_reasons import (
+    StopReason,
+    build_completed_end,
+    build_error_end,
+    build_error_event,
+    build_stopped_end,
+)
+from app.runtime.tool_catalog import select_tools_for_turn
 from app.runtime.toolkits.camel_tools import build_agent_tools
 from app.runtime.tracing import _trace_log
 from app.runtime.workforce import (
@@ -139,10 +147,19 @@ async def _run_camel_complex(
                 if usage_update:
                     decompose_usage = usage_update
         except Exception as exc:
-            event_stream.emit(StepEvent.error, {"error": str(exc)})
+            event_stream.emit(
+                StepEvent.error,
+                build_error_event(
+                    str(exc),
+                    stop_reason=StopReason.decomposition_failed.value,
+                ),
+            )
             event_stream.emit(
                 StepEvent.end,
-                {"result": "error", "reason": "Decomposition failed"},
+                build_error_end(
+                    StopReason.decomposition_failed.value,
+                    "Decomposition failed",
+                ),
             )
             if history_id is not None:
                 await update_history(action.auth_token, history_id, {"status": 3})
@@ -155,7 +172,7 @@ async def _run_camel_complex(
             event_stream.emit(StepEvent.turn_cancelled, {"reason": "user_stop"})
             event_stream.emit(
                 StepEvent.end,
-                {"result": "stopped", "reason": "user_stop"},
+                build_stopped_end(StopReason.user_stop.value),
             )
             if history_id is not None:
                 await update_history(action.auth_token, history_id, {"status": 3})
@@ -260,8 +277,23 @@ async def _run_camel_complex(
             )
 
         for spec in agent_specs:
+            requested_tools = spec.tools or []
+            tool_selection = select_tools_for_turn(requested_tools, action.question)
+            if tool_selection.dropped:
+                event_stream.emit(
+                    StepEvent.notice,
+                    {
+                        "message": (
+                            f"Selected {len(tool_selection.selected)} of {len(requested_tools)} tools for "
+                            f"{spec.name} this turn."
+                        ),
+                        "agent_name": spec.name,
+                        "selected_tools": tool_selection.selected,
+                        "deferred_tools": tool_selection.dropped,
+                    },
+                )
             tools = build_agent_tools(
-                spec.tools or [],
+                tool_selection.selected,
                 event_stream,
                 spec.name,
                 str(workdir),
@@ -278,7 +310,7 @@ async def _run_camel_complex(
                 extra_params=extra_params if native_search_enabled else None,
             )
             agent.agent_name = spec.name
-            workforce.add_single_agent_worker(spec.description, agent, spec.tools)
+            workforce.add_single_agent_worker(spec.description, agent, tool_selection.selected)
 
         main_task = Task(content=action.question, id=action.task_id)
         camel_subtasks: list[Task] = []
@@ -303,7 +335,7 @@ async def _run_camel_complex(
             event_stream.emit(StepEvent.turn_cancelled, {"reason": "user_stop"})
             event_stream.emit(
                 StepEvent.end,
-                {"result": "stopped", "reason": "user_stop"},
+                build_stopped_end(StopReason.user_stop.value),
             )
             if history_id is not None:
                 await update_history(action.auth_token, history_id, {"status": 3})
@@ -343,10 +375,19 @@ async def _run_camel_complex(
                     if usage_update:
                         results_usage = usage_update
             except Exception as exc:
-                event_stream.emit(StepEvent.error, {"error": str(exc)})
+                event_stream.emit(
+                    StepEvent.error,
+                    build_error_event(
+                        str(exc),
+                        stop_reason=StopReason.result_summary_failed.value,
+                    ),
+                )
                 event_stream.emit(
                     StepEvent.end,
-                    {"result": "error", "reason": "Result summary failed"},
+                    build_error_end(
+                        StopReason.result_summary_failed.value,
+                        "Result summary failed",
+                    ),
                 )
                 if history_id is not None:
                     await update_history(action.auth_token, history_id, {"status": 3})
@@ -357,7 +398,7 @@ async def _run_camel_complex(
                 event_stream.emit(StepEvent.turn_cancelled, {"reason": "user_stop"})
                 event_stream.emit(
                     StepEvent.end,
-                    {"result": "stopped", "reason": "user_stop"},
+                    build_stopped_end(StopReason.user_stop.value),
                 )
                 if history_id is not None:
                     await update_history(action.auth_token, history_id, {"status": 3})
@@ -450,32 +491,38 @@ async def _run_camel_complex(
                     reason = "Skill output contract validation failed"
                     event_stream.emit(
                         StepEvent.error,
-                        {
-                            "error": reason,
-                            "skill_id": primary_skill.id,
-                            "skill_version": primary_skill.version,
-                            "skill_stage": "validation_failed",
-                            "validation": {
-                                "success": validation.success,
-                                "issues": validation.issues,
-                                "expected_contracts": validation.expected_contracts,
+                        build_error_event(
+                            reason,
+                            stop_reason=StopReason.skill_validation_failed.value,
+                            error_type="validation_error",
+                            extra={
+                                "skill_id": primary_skill.id,
+                                "skill_version": primary_skill.version,
+                                "skill_stage": "validation_failed",
+                                "validation": {
+                                    "success": validation.success,
+                                    "issues": validation.issues,
+                                    "expected_contracts": validation.expected_contracts,
+                                },
                             },
-                        },
+                        ),
                     )
                     event_stream.emit(
                         StepEvent.end,
-                        {
-                            "result": "error",
-                            "reason": reason,
-                            "skill_id": primary_skill.id,
-                            "skill_version": primary_skill.version,
-                            "skill_stage": "validation_failed",
-                            "validation": {
-                                "success": validation.success,
-                                "issues": validation.issues,
-                                "expected_contracts": validation.expected_contracts,
+                        build_error_end(
+                            StopReason.skill_validation_failed.value,
+                            reason,
+                            extra={
+                                "skill_id": primary_skill.id,
+                                "skill_version": primary_skill.version,
+                                "skill_stage": "validation_failed",
+                                "validation": {
+                                    "success": validation.success,
+                                    "issues": validation.issues,
+                                    "expected_contracts": validation.expected_contracts,
+                                },
                             },
-                        },
+                        ),
                     )
                     if history_id is not None:
                         await update_history(action.auth_token, history_id, {"status": 3})
@@ -494,7 +541,7 @@ async def _run_camel_complex(
                 },
             )
 
-        event_stream.emit(StepEvent.end, {"result": final_result})
+        event_stream.emit(StepEvent.end, build_completed_end(final_result))
         task_lock.add_conversation("assistant", final_result)
         await _persist_message(
             action.auth_token,
@@ -512,10 +559,19 @@ async def _run_camel_complex(
             )
         task_lock.status = TaskStatus.done
     except Exception as exc:
-        event_stream.emit(StepEvent.error, {"error": str(exc)})
+        event_stream.emit(
+            StepEvent.error,
+            build_error_event(
+                str(exc),
+                stop_reason=StopReason.workforce_execution_failed.value,
+            ),
+        )
         event_stream.emit(
             StepEvent.end,
-            {"result": "error", "reason": "Workforce execution failed"},
+            build_error_end(
+                StopReason.workforce_execution_failed.value,
+                "Workforce execution failed",
+            ),
         )
         if history_id is not None:
             await update_history(action.auth_token, history_id, {"status": 3})

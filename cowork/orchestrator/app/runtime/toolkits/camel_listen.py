@@ -135,7 +135,14 @@ def _build_tool_execution_context(
     }
 
 
-def _emit_tool_event(toolkit: Any, step: StepEvent, message: str) -> None:
+def _emit_tool_event(
+    toolkit: Any,
+    step: StepEvent,
+    message: str,
+    *,
+    success: bool | None = None,
+    error: str | None = None,
+) -> None:
     event_stream = getattr(toolkit, "event_stream", None)
     if event_stream is None:
         return
@@ -143,16 +150,20 @@ def _emit_tool_event(toolkit: Any, step: StepEvent, message: str) -> None:
     process_task_id = current_process_task_id.get("")
     toolkit_name = _resolve_toolkit_name(toolkit)
     method_name = getattr(toolkit, "current_method_name", "")
-    event_stream.emit(
-        step,
-        {
-            "agent_name": agent_name,
-            "process_task_id": process_task_id,
-            "toolkit_name": toolkit_name,
-            "method_name": method_name.replace("_", " "),
-            "message": message,
-        },
-    )
+    payload: dict[str, Any] = {
+        "agent_name": agent_name,
+        "process_task_id": process_task_id,
+        "toolkit_name": toolkit_name,
+        "method_name": method_name.replace("_", " "),
+        "message": message,
+    }
+    if step == StepEvent.deactivate_toolkit:
+        payload["contract_version"] = "tool_result_v1"
+        payload["success"] = bool(success)
+        payload["output"] = message if success is not False else ""
+        if error:
+            payload["error"] = error
+    event_stream.emit(step, payload)
 
 
 def _emit_tool_audit(
@@ -361,7 +372,13 @@ def listen_toolkit(base_method: Callable[..., Any]) -> Callable[[Callable[..., A
                         outcome="failed",
                         message=str(error),
                     )
-                _emit_tool_event(toolkit, StepEvent.deactivate_toolkit, _safe_result_message(result, error))
+                _emit_tool_event(
+                    toolkit,
+                    StepEvent.deactivate_toolkit,
+                    _safe_result_message(result, error),
+                    success=error is None,
+                    error=str(error) if error is not None else None,
+                )
                 if error is not None:
                     raise error
                 return result
@@ -422,7 +439,13 @@ def listen_toolkit(base_method: Callable[..., Any]) -> Callable[[Callable[..., A
                     outcome="failed",
                     message=str(error),
                 )
-            _emit_tool_event(toolkit, StepEvent.deactivate_toolkit, _safe_result_message(result, error))
+            _emit_tool_event(
+                toolkit,
+                StepEvent.deactivate_toolkit,
+                _safe_result_message(result, error),
+                success=error is None,
+                error=str(error) if error is not None else None,
+            )
             if error is not None:
                 raise error
             return result

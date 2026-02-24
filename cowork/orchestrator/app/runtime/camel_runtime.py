@@ -35,7 +35,7 @@ from app.runtime.llm_client import collect_chat_completion, stream_chat
 from app.runtime.memory import (
     _build_context,
     _compact_context,
-    _conversation_length,
+    _context_budget_snapshot,
     _generate_global_memory_notes,
     _hydrate_conversation_history,
     _hydrate_memory_notes,
@@ -60,6 +60,13 @@ from app.runtime.skills import (
     skill_ids,
     skill_names,
 )
+from app.runtime.stop_reasons import (
+    StopReason,
+    build_completed_end,
+    build_error_end,
+    build_error_event,
+    build_stopped_end,
+)
 from app.runtime.streaming import EventStream, TokenTracker, _emit
 from app.runtime.task_analysis import (
     _build_native_search_params,
@@ -79,9 +86,6 @@ from shared.schemas import StepEvent as StepEventModel
 
 
 logger = logging.getLogger(__name__)
-
-_MAX_CONTEXT_LENGTH = 100000
-_COMPACTION_TRIGGER = 80000
 
 async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
     while True:
@@ -133,11 +137,21 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 )
 
             if not provider or not provider.api_key or not provider.model_type:
-                yield _emit(action.task_id, StepEvent.error, {"error": "No provider configured"})
+                yield _emit(
+                    action.task_id,
+                    StepEvent.error,
+                    build_error_event(
+                        "No provider configured",
+                        stop_reason=StopReason.provider_not_configured.value,
+                    ),
+                )
                 yield _emit(
                     action.task_id,
                     StepEvent.end,
-                    {"result": "error", "reason": "No provider configured"},
+                    build_error_end(
+                        StopReason.provider_not_configured.value,
+                        "No provider configured",
+                    ),
                 )
                 task_lock.status = TaskStatus.done
                 continue
@@ -202,12 +216,28 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 default=True,
             )
 
-            context_length = _conversation_length(task_lock)
-            if context_length > _COMPACTION_TRIGGER:
+            context_budget = _context_budget_snapshot(task_lock)
+            yield _emit(
+                action.task_id,
+                StepEvent.audit_log,
+                {
+                    "event_name": "context_budget_snapshot",
+                    "stage": "pre_compaction",
+                    "current_tokens": context_budget["current_tokens"],
+                    "compaction_trigger_tokens": context_budget["compaction_trigger_tokens"],
+                    "max_context_tokens": context_budget["max_context_tokens"],
+                    "remaining_tokens": context_budget["remaining_tokens"],
+                },
+            )
+            if context_budget["should_compact"]:
                 yield _emit(
                     action.task_id,
                     StepEvent.notice,
-                    {"message": "Compacting conversation so we can keep chatting..."},
+                    {
+                        "message": "Compacting conversation so we can keep chatting...",
+                        "current_tokens": context_budget["current_tokens"],
+                        "compaction_trigger_tokens": context_budget["compaction_trigger_tokens"],
+                    },
                 )
                 try:
                     await _compact_context(task_lock, provider, action.auth_token, action.project_id)
@@ -222,15 +252,29 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 include_global=memory_generate_enabled,
             )
 
-            context_length = _conversation_length(task_lock)
-            if context_length > _MAX_CONTEXT_LENGTH:
+            context_budget = _context_budget_snapshot(task_lock)
+            yield _emit(
+                action.task_id,
+                StepEvent.audit_log,
+                {
+                    "event_name": "context_budget_snapshot",
+                    "stage": "post_hydration",
+                    "current_tokens": context_budget["current_tokens"],
+                    "compaction_trigger_tokens": context_budget["compaction_trigger_tokens"],
+                    "max_context_tokens": context_budget["max_context_tokens"],
+                    "remaining_tokens": context_budget["remaining_tokens"],
+                },
+            )
+            if context_budget["is_over_limit"]:
                 yield _emit(
                     action.task_id,
                     StepEvent.context_too_long,
                     {
                         "message": "The conversation history is too long. Please create a new project to continue.",
-                        "current_length": context_length,
-                        "max_length": _MAX_CONTEXT_LENGTH,
+                        "current_tokens": context_budget["current_tokens"],
+                        "max_tokens": context_budget["max_context_tokens"],
+                        "compaction_trigger_tokens": context_budget["compaction_trigger_tokens"],
+                        "remaining_tokens": context_budget["remaining_tokens"],
                     },
                 )
                 continue
@@ -400,11 +444,21 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                         if usage_update:
                             usage = usage_update
                 except Exception as exc:
-                    yield _emit(action.task_id, StepEvent.error, {"error": str(exc)})
+                    yield _emit(
+                        action.task_id,
+                        StepEvent.error,
+                        build_error_event(
+                            str(exc),
+                            stop_reason=StopReason.model_call_failed.value,
+                        ),
+                    )
                     yield _emit(
                         action.task_id,
                         StepEvent.end,
-                        {"result": "error", "reason": "Model call failed"},
+                        build_error_end(
+                            StopReason.model_call_failed.value,
+                            "Model call failed",
+                        ),
                     )
                     if history_id is not None:
                         await update_history(action.auth_token, history_id, {"status": 3})
@@ -420,7 +474,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                     yield _emit(
                         action.task_id,
                         StepEvent.end,
-                        {"result": "stopped", "reason": "user_stop"},
+                        build_stopped_end(StopReason.user_stop.value),
                     )
                     if history_id is not None:
                         await update_history(action.auth_token, history_id, {"status": 3})
@@ -462,40 +516,50 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                             yield _emit(
                                 action.task_id,
                                 StepEvent.error,
-                                {
-                                    "error": reason,
-                                    "skill_id": skill_run_state.active_skills[0].id,
-                                    "skill_version": skill_run_state.active_skills[0].version,
-                                    "skill_stage": "validation_failed",
-                                    "validation": {
-                                        "success": validation.success,
-                                        "issues": validation.issues,
-                                        "expected_contracts": validation.expected_contracts,
+                                build_error_event(
+                                    reason,
+                                    stop_reason=StopReason.skill_validation_failed.value,
+                                    error_type="validation_error",
+                                    extra={
+                                        "skill_id": skill_run_state.active_skills[0].id,
+                                        "skill_version": skill_run_state.active_skills[0].version,
+                                        "skill_stage": "validation_failed",
+                                        "validation": {
+                                            "success": validation.success,
+                                            "issues": validation.issues,
+                                            "expected_contracts": validation.expected_contracts,
+                                        },
                                     },
-                                },
+                                ),
                             )
                             yield _emit(
                                 action.task_id,
                                 StepEvent.end,
-                                {
-                                    "result": "error",
-                                    "reason": reason,
-                                    "skill_id": skill_run_state.active_skills[0].id,
-                                    "skill_version": skill_run_state.active_skills[0].version,
-                                    "skill_stage": "validation_failed",
-                                    "validation": {
-                                        "success": validation.success,
-                                        "issues": validation.issues,
-                                        "expected_contracts": validation.expected_contracts,
+                                build_error_end(
+                                    StopReason.skill_validation_failed.value,
+                                    reason,
+                                    extra={
+                                        "skill_id": skill_run_state.active_skills[0].id,
+                                        "skill_version": skill_run_state.active_skills[0].version,
+                                        "skill_stage": "validation_failed",
+                                        "validation": {
+                                            "success": validation.success,
+                                            "issues": validation.issues,
+                                            "expected_contracts": validation.expected_contracts,
+                                        },
                                     },
-                                },
+                                ),
                             )
                             if history_id is not None:
                                 await update_history(action.auth_token, history_id, {"status": 3})
                             task_lock.status = TaskStatus.done
                             continue
 
-                yield _emit(action.task_id, StepEvent.end, {"result": result_text, "usage": usage or {}})
+                yield _emit(
+                    action.task_id,
+                    StepEvent.end,
+                    build_completed_end(result_text, usage=usage or {}),
+                )
                 task_lock.add_conversation("assistant", result_text)
                 await _persist_message(
                     action.auth_token,
@@ -562,6 +626,9 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
             yield _emit(
                 task_lock.current_task_id or "unknown",
                 StepEvent.end,
-                {"result": "stopped", "reason": action.reason},
+                build_stopped_end(
+                    action.reason or StopReason.user_stop.value,
+                    reason=action.reason or StopReason.user_stop.value,
+                ),
             )
             break

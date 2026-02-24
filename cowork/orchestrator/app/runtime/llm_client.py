@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, AsyncIterator, Callable
 
 import httpx
@@ -36,6 +37,13 @@ def _normalize_provider_name(name: str | None) -> str:
     if not name:
         return ""
     return name.strip().lower().replace(" ", "-").replace("_", "-")
+
+
+def estimate_text_tokens(text: str, *, chars_per_token: float = 4.0) -> int:
+    if not text:
+        return 0
+    safe_chars_per_token = max(chars_per_token, 1.0)
+    return max(1, int(math.ceil(len(text) / safe_chars_per_token)))
 
 
 def _resolve_openai_base(provider: ProviderConfig) -> str:

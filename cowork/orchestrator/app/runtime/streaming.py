@@ -145,6 +145,10 @@ def _agent_event_payload(step: StepEvent, data: dict) -> dict:
             "agent_name": data.get("agent_name"),
             "process_task_id": data.get("process_task_id"),
             "result": data.get("message"),
+            "success": data.get("success"),
+            "output": data.get("output"),
+            "error": data.get("error"),
+            "contract_version": data.get("contract_version"),
         }
     if step == StepEvent.error:
         return {"message": data.get("error") or data.get("message")}

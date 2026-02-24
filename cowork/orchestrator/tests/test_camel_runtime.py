@@ -233,8 +233,8 @@ async def test_camel_complex_flow_emits_expected_steps(monkeypatch):
 
     steps = [event.step for event in events]
 
-    assert steps[0] == StepEvent.confirmed.value
-    assert steps[1] == StepEvent.task_state.value
+    assert StepEvent.confirmed.value in steps
+    assert StepEvent.task_state.value in steps
     assert StepEvent.decompose_text.value in steps
     assert StepEvent.to_sub_tasks.value in steps
     assert StepEvent.create_agent.value in steps
@@ -244,6 +244,142 @@ async def test_camel_complex_flow_emits_expected_steps(monkeypatch):
     assert StepEvent.task_state.value in steps
     assert steps[-1] == StepEvent.end.value
     assert updates and any("tokens" in payload for payload in updates)
+
+
+@pytest.mark.asyncio
+async def test_camel_complex_flow_create_agent_uses_selected_tools(monkeypatch):
+    async def fake_is_complex(provider, question, context):
+        return True, 1
+
+    async def fake_stream_chat(provider, messages, temperature=0.2, extra_params=None):
+        payload = '[{"id":"t1","content":"First task"}]'
+        yield payload, {"total_tokens": 2}
+
+    call_index = {"count": 0}
+
+    async def fake_collect(provider, messages, temperature=0.2, on_chunk=None, extra_params=None):
+        call_index["count"] += 1
+        if call_index["count"] == 1:
+            return "Demo|Summary", {"total_tokens": 5}
+        return "All done", {"total_tokens": 7}
+
+    async def fake_create_history(auth_header, payload):
+        return {"id": 10}
+
+    async def fake_update_history(auth_header, history_id, payload):
+        return None
+
+    async def fake_fetch_configs(auth_header, group=None):
+        return []
+
+    async def fake_fetch_mcp_users(auth_header):
+        return []
+
+    def fake_build_agent(provider, system_prompt, agent_id, stream=False, tools=None, extra_params=None):
+        return types.SimpleNamespace(agent_id=agent_id, agent_name="agent")
+
+    class FakeWorkforce:
+        def __init__(
+            self,
+            api_task_id,
+            description,
+            event_stream,
+            token_tracker,
+            coordinator_agent=None,
+            task_agent=None,
+            graceful_shutdown_timeout=3,
+            share_memory=False,
+        ):
+            self._event_stream = event_stream
+            self._task = None
+
+        def add_single_agent_worker(self, description, worker, tools, pool_max_size=1):
+            agent_id = getattr(worker, "agent_id", "agent-1")
+            agent_name = getattr(worker, "agent_name", description)
+            self._event_stream.emit(
+                StepEvent.create_agent,
+                {"agent_name": agent_name, "agent_id": agent_id, "tools": tools},
+            )
+            return self
+
+        async def start_with_subtasks(self, subtasks):
+            for task in subtasks:
+                task.result = f"Result for {task.content}"
+                task.state = TaskState.DONE
+                self._event_stream.emit(
+                    StepEvent.deactivate_agent,
+                    {
+                        "agent_name": "agent",
+                        "process_task_id": task.id,
+                        "agent_id": "agent-1",
+                        "message": task.result,
+                        "tokens": 3,
+                    },
+                )
+                self._event_stream.emit(
+                    StepEvent.task_state,
+                    {
+                        "task_id": task.id,
+                        "content": task.content,
+                        "state": task.state.value,
+                        "result": task.result,
+                        "failure_count": 0,
+                    },
+                )
+
+        def stop_gracefully(self):
+            return None
+
+    monkeypatch.setattr(cr, "_is_complex_task", fake_is_complex)
+    monkeypatch.setattr(cr, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(cr, "collect_chat_completion", fake_collect)
+    monkeypatch.setattr(runtime_executor, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(runtime_executor, "collect_chat_completion", fake_collect)
+    monkeypatch.setattr(cr, "create_history", fake_create_history)
+    monkeypatch.setattr(cr, "update_history", fake_update_history)
+    monkeypatch.setattr(runtime_executor, "update_history", fake_update_history)
+    monkeypatch.setattr(cr, "fetch_configs", fake_fetch_configs)
+    monkeypatch.setattr(runtime_mcp_config, "fetch_mcp_users", fake_fetch_mcp_users)
+    monkeypatch.setattr(cr, "build_agent_tools", lambda *args, **kwargs: [])
+    monkeypatch.setattr(runtime_executor, "build_agent_tools", lambda *args, **kwargs: [])
+    monkeypatch.setattr(cr, "_build_agent", fake_build_agent)
+    monkeypatch.setattr(runtime_executor, "_build_agent", fake_build_agent)
+    monkeypatch.setattr(cr, "CoworkWorkforce", FakeWorkforce)
+    monkeypatch.setattr(runtime_executor, "CoworkWorkforce", FakeWorkforce)
+    monkeypatch.setattr(runtime_streaming, "fire_and_forget", lambda event: None)
+    monkeypatch.setattr(
+        runtime_executor,
+        "select_tools_for_turn",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            selected=["file"],
+            dropped=["terminal", "code_execution"],
+            matched=["file"],
+        ),
+    )
+
+    task_lock = TaskLock(project_id="proj-1")
+    await task_lock.put(
+        ActionImprove(
+            project_id="proj-1",
+            task_id="task-1",
+            question="Plan a small feature with steps",
+            auth_token="Bearer test",
+            model_provider="openrouter",
+            model_type="deepseek/deepseek-v3.2",
+            api_key="test-key",
+            endpoint_url="https://openrouter.ai/api/v1",
+        )
+    )
+
+    events = []
+    async for event in cr.run_task_loop(task_lock):
+        events.append(event)
+        if event.step == StepEvent.end.value:
+            break
+
+    create_agent_payloads = [event.data for event in events if event.step == StepEvent.create_agent.value]
+    assert create_agent_payloads
+    assert all(payload.get("tools") == ["file"] for payload in create_agent_payloads)
 
 
 def test_extract_file_artifact_from_write_file_result(monkeypatch, tmp_path: Path):
@@ -332,6 +468,59 @@ def test_runtime_skills_force_complex_and_upgrade_tools():
 
     assert "excel" in document_agent.tools
     assert "terminal" in document_agent.tools
+
+
+@pytest.mark.asyncio
+async def test_context_too_long_emits_token_budget_fields(monkeypatch: pytest.MonkeyPatch):
+    async def fake_fetch_configs(_auth_header, group=None):
+        return []
+
+    async def fake_fetch_skills(_auth_header):
+        return []
+
+    async def fake_fetch_provider_features(_auth_header, provider_id, model_type):
+        return None
+
+    async def fake_hydrate_conversation_history(task_lock, _auth_token, _project_id):
+        task_lock.conversation_history = [{"role": "user", "content": "x" * 5000}]
+
+    async def noop_async(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setenv("COMPACTION_TRIGGER_TOKENS", "40")
+    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "50")
+    monkeypatch.setattr(cr, "fetch_configs", fake_fetch_configs)
+    monkeypatch.setattr(cr, "fetch_skills", fake_fetch_skills)
+    monkeypatch.setattr(cr, "fetch_provider_features", fake_fetch_provider_features)
+    monkeypatch.setattr(cr, "_hydrate_conversation_history", fake_hydrate_conversation_history)
+    monkeypatch.setattr(cr, "_hydrate_thread_summary", noop_async)
+    monkeypatch.setattr(cr, "_hydrate_task_summary", noop_async)
+    monkeypatch.setattr(cr, "_hydrate_memory_notes", noop_async)
+    monkeypatch.setattr(cr, "_compact_context", noop_async)
+
+    task_lock = TaskLock(project_id="proj-token-budget")
+    await task_lock.put(
+        ActionImprove(
+            project_id="proj-token-budget",
+            task_id="task-token-budget",
+            question="Keep going with this thread",
+            auth_token="Bearer test",
+            model_provider="openrouter",
+            model_type="deepseek/deepseek-v3.2",
+            api_key="test-key",
+            endpoint_url="https://openrouter.ai/api/v1",
+        )
+    )
+
+    context_event = None
+    async for event in cr.run_task_loop(task_lock):
+        if event.step == StepEvent.context_too_long.value:
+            context_event = event
+            break
+
+    assert context_event is not None
+    assert context_event.data["current_tokens"] > context_event.data["max_tokens"]
+    assert context_event.data["compaction_trigger_tokens"] == 40
 
 
 def test_requires_tool_permission_only_for_sensitive_actions():
