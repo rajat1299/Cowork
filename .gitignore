@@ -22,6 +22,7 @@ cowork/frontend/FRONTEND_GAP_ANALYSIS.md
 PRODUCT_REPORT.md
 ENGINEERING_PLAN.md
 uimocks/
+docs/adr/
 
 # Python
 __pycache__/

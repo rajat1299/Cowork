@@ -498,7 +498,7 @@ def _build_sqlite_match_query(query: str) -> str:
     terms = [term.strip() for term in query.strip().split() if term.strip()]
     if not terms:
         return ""
-    escaped = [f"\"{term.replace('"', '""')}\"" for term in terms]
+    escaped = ['"' + term.replace('"', '""') + '"' for term in terms]
     return " ".join(escaped)
 
 

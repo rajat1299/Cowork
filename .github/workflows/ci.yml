@@ -25,11 +25,14 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Sync dependencies (locked)
+        run: uv sync --locked --group dev
+
       - name: Ruff
-        run: uvx ruff check app tests --extend-ignore E402
+        run: uv run ruff check app tests --extend-ignore E402
 
       - name: Pytest
-        run: uv run --with pytest --with pytest-asyncio python -m pytest tests/ -v
+        run: uv run python -m pytest tests/ -v
 
   orchestrator:
     name: Orchestrator (ruff + pytest)
@@ -49,11 +52,14 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Sync dependencies (locked)
+        run: uv sync --locked --group dev
+
       - name: Ruff
-        run: uvx ruff check app tests --extend-ignore E402,F401
+        run: uv run ruff check app tests --extend-ignore E402,F401
 
       - name: Pytest
-        run: uv run --group dev python -m pytest tests/ -v
+        run: uv run python -m pytest tests/ -v
 
   frontend:
     name: Frontend (lint + build)
