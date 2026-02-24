@@ -14,11 +14,14 @@ const DEFAULT_PROJECT_ID = 'GLOBAL_USER_CONTEXT'
 // Memory categories in display order
 export const MEMORY_CATEGORIES: { id: MemoryCategory; label: string }[] = [
   { id: 'work_context', label: 'Work context' },
+  { id: 'tech_stack', label: 'Tech stack' },
+  { id: 'preferences', label: 'Preferences' },
   { id: 'personal_context', label: 'Personal context' },
   { id: 'top_of_mind', label: 'Top of mind' },
   { id: 'brief_history', label: 'Brief history' },
   { id: 'earlier_context', label: 'Earlier context' },
   { id: 'long_term_background', label: 'Long-term background' },
+  { id: 'note', label: 'General notes' },
 ]
 
 export interface UseMemoryOptions {

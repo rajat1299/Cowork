@@ -77,6 +77,11 @@ class SkillEntry(BaseModel):
     enabled: bool = False
     user_owned: bool = False
     storage_path: str | None = None
+    trust_state: str = "trusted"
+    security_scan_status: str = "not_scanned"
+    security_warnings: list[str] = Field(default_factory=list)
+    provenance: dict | None = None
+    last_scanned_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -117,6 +122,10 @@ class MemoryNote(BaseModel):
     category: str
     content: str
     pinned: bool
+    confidence: float = 1.0
+    provenance: dict | None = None
+    auto_generated: bool = False
+    expires_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

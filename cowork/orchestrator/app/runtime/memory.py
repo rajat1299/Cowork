@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timedelta, timezone
 
 from app.clients.core_api import (
     ProviderConfig,
@@ -81,6 +82,209 @@ _INTENT_STOPWORDS = {
     "message",
     "messages",
 }
+_DEFAULT_MEMORY_RETENTION_DAYS = 180
+_MIN_MEMORY_RETENTION_DAYS = 1
+_MAX_MEMORY_RETENTION_DAYS = 3650
+_DEFAULT_MEMORY_AUTO_MIN_CONFIDENCE = 0.72
+_DEFAULT_MEMORY_READ_MIN_CONFIDENCE = 0.5
+_DEFAULT_MAX_AUTO_NOTES_PER_RUN = 6
+_MAX_AUTO_NOTES_PER_RUN = 12
+_DEFAULT_MEMORY_POLICY = {
+    "allowed_categories": set(GLOBAL_MEMORY_CATEGORIES),
+    "retention_days": _DEFAULT_MEMORY_RETENTION_DAYS,
+    "min_auto_confidence": _DEFAULT_MEMORY_AUTO_MIN_CONFIDENCE,
+    "min_read_confidence": _DEFAULT_MEMORY_READ_MIN_CONFIDENCE,
+    "max_auto_notes_per_run": _DEFAULT_MAX_AUTO_NOTES_PER_RUN,
+    "auto_write_enabled": True,
+}
+_SENSITIVE_MEMORY_PATTERNS = (
+    re.compile(r"\bsk-[a-zA-Z0-9]{16,}\b"),
+    re.compile(r"\bapi[_-]?key\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{10,}", re.IGNORECASE),
+    re.compile(r"\bpassword\s*[:=]\s*['\"].+['\"]", re.IGNORECASE),
+    re.compile(r"-----BEGIN [A-Z ]+PRIVATE KEY-----"),
+)
+
+
+def _config_value(configs: list[dict[str, object]] | None, name: str) -> str | None:
+    for item in configs or []:
+        key = item.get("key") or item.get("name")
+        if str(key or "") != name:
+            continue
+        value = item.get("value")
+        if value is None:
+            return None
+        return str(value).strip()
+    return None
+
+
+def _config_int(
+    configs: list[dict[str, object]] | None,
+    name: str,
+    default: int,
+    *,
+    min_value: int,
+    max_value: int,
+) -> int:
+    raw = _config_value(configs, name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(min_value, min(max_value, parsed))
+
+
+def _config_float(
+    configs: list[dict[str, object]] | None,
+    name: str,
+    default: float,
+    *,
+    min_value: float,
+    max_value: float,
+) -> float:
+    raw = _config_value(configs, name)
+    if raw is None:
+        return default
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(min_value, min(max_value, parsed))
+
+
+def _config_categories(configs: list[dict[str, object]] | None) -> set[str]:
+    raw = _config_value(configs, "MEMORY_ENABLED_CATEGORIES")
+    if not raw:
+        return set(GLOBAL_MEMORY_CATEGORIES)
+    allowed = {
+        token.strip().lower()
+        for token in raw.split(",")
+        if token and token.strip()
+    }
+    normalized = allowed & GLOBAL_MEMORY_CATEGORIES
+    return normalized or set(GLOBAL_MEMORY_CATEGORIES)
+
+
+def _build_memory_governance_policy(
+    memory_configs: list[dict[str, object]] | None,
+    *,
+    auto_write_enabled: bool = True,
+) -> dict[str, object]:
+    return {
+        "allowed_categories": _config_categories(memory_configs),
+        "retention_days": _config_int(
+            memory_configs,
+            "MEMORY_RETENTION_DAYS",
+            _DEFAULT_MEMORY_RETENTION_DAYS,
+            min_value=_MIN_MEMORY_RETENTION_DAYS,
+            max_value=_MAX_MEMORY_RETENTION_DAYS,
+        ),
+        "min_auto_confidence": _config_float(
+            memory_configs,
+            "MEMORY_AUTO_MIN_CONFIDENCE",
+            _DEFAULT_MEMORY_AUTO_MIN_CONFIDENCE,
+            min_value=0.0,
+            max_value=1.0,
+        ),
+        "min_read_confidence": _config_float(
+            memory_configs,
+            "MEMORY_READ_MIN_CONFIDENCE",
+            _DEFAULT_MEMORY_READ_MIN_CONFIDENCE,
+            min_value=0.0,
+            max_value=1.0,
+        ),
+        "max_auto_notes_per_run": _config_int(
+            memory_configs,
+            "MEMORY_AUTO_MAX_NOTES_PER_RUN",
+            _DEFAULT_MAX_AUTO_NOTES_PER_RUN,
+            min_value=1,
+            max_value=_MAX_AUTO_NOTES_PER_RUN,
+        ),
+        "auto_write_enabled": bool(auto_write_enabled),
+    }
+
+
+def _coerce_memory_policy(policy: dict[str, object] | None) -> dict[str, object]:
+    if not policy:
+        return dict(_DEFAULT_MEMORY_POLICY)
+    merged = dict(_DEFAULT_MEMORY_POLICY)
+    merged.update(policy)
+    allowed_categories = merged.get("allowed_categories")
+    if not isinstance(allowed_categories, set):
+        allowed_categories = set(GLOBAL_MEMORY_CATEGORIES)
+    normalized_categories = {
+        str(category).strip().lower()
+        for category in allowed_categories
+        if str(category).strip().lower() in GLOBAL_MEMORY_CATEGORIES
+    }
+    merged["allowed_categories"] = normalized_categories or set(GLOBAL_MEMORY_CATEGORIES)
+    try:
+        retention_days = int(merged.get("retention_days") or _DEFAULT_MEMORY_RETENTION_DAYS)
+    except (TypeError, ValueError):
+        retention_days = _DEFAULT_MEMORY_RETENTION_DAYS
+    merged["retention_days"] = max(_MIN_MEMORY_RETENTION_DAYS, min(_MAX_MEMORY_RETENTION_DAYS, retention_days))
+
+    try:
+        min_auto_confidence = float(merged.get("min_auto_confidence") or _DEFAULT_MEMORY_AUTO_MIN_CONFIDENCE)
+    except (TypeError, ValueError):
+        min_auto_confidence = _DEFAULT_MEMORY_AUTO_MIN_CONFIDENCE
+    merged["min_auto_confidence"] = max(0.0, min(1.0, min_auto_confidence))
+
+    try:
+        min_read_confidence = float(merged.get("min_read_confidence") or _DEFAULT_MEMORY_READ_MIN_CONFIDENCE)
+    except (TypeError, ValueError):
+        min_read_confidence = _DEFAULT_MEMORY_READ_MIN_CONFIDENCE
+    merged["min_read_confidence"] = max(0.0, min(1.0, min_read_confidence))
+
+    try:
+        max_auto_notes = int(merged.get("max_auto_notes_per_run") or _DEFAULT_MAX_AUTO_NOTES_PER_RUN)
+    except (TypeError, ValueError):
+        max_auto_notes = _DEFAULT_MAX_AUTO_NOTES_PER_RUN
+    merged["max_auto_notes_per_run"] = max(1, min(_MAX_AUTO_NOTES_PER_RUN, max_auto_notes))
+    merged["auto_write_enabled"] = bool(merged.get("auto_write_enabled", True))
+    return merged
+
+
+def _note_confidence(note: dict[str, object], default: float = 1.0) -> float:
+    raw = note.get("confidence")
+    if raw is None:
+        return default
+    try:
+        confidence = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, confidence))
+
+
+def _apply_memory_read_policy(
+    notes: list[dict[str, object]],
+    *,
+    allowed_categories: set[str],
+    min_auto_confidence: float,
+) -> list[dict[str, object]]:
+    filtered: list[dict[str, object]] = []
+    for note in notes:
+        if bool(note.get("auto_generated")):
+            category = str(note.get("category") or "").strip().lower()
+            if category and category not in allowed_categories:
+                continue
+            if _note_confidence(note, default=0.0) < min_auto_confidence:
+                continue
+        filtered.append(note)
+    return filtered
+
+
+def _contains_sensitive_memory(content: str) -> bool:
+    text = content.strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _SENSITIVE_MEMORY_PATTERNS)
+
+
+def _memory_expiry_iso(retention_days: int) -> str:
+    expires_at = datetime.now(timezone.utc) + timedelta(days=retention_days)
+    return expires_at.isoformat()
 
 
 def _usage_total(usage: dict | None) -> int:
@@ -410,12 +614,24 @@ async def _hydrate_memory_notes(
     auth_token: str | None,
     project_id: str,
     include_global: bool = True,
+    policy: dict[str, object] | None = None,
 ) -> None:
+    effective_policy = _coerce_memory_policy(policy)
+    allowed_categories = set(effective_policy["allowed_categories"])
+    min_read_confidence = float(effective_policy["min_read_confidence"])
     notes = await fetch_memory_notes(auth_token, project_id)
-    task_lock.memory_notes = [note.model_dump() for note in notes]
+    task_lock.memory_notes = _apply_memory_read_policy(
+        [note.model_dump() for note in notes],
+        allowed_categories=allowed_categories,
+        min_auto_confidence=min_read_confidence,
+    )
     if include_global:
         global_notes = await fetch_memory_notes(auth_token, GLOBAL_USER_CONTEXT)
-        task_lock.global_memory_notes = [note.model_dump() for note in global_notes]
+        task_lock.global_memory_notes = _apply_memory_read_policy(
+            [note.model_dump() for note in global_notes],
+            allowed_categories=allowed_categories,
+            min_auto_confidence=min_read_confidence,
+        )
     else:
         task_lock.global_memory_notes = []
 
@@ -477,9 +693,17 @@ async def _generate_global_memory_notes(
     task_lock: TaskLock,
     provider: ProviderConfig,
     auth_token: str | None,
+    policy: dict[str, object] | None = None,
 ) -> None:
     if not auth_token or not task_lock.conversation_history:
         return
+    effective_policy = _coerce_memory_policy(policy)
+    if not bool(effective_policy.get("auto_write_enabled", True)):
+        return
+    allowed_categories = set(effective_policy["allowed_categories"])
+    min_auto_confidence = float(effective_policy["min_auto_confidence"])
+    retention_days = int(effective_policy["retention_days"])
+    max_auto_notes_per_run = int(effective_policy["max_auto_notes_per_run"])
     existing_notes = await fetch_memory_notes(auth_token, GLOBAL_USER_CONTEXT)
     existing_dump = [note.model_dump() for note in existing_notes]
     existing_contents = {
@@ -498,6 +722,7 @@ async def _generate_global_memory_notes(
         content = entry.get("content") or ""
         history_lines.append(f"{role}: {content}")
     history_text = "\n".join(history_lines)
+    allowed_categories_text = ", ".join(sorted(allowed_categories))
     prompt = f"""You are the Memory Manager. Your goal is to update the `GLOBAL_USER_CONTEXT` based on the conversation that just finished.
 
 <existing_memory>
@@ -513,9 +738,11 @@ async def _generate_global_memory_notes(
    - Examples: "User prefers TypeScript", "User works in CST timezone", "User hates unit tests".
 2. **Ignore**: Transient task details ("Fix bug in line 50"), pleasantries, or one-off searches.
 3. **Deduplicate**: If a fact already exists in `<existing_memory>`, DO NOT output it.
-4. **Format**: Return a JSON array of objects: `[{{"category": "work_context", "content": "..."}}]`.
-   - Categories: `work_context`, `personal_context`, `tech_stack`, `preferences`.
-5. If no NEW long-term facts are found, return an empty array `[]`.
+4. **Category allowlist**: Only use categories from this list: `{allowed_categories_text}`.
+5. **Format**: Return a JSON array of objects:
+   `[{{"category": "work_context", "content": "...", "confidence": 0.0, "reason": "short reason"}}]`.
+6. **Confidence**: Use confidence scores in [0.0, 1.0]. Low confidence or uncertain memories should be omitted.
+7. If no NEW long-term facts are found, return an empty array `[]`.
 </instructions>
 """
     response_text, _ = await collect_chat_completion(
@@ -533,16 +760,27 @@ async def _generate_global_memory_notes(
     if not isinstance(payload, list):
         return
     seen = set()
+    created = 0
     for item in payload:
         if not isinstance(item, dict):
             continue
         content = str(item.get("content") or "").strip()
-        category = str(item.get("category") or "").strip()
-        if not content or category not in GLOBAL_MEMORY_CATEGORIES:
+        category = str(item.get("category") or "").strip().lower()
+        confidence = _note_confidence(item, default=0.0)
+        reason = str(item.get("reason") or "").strip()
+        if not content:
+            continue
+        if category not in allowed_categories:
+            continue
+        if confidence < min_auto_confidence:
+            continue
+        if _contains_sensitive_memory(content):
             continue
         norm = content.lower()
         if norm in existing_contents or norm in seen:
             continue
+        if created >= max_auto_notes_per_run:
+            break
         seen.add(norm)
         await create_memory_note(
             auth_token,
@@ -551,8 +789,17 @@ async def _generate_global_memory_notes(
                 "category": category,
                 "content": content,
                 "pinned": False,
+                "confidence": confidence,
+                "auto_generated": True,
+                "expires_at": _memory_expiry_iso(retention_days),
+                "provenance": {
+                    "source": "assistant_auto",
+                    "task_id": task_lock.current_task_id,
+                    "reason": reason[:240] if reason else "",
+                },
             },
         )
+        created += 1
 
 
 async def _persist_message(

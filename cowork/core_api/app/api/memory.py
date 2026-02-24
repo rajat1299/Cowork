@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel
-from sqlalchemy import func, text
+from pydantic import BaseModel, Field
+from sqlalchemy import func, or_, text
 from sqlmodel import Session, select
 
 from app.auth import get_current_user
@@ -46,12 +46,20 @@ class MemoryNoteCreate(BaseModel):
     category: str = "note"
     content: str
     pinned: bool = False
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    provenance: dict | None = None
+    auto_generated: bool = False
+    expires_at: datetime | None = None
 
 
 class MemoryNoteUpdate(BaseModel):
     category: str | None = None
     content: str | None = None
     pinned: bool | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    provenance: dict | None = None
+    auto_generated: bool | None = None
+    expires_at: datetime | None = None
 
 
 class MemoryNoteOut(BaseModel):
@@ -61,6 +69,10 @@ class MemoryNoteOut(BaseModel):
     category: str
     content: str
     pinned: bool
+    confidence: float
+    provenance: dict | None
+    auto_generated: bool
+    expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -186,6 +198,7 @@ def list_memory_notes(
     project_id: str = Query(...),
     task_id: str | None = Query(default=None),
     category: str | None = Query(default=None),
+    include_expired: bool = Query(default=False),
     user=Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> list[MemoryNoteOut]:
@@ -193,6 +206,15 @@ def list_memory_notes(
         MemoryNote.user_id == user.id,
         MemoryNote.project_id == project_id,
     )
+    if not include_expired:
+        now = datetime.now(timezone.utc)
+        statement = statement.where(
+            or_(
+                MemoryNote.expires_at.is_(None),
+                MemoryNote.expires_at > now,
+                MemoryNote.pinned.is_(True),
+            )
+        )
     if task_id:
         statement = statement.where(MemoryNote.task_id == task_id)
     if category:
@@ -215,6 +237,10 @@ def create_memory_note(
         category=request.category,
         content=request.content,
         pinned=request.pinned,
+        confidence=request.confidence,
+        provenance=request.provenance,
+        auto_generated=request.auto_generated,
+        expires_at=request.expires_at,
     )
     session.add(record)
     session.commit()
@@ -284,6 +310,11 @@ def get_context_stats(
     note_statement = select(MemoryNote).where(
         MemoryNote.user_id == user.id,
         MemoryNote.project_id == project_id,
+        or_(
+            MemoryNote.expires_at.is_(None),
+            MemoryNote.expires_at > datetime.now(timezone.utc),
+            MemoryNote.pinned.is_(True),
+        ),
     )
     if task_id:
         note_statement = note_statement.where(MemoryNote.task_id == task_id)

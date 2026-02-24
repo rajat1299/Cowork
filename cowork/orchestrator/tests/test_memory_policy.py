@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.clients.core_api import ProviderConfig
-from app.runtime.memory import _build_context, _compact_context, _context_budget_snapshot
+from app.runtime.memory import (
+    _apply_memory_read_policy,
+    _build_context,
+    _compact_context,
+    _context_budget_snapshot,
+    _generate_global_memory_notes,
+)
 from app.runtime.task_lock import TaskLock
 
 
@@ -232,3 +240,112 @@ Next Steps: publish after review
     assert updated is True
     retained = " ".join(str(item.get("content", "")) for item in lock.conversation_history)
     assert "Nimbus release date is 2026-09-01" in retained
+
+
+def test_apply_memory_read_policy_enforces_category_and_confidence_filters() -> None:
+    notes = [
+        {
+            "category": "tech_stack",
+            "content": "User prefers TypeScript.",
+            "auto_generated": True,
+            "confidence": 0.9,
+        },
+        {
+            "category": "preferences",
+            "content": "Low confidence preference.",
+            "auto_generated": True,
+            "confidence": 0.2,
+        },
+        {
+            "category": "work_context",
+            "content": "Manual memory note.",
+            "auto_generated": False,
+            "confidence": 0.1,
+        },
+    ]
+
+    filtered = _apply_memory_read_policy(
+        notes,
+        allowed_categories={"tech_stack", "work_context"},
+        min_auto_confidence=0.6,
+    )
+
+    assert [item["content"] for item in filtered] == [
+        "User prefers TypeScript.",
+        "Manual memory note.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_global_memory_notes_applies_governance_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = TaskLock(project_id="proj-memory-governance")
+    lock.current_task_id = "task-memory-governance"
+    lock.conversation_history = [
+        {"role": "user", "content": "I prefer TypeScript for backend services."},
+        {"role": "assistant", "content": "Noted. I will remember that preference."},
+    ]
+
+    async def fake_fetch_memory_notes(*_args, **_kwargs):
+        return []
+
+    async def fake_collect_chat_completion(*_args, **_kwargs):
+        payload = [
+            {
+                "category": "tech_stack",
+                "content": "User prefers TypeScript for backend work.",
+                "confidence": 0.91,
+                "reason": "Repeated preference",
+            },
+            {
+                "category": "preferences",
+                "content": "api_key=sk-secret-token",
+                "confidence": 0.95,
+            },
+            {
+                "category": "work_context",
+                "content": "Low confidence one-off detail.",
+                "confidence": 0.33,
+            },
+            {
+                "category": "personal_context",
+                "content": "User works in PST timezone.",
+                "confidence": 0.82,
+            },
+        ]
+        return (json.dumps(payload), {"total_tokens": 12})
+
+    created_payloads: list[dict[str, object]] = []
+
+    async def fake_create_memory_note(_auth_header, payload):
+        created_payloads.append(payload)
+        return None
+
+    monkeypatch.setattr("app.runtime.memory.fetch_memory_notes", fake_fetch_memory_notes)
+    monkeypatch.setattr("app.runtime.memory.collect_chat_completion", fake_collect_chat_completion)
+    monkeypatch.setattr("app.runtime.memory.create_memory_note", fake_create_memory_note)
+
+    await _generate_global_memory_notes(
+        lock,
+        _provider(),
+        "Bearer token",
+        policy={
+            "allowed_categories": {"tech_stack", "personal_context"},
+            "min_auto_confidence": 0.7,
+            "retention_days": 30,
+            "max_auto_notes_per_run": 4,
+        },
+    )
+
+    assert len(created_payloads) == 2
+    categories = {str(item["category"]) for item in created_payloads}
+    assert categories == {"tech_stack", "personal_context"}
+    for payload in created_payloads:
+        assert payload["auto_generated"] is True
+        assert float(payload["confidence"]) >= 0.7
+        provenance = payload.get("provenance")
+        assert isinstance(provenance, dict)
+        assert provenance.get("source") == "assistant_auto"
+        assert provenance.get("task_id") == "task-memory-governance"
+        assert payload.get("expires_at")

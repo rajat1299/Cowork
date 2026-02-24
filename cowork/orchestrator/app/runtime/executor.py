@@ -91,6 +91,7 @@ async def _run_camel_complex(
     event_stream: EventStream,
     context: str,
     memory_generate_enabled: bool,
+    memory_policy: dict[str, object] | None,
     active_skills: list[RuntimeSkill],
     skill_run_state: SkillRunState | None,
 ) -> None:
@@ -554,7 +555,12 @@ async def _run_camel_complex(
         if memory_generate_enabled:
             task_lock.add_background_task(
                 asyncio.create_task(
-                    _generate_global_memory_notes(task_lock, provider, action.auth_token)
+                    _generate_global_memory_notes(
+                        task_lock,
+                        provider,
+                        action.auth_token,
+                        policy=memory_policy,
+                    )
                 )
             )
         task_lock.status = TaskStatus.done

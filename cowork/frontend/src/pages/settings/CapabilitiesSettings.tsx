@@ -4,6 +4,16 @@ import { cn } from '../../lib/utils'
 import { useMemory, formatMemoryLastUpdated, MEMORY_CATEGORIES } from '../../hooks/useMemory'
 import { ManageMemoryModal } from '../../components/memory/ManageMemoryModal'
 
+const GOVERNED_MEMORY_CATEGORIES = [
+  { id: 'work_context', label: 'Work context' },
+  { id: 'personal_context', label: 'Personal context' },
+  { id: 'tech_stack', label: 'Tech stack' },
+  { id: 'preferences', label: 'Preferences' },
+] as const
+const DEFAULT_MEMORY_RETENTION_DAYS = 180
+const DEFAULT_MEMORY_CATEGORY_IDS = GOVERNED_MEMORY_CATEGORIES.map((item) => item.id)
+const DEFAULT_MEMORY_CATEGORY_SET = new Set<string>(DEFAULT_MEMORY_CATEGORY_IDS)
+
 /**
  * Capabilities Settings Page
  * Contains Memory section with toggles and manage memory card
@@ -11,6 +21,8 @@ import { ManageMemoryModal } from '../../components/memory/ManageMemoryModal'
 export default function CapabilitiesSettings() {
   const [searchChatsEnabled, setSearchChatsEnabled] = useState(true)
   const [generateMemoryEnabled, setGenerateMemoryEnabled] = useState(true)
+  const [memoryRetentionDays, setMemoryRetentionDays] = useState(DEFAULT_MEMORY_RETENTION_DAYS)
+  const [enabledMemoryCategories, setEnabledMemoryCategories] = useState<string[]>(DEFAULT_MEMORY_CATEGORY_IDS)
   const [showMemoryModal, setShowMemoryModal] = useState(false)
   const [memoryConfigs, setMemoryConfigs] = useState<Record<string, Config>>({})
   const [skillItems, setSkillItems] = useState<Skill[]>([])
@@ -37,6 +49,18 @@ export default function CapabilitiesSettings() {
         setMemoryConfigs(mapped)
         setSearchChatsEnabled(parseConfigFlag(mapped.MEMORY_SEARCH_PAST_CHATS?.value, true))
         setGenerateMemoryEnabled(parseConfigFlag(mapped.MEMORY_GENERATE_FROM_CHATS?.value, true))
+        setMemoryRetentionDays(
+          parseMemoryRetentionDays(
+            mapped.MEMORY_RETENTION_DAYS?.value,
+            DEFAULT_MEMORY_RETENTION_DAYS
+          )
+        )
+        setEnabledMemoryCategories(
+          parseMemoryCategoryConfig(
+            mapped.MEMORY_ENABLED_CATEGORIES?.value,
+            DEFAULT_MEMORY_CATEGORY_IDS
+          )
+        )
       } catch (error) {
         console.error('Failed to load memory settings:', error)
       }
@@ -97,6 +121,38 @@ export default function CapabilitiesSettings() {
     }
   }
 
+  const handleRetentionDaysChange = async (days: number) => {
+    setMemoryRetentionDays(days)
+    const updated = await upsertMemoryConfig(
+      memoryConfigs.MEMORY_RETENTION_DAYS,
+      'MEMORY_RETENTION_DAYS',
+      String(days)
+    )
+    if (updated) {
+      setMemoryConfigs((prev) => ({ ...prev, [updated.key]: updated }))
+    }
+  }
+
+  const handleCategoryToggle = async (categoryId: string, enabled: boolean) => {
+    const next = enabled
+      ? Array.from(new Set([...enabledMemoryCategories, categoryId]))
+      : enabledMemoryCategories.filter((id) => id !== categoryId)
+    const normalized = next.filter((id) => DEFAULT_MEMORY_CATEGORY_SET.has(id))
+    if (normalized.length === 0) {
+      return
+    }
+    setEnabledMemoryCategories(normalized)
+    const serialized = serializeMemoryCategoryConfig(normalized)
+    const updated = await upsertMemoryConfig(
+      memoryConfigs.MEMORY_ENABLED_CATEGORIES,
+      'MEMORY_ENABLED_CATEGORIES',
+      serialized
+    )
+    if (updated) {
+      setMemoryConfigs((prev) => ({ ...prev, [updated.key]: updated }))
+    }
+  }
+
   const filteredSkills = useMemo(() => {
     const query = skillsQuery.trim().toLowerCase()
     return skillItems.filter((item) => {
@@ -142,6 +198,11 @@ export default function CapabilitiesSettings() {
         const withoutOld = prev.filter((item) => item.skill_id !== created.skill_id)
         return [created, ...withoutOld]
       })
+      if (created.trust_state === 'review_required') {
+        setSkillsError('Skill uploaded with warnings and left disabled by default. Review warnings before enabling.')
+      } else if (created.trust_state === 'blocked') {
+        setSkillsError('Skill upload is blocked by security policy.')
+      }
     } catch (error) {
       console.error('Failed to upload skill:', error)
       setSkillsError('Unable to upload skill. Check that the zip includes skill.toml.')
@@ -207,6 +268,61 @@ export default function CapabilitiesSettings() {
               enabled={generateMemoryEnabled}
               onChange={handleMemoryToggle}
             />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <p className="text-[14px] text-foreground">Memory retention window</p>
+              <p className="text-[13px] text-muted-foreground">
+                Auto-generated memory notes expire after this period unless pinned.
+              </p>
+            </div>
+            <select
+              value={memoryRetentionDays}
+              onChange={(event) => handleRetentionDaysChange(Number(event.target.value))}
+              className={cn(
+                'px-3 py-2 rounded-lg min-w-[140px]',
+                'bg-secondary border border-border',
+                'text-foreground text-[13px]',
+                'focus:outline-none focus:border-burnt/50'
+              )}
+            >
+              <option value={30}>30 days</option>
+              <option value={90}>90 days</option>
+              <option value={180}>180 days</option>
+              <option value={365}>365 days</option>
+            </select>
+          </div>
+
+          <div>
+            <p className="text-[14px] text-foreground mb-1">Auto-memory categories</p>
+            <p className="text-[13px] text-muted-foreground mb-3">
+              Select which categories Cowork can write to automatically.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {GOVERNED_MEMORY_CATEGORIES.map((category) => {
+                const enabled = enabledMemoryCategories.includes(category.id)
+                return (
+                  <label
+                    key={category.id}
+                    className={cn(
+                      'flex items-center justify-between rounded-lg border px-3 py-2',
+                      enabled
+                        ? 'border-burnt/40 bg-burnt/10'
+                        : 'border-border bg-secondary/40'
+                    )}
+                  >
+                    <span className="text-[13px] text-foreground">{category.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={(event) => handleCategoryToggle(category.id, event.target.checked)}
+                      className="accent-burnt"
+                    />
+                  </label>
+                )
+              })}
+            </div>
           </div>
 
           {/* Memory from your chats card */}
@@ -373,12 +489,27 @@ export default function CapabilitiesSettings() {
                         ? 'Custom'
                         : 'Built-in'}
                     </span>
+                    {skill.trust_state === 'review_required' && (
+                      <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-[11px] text-amber-300 font-medium">
+                        Review required
+                      </span>
+                    )}
+                    {skill.trust_state === 'blocked' && (
+                      <span className="px-2 py-0.5 rounded-md bg-red-500/15 text-[11px] text-red-300 font-medium">
+                        Blocked
+                      </span>
+                    )}
                   </div>
                   <p className="text-[13px] text-muted-foreground">{skill.description}</p>
+                  {skill.security_warnings.length > 0 && (
+                    <p className="mt-2 text-[12px] text-amber-300">
+                      {skill.security_warnings[0]}
+                    </p>
+                  )}
                 </div>
                 <ToggleSwitch
                   enabled={skill.enabled}
-                  disabled={skillsSaving === skill.skill_id}
+                  disabled={skillsSaving === skill.skill_id || skill.trust_state === 'blocked'}
                   onChange={(enabled) => handleSkillToggle(skill.skill_id, enabled)}
                 />
               </div>
@@ -406,15 +537,43 @@ function parseConfigFlag(value?: string, defaultValue = true): boolean {
   return TRUTHY_VALUES.has(value.trim().toLowerCase())
 }
 
+function parseMemoryRetentionDays(value: string | undefined, defaultValue: number): number {
+  if (!value) return defaultValue
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return defaultValue
+  if (parsed < 1) return defaultValue
+  return Math.round(parsed)
+}
+
+function parseMemoryCategoryConfig(value: string | undefined, defaultValue: string[]): string[] {
+  if (!value) return [...defaultValue]
+  const categories = value
+    .split(',')
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token.length > 0 && DEFAULT_MEMORY_CATEGORY_SET.has(token))
+  if (categories.length === 0) {
+    return [...defaultValue]
+  }
+  return Array.from(new Set(categories))
+}
+
+function serializeMemoryCategoryConfig(categories: string[]): string {
+  const normalized = categories
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => DEFAULT_MEMORY_CATEGORY_SET.has(token))
+  const deduped = Array.from(new Set(normalized))
+  return deduped.join(',')
+}
+
 async function upsertMemoryConfig(
   existing: Config | undefined,
   key: string,
-  enabled: boolean
+  value: boolean | string
 ): Promise<Config | null> {
   const payload = {
     group: 'memory',
     key,
-    value: enabled ? 'true' : 'false',
+    value: typeof value === 'boolean' ? (value ? 'true' : 'false') : value,
   }
   try {
     if (existing) {

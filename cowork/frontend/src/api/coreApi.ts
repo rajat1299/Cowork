@@ -93,6 +93,11 @@ export interface Skill {
   enabled: boolean
   user_owned: boolean
   storage_path?: string | null
+  trust_state: 'trusted' | 'review_required' | 'blocked' | string
+  security_scan_status: 'passed' | 'warning' | 'failed' | 'not_scanned' | string
+  security_warnings: string[]
+  provenance?: Record<string, unknown> | null
+  last_scanned_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -649,10 +654,13 @@ export interface MemoryContextStats {
 export type MemoryCategory =
   | 'work_context'
   | 'personal_context'
+  | 'tech_stack'
+  | 'preferences'
   | 'top_of_mind'
   | 'brief_history'
   | 'earlier_context'
   | 'long_term_background'
+  | 'note'
   | string
 
 export interface MemoryNote {
@@ -662,6 +670,10 @@ export interface MemoryNote {
   category: MemoryCategory
   content: string
   pinned: boolean
+  confidence: number
+  provenance?: Record<string, unknown> | null
+  auto_generated: boolean
+  expires_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -672,12 +684,20 @@ export interface CreateMemoryNoteRequest {
   category: MemoryCategory
   content: string
   pinned?: boolean
+  confidence?: number
+  provenance?: Record<string, unknown> | null
+  auto_generated?: boolean
+  expires_at?: string | null
 }
 
 export interface UpdateMemoryNoteRequest {
   content?: string
   category?: MemoryCategory
   pinned?: boolean
+  confidence?: number
+  provenance?: Record<string, unknown> | null
+  auto_generated?: boolean
+  expires_at?: string | null
 }
 
 export interface TaskSummary {

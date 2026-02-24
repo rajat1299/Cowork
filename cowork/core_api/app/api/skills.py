@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 from app.auth import get_current_user
 from app.db import get_session
 from app.models import Skill, UserSkillState
+from app.skill_security import analyze_skill_zip
 from app.skills_catalog import DEFAULT_SKILL_CATALOG, SkillCatalogEntry
 
 router = APIRouter(tags=["skills"])
@@ -38,6 +39,11 @@ class SkillOut(BaseModel):
     enabled: bool
     user_owned: bool
     storage_path: str | None = None
+    trust_state: str
+    security_scan_status: str
+    security_warnings: list[str]
+    provenance: dict | None = None
+    last_scanned_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -50,6 +56,7 @@ def _normalize_skill_id(value: str) -> str:
 
 
 def _build_skill_out(skill: Skill, enabled: bool, user_id: int) -> SkillOut:
+    effective_enabled = bool(enabled and skill.trust_state != "blocked")
     return SkillOut(
         skill_id=skill.skill_id,
         name=skill.name,
@@ -59,9 +66,14 @@ def _build_skill_out(skill: Skill, enabled: bool, user_id: int) -> SkillOut:
         trigger_keywords=list(skill.trigger_keywords or []),
         trigger_extensions=list(skill.trigger_extensions or []),
         enabled_by_default=skill.enabled_by_default,
-        enabled=enabled,
+        enabled=effective_enabled,
         user_owned=bool(skill.owner_user_id == user_id),
         storage_path=skill.storage_path,
+        trust_state=skill.trust_state,
+        security_scan_status=skill.security_scan_status,
+        security_warnings=list(skill.security_warnings or []),
+        provenance=skill.provenance,
+        last_scanned_at=skill.last_scanned_at,
         created_at=skill.created_at,
         updated_at=skill.updated_at,
     )
@@ -84,6 +96,14 @@ def _ensure_default_catalog(session: Session) -> None:
                     domains=list(catalog_entry.domains),
                     trigger_keywords=list(catalog_entry.trigger_keywords),
                     trigger_extensions=list(catalog_entry.trigger_extensions),
+                    trust_state="trusted",
+                    security_scan_status="passed",
+                    security_warnings=[],
+                    provenance={
+                        "source": "catalog",
+                        "catalog_source": catalog_entry.source,
+                    },
+                    last_scanned_at=now,
                     enabled_by_default=catalog_entry.enabled_by_default,
                     created_at=now,
                     updated_at=now,
@@ -100,6 +120,14 @@ def _ensure_default_catalog(session: Session) -> None:
             record.domains = list(catalog_entry.domains)
             record.trigger_keywords = list(catalog_entry.trigger_keywords)
             record.trigger_extensions = list(catalog_entry.trigger_extensions)
+            record.trust_state = "trusted"
+            record.security_scan_status = "passed"
+            record.security_warnings = []
+            record.provenance = {
+                "source": "catalog",
+                "catalog_source": catalog_entry.source,
+            }
+            record.last_scanned_at = now
             record.enabled_by_default = catalog_entry.enabled_by_default
             record.updated_at = now
             session.add(record)
@@ -207,6 +235,8 @@ def set_skill_enabled(
     ).first()
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
+    if request.enabled and skill.trust_state == "blocked":
+        raise HTTPException(status_code=400, detail="Blocked skill cannot be enabled")
 
     state = session.exec(
         select(UserSkillState).where(
@@ -255,6 +285,11 @@ async def upload_skill_zip(
             parsed = _parse_skill_toml_from_zip(temp_zip)
         except zipfile.BadZipFile as exc:
             raise HTTPException(status_code=400, detail="Invalid zip archive") from exc
+        security_report = analyze_skill_zip(temp_zip)
+
+    if security_report.is_blocked:
+        detail = security_report.blocked_issue.message if security_report.blocked_issue else "Blocked by security scan"
+        raise HTTPException(status_code=400, detail=f"Skill blocked by security scan: {detail}")
 
     normalized_skill_id = _normalize_skill_id(parsed["id"])
     if not _SKILL_ID_PATTERN.fullmatch(normalized_skill_id):
@@ -277,6 +312,12 @@ async def upload_skill_zip(
         _safe_extract_zip(archive, skill_storage_dir / "contents")
 
     now = datetime.now(timezone.utc)
+    effective_enabled = bool(enabled and security_report.trust_state == "trusted")
+    provenance = {
+        "source": "custom_upload",
+        "uploaded_by_user_id": user.id,
+        "original_filename": filename,
+    }
     if existing:
         existing.name = parsed["name"]
         existing.description = parsed.get("description", "")
@@ -284,9 +325,14 @@ async def upload_skill_zip(
         existing.domains = []
         existing.trigger_keywords = []
         existing.trigger_extensions = []
+        existing.trust_state = security_report.trust_state
+        existing.security_scan_status = security_report.scan_status
+        existing.security_warnings = list(security_report.warnings)
+        existing.provenance = provenance
+        existing.last_scanned_at = now
         existing.owner_user_id = user.id
         existing.storage_path = str(skill_storage_dir)
-        existing.enabled_by_default = bool(enabled)
+        existing.enabled_by_default = effective_enabled
         existing.updated_at = now
         session.add(existing)
         skill_record = existing
@@ -299,9 +345,14 @@ async def upload_skill_zip(
             domains=[],
             trigger_keywords=[],
             trigger_extensions=[],
+            trust_state=security_report.trust_state,
+            security_scan_status=security_report.scan_status,
+            security_warnings=list(security_report.warnings),
+            provenance=provenance,
+            last_scanned_at=now,
             owner_user_id=user.id,
             storage_path=str(skill_storage_dir),
-            enabled_by_default=bool(enabled),
+            enabled_by_default=effective_enabled,
             created_at=now,
             updated_at=now,
         )
@@ -316,7 +367,7 @@ async def upload_skill_zip(
         )
     ).first()
     if state:
-        state.enabled = bool(enabled)
+        state.enabled = effective_enabled
         state.updated_at = now
         session.add(state)
     else:
@@ -324,7 +375,7 @@ async def upload_skill_zip(
             UserSkillState(
                 user_id=user.id,
                 skill_id=normalized_skill_id,
-                enabled=bool(enabled),
+                enabled=effective_enabled,
                 created_at=now,
                 updated_at=now,
             )
@@ -332,4 +383,4 @@ async def upload_skill_zip(
     session.commit()
     session.refresh(skill_record)
 
-    return _build_skill_out(skill_record, enabled=bool(enabled), user_id=user.id)
+    return _build_skill_out(skill_record, enabled=effective_enabled, user_id=user.id)

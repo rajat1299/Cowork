@@ -108,6 +108,24 @@ CONFIG_GROUPS = [
                 "type": "text",
                 "required": False,
             },
+            {
+                "key": "MEMORY_RETENTION_DAYS",
+                "label": "Memory retention days",
+                "type": "text",
+                "required": False,
+            },
+            {
+                "key": "MEMORY_ENABLED_CATEGORIES",
+                "label": "Enabled memory categories",
+                "type": "text",
+                "required": False,
+            },
+            {
+                "key": "MEMORY_AUTO_MIN_CONFIDENCE",
+                "label": "Auto-memory min confidence",
+                "type": "text",
+                "required": False,
+            },
         ],
     },
     {
@@ -247,7 +265,13 @@ CONFIG_CATALOG: dict[str, dict[str, list[str] | str]] = {
         "toolkit": "search_toolkit",
     },
     "memory": {
-        "env_vars": ["MEMORY_SEARCH_PAST_CHATS", "MEMORY_GENERATE_FROM_CHATS"],
+        "env_vars": [
+            "MEMORY_SEARCH_PAST_CHATS",
+            "MEMORY_GENERATE_FROM_CHATS",
+            "MEMORY_RETENTION_DAYS",
+            "MEMORY_ENABLED_CATEGORIES",
+            "MEMORY_AUTO_MIN_CONFIDENCE",
+        ],
         "toolkit": "memory_toolkit",
     },
     "github": {"env_vars": ["GITHUB_TOKEN"], "toolkit": "github_toolkit"},

@@ -85,16 +85,12 @@ export function ManageMemoryModal({
             <div className="space-y-6">
               {categoriesWithContent.map((category) => {
                 const categoryNotes = notesByCategory[category.id] || []
-                // Combine all notes in this category into one block
-                const combinedContent = categoryNotes
-                  .map((note) => note.content)
-                  .join('\n\n')
 
                 return (
                   <MemorySection
                     key={category.id}
                     title={category.label}
-                    content={combinedContent}
+                    notes={categoryNotes}
                   />
                 )
               })}
@@ -123,16 +119,29 @@ export function ManageMemoryModal({
 
 interface MemorySectionProps {
   title: string
-  content: string
+  notes: MemoryNote[]
 }
 
-const MemorySection = memo(function MemorySection({ title, content }: MemorySectionProps) {
+const MemorySection = memo(function MemorySection({ title, notes }: MemorySectionProps) {
   return (
     <div>
       <h3 className="text-[15px] font-medium text-foreground mb-2">{title}</h3>
-      <p className="text-[14px] text-muted-foreground leading-relaxed whitespace-pre-wrap">
-        {content}
-      </p>
+      <div className="space-y-3">
+        {notes.map((note) => (
+          <div key={note.id} className="rounded-lg border border-border bg-secondary/30 px-3 py-2">
+            <p className="text-[14px] text-muted-foreground leading-relaxed whitespace-pre-wrap">
+              {note.content}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Confidence {Math.round((note.confidence || 0) * 100)}%
+              {note.auto_generated ? ' • auto-generated' : ' • manual'}
+              {note.provenance && typeof note.provenance['source'] === 'string'
+                ? ` • ${note.provenance['source']}`
+                : ''}
+            </p>
+          </div>
+        ))}
+      </div>
     </div>
   )
 })

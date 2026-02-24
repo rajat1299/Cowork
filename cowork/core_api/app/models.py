@@ -145,6 +145,11 @@ class Skill(SQLModel, table=True):
     trigger_extensions: list[str] = Field(default_factory=list, sa_column=Column(PortableJSON()))
     owner_user_id: int | None = Field(default=None, foreign_key="user.id")
     storage_path: str | None = None
+    trust_state: str = Field(default="trusted", index=True)
+    security_scan_status: str = Field(default="not_scanned", index=True)
+    security_warnings: list[str] = Field(default_factory=list, sa_column=Column(PortableJSON()))
+    provenance: dict | None = Field(default=None, sa_column=Column(PortableJSON()))
+    last_scanned_at: datetime | None = None
     enabled_by_default: bool = Field(default=False)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
@@ -226,6 +231,10 @@ class MemoryNote(SQLModel, table=True):
     category: str = Field(default="note", index=True)
     content: str
     pinned: bool = Field(default=False)
+    confidence: float = Field(default=1.0)
+    provenance: dict | None = Field(default=None, sa_column=Column(PortableJSON()))
+    auto_generated: bool = Field(default=False, index=True)
+    expires_at: datetime | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 

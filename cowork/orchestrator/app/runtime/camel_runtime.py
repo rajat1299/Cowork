@@ -33,6 +33,7 @@ from app.runtime.events import StepEvent
 from app.runtime.executor import _run_camel_complex
 from app.runtime.llm_client import collect_chat_completion, stream_chat
 from app.runtime.memory import (
+    _build_memory_governance_policy,
     _build_context,
     _compact_context,
     _context_budget_snapshot,
@@ -215,6 +216,22 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 "MEMORY_GENERATE_FROM_CHATS",
                 default=True,
             )
+            memory_policy = _build_memory_governance_policy(
+                memory_configs,
+                auto_write_enabled=memory_generate_enabled,
+            )
+            yield _emit(
+                action.task_id,
+                StepEvent.audit_log,
+                {
+                    "event_name": "memory_governance_policy",
+                    "auto_write_enabled": memory_policy["auto_write_enabled"],
+                    "retention_days": memory_policy["retention_days"],
+                    "min_auto_confidence": memory_policy["min_auto_confidence"],
+                    "min_read_confidence": memory_policy["min_read_confidence"],
+                    "allowed_categories": sorted(memory_policy["allowed_categories"]),
+                },
+            )
 
             context_budget = _context_budget_snapshot(task_lock)
             yield _emit(
@@ -250,6 +267,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 action.auth_token,
                 action.project_id,
                 include_global=memory_generate_enabled,
+                policy=memory_policy,
             )
 
             context_budget = _context_budget_snapshot(task_lock)
@@ -573,7 +591,12 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 if memory_generate_enabled:
                     task_lock.add_background_task(
                         asyncio.create_task(
-                            _generate_global_memory_notes(task_lock, provider, action.auth_token)
+                            _generate_global_memory_notes(
+                                task_lock,
+                                provider,
+                                action.auth_token,
+                                policy=memory_policy,
+                            )
                         )
                     )
                 task_lock.status = TaskStatus.done
@@ -603,6 +626,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                     event_stream,
                     context_with_skills,
                     memory_generate_enabled,
+                    memory_policy,
                     active_skills,
                     skill_run_state,
                 )
