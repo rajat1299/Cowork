@@ -26,6 +26,7 @@ from app.runtime.tool_context import current_request_id
 
 
 logger = logging.getLogger(__name__)
+_MAX_REFERENCED_CONTENT_CHARS = 1200
 
 _FILE_DELIVERABLE_INTENT = re.compile(
     r"\b(create|build|generate|draft|prepare|save|export|write)\b.*\b(file|document|doc|report|deck|slides?|spreadsheet|sheet|pdf|docx|pptx|xlsx)\b",
@@ -101,7 +102,12 @@ class RuntimeSkillEngine:
         self.reload()
 
     def reload(self) -> None:
-        loaded = load_skill_packs(self.skillpack_root)
+        loaded = load_skill_packs(
+            self.skillpack_root,
+            load_policy=False,
+            load_templates=False,
+            load_resources=False,
+        )
         self.skills = loaded.skills
         self.load_errors = loaded.errors
         if self.load_errors:
@@ -147,8 +153,13 @@ class RuntimeSkillEngine:
         active_skills: list[RuntimeSkill],
     ) -> SkillRunState:
         self.metrics["skill_runs_total"] += 1
+        hydrated_skills = self._hydrate_triggered_skills(
+            active_skills=active_skills,
+            question=question,
+            context=context,
+        )
         query_plan: list[str] = []
-        if any("research" in skill.id for skill in active_skills):
+        if any("research" in skill.id for skill in hydrated_skills):
             query_plan = expand_queries(question)
         return SkillRunState(
             task_id=task_id,
@@ -156,7 +167,7 @@ class RuntimeSkillEngine:
             question=question,
             context=context,
             mode=self.mode,
-            active_skills=active_skills,
+            active_skills=hydrated_skills,
             explicit_filenames=extract_explicit_filenames(question),
             query_plan=query_plan,
         )
@@ -172,13 +183,24 @@ class RuntimeSkillEngine:
                 for instruction in skill.prompt_instructions:
                     lines.append(f"  - {instruction}")
             if skill.policy_markdown:
-                lines.append("  - Follow the procedural policy attached to this skill.")
+                lines.append("  - Procedural policy:")
+                lines.extend(self._format_referenced_content(skill.policy_markdown))
             if skill.output_contract.required_artifact:
                 lines.append(
                     "  - Output contract: create at least "
                     f"{max(1, skill.output_contract.minimum_artifacts)} artifact(s) with extensions "
                     f"{list(skill.output_contract.allowed_extensions)}"
                 )
+            if skill.templates:
+                lines.append("  - Referenced templates:")
+                for name, content in sorted(skill.templates.items()):
+                    lines.append(f"    - {name}")
+                    lines.extend(self._format_referenced_content(content, prefix="      "))
+            if skill.resources:
+                lines.append("  - Referenced resources:")
+                for name, content in sorted(skill.resources.items()):
+                    lines.append(f"    - {name}")
+                    lines.extend(self._format_referenced_content(content, prefix="      "))
         lines.append("</active_runtime_skills>")
         return "\n".join(lines) + "\n"
 
@@ -384,7 +406,7 @@ class RuntimeSkillEngine:
             }
 
         trigger_precision = 100.0 if all(skill.trigger_patterns for skill in self.skills) else 70.0
-        procedural_depth = 100.0 if all(skill.policy_markdown for skill in self.skills) else 65.0
+        procedural_depth = 100.0 if all(skill.has_policy_reference() for skill in self.skills) else 65.0
         tool_orchestration = 100.0 if all(skill.required_tools for skill in self.skills) else 60.0
         output_contracts = 100.0 if all(skill.output_contract.description for skill in self.skills) else 65.0
         validation_recovery = 100.0 if all(skill.validation_rules for skill in self.skills) else 55.0
@@ -407,6 +429,74 @@ class RuntimeSkillEngine:
             "observability": observability,
             "weighted_score": weighted,
         }
+
+    def _hydrate_triggered_skills(
+        self,
+        *,
+        active_skills: list[RuntimeSkill],
+        question: str,
+        context: str,
+    ) -> list[RuntimeSkill]:
+        if not active_skills:
+            return []
+
+        reference_text = "\n".join(
+            part for part in [question.strip(), context.strip()] if part
+        ).lower()
+        hydrated: list[RuntimeSkill] = []
+        for skill in active_skills:
+            loaded = skill.with_loaded_policy(errors=self.load_errors)
+            template_refs = self._referenced_template_names(loaded, reference_text)
+            if template_refs:
+                loaded = loaded.with_loaded_templates(template_refs, errors=self.load_errors)
+            resource_refs = self._referenced_resource_names(loaded, reference_text)
+            if resource_refs:
+                loaded = loaded.with_loaded_resources(resource_refs, errors=self.load_errors)
+            hydrated.append(loaded)
+        return hydrated
+
+    @staticmethod
+    def _referenced_template_names(skill: RuntimeSkill, reference_text: str) -> set[str]:
+        if not reference_text or not skill.template_files:
+            return set()
+        referenced: set[str] = set()
+        for template_name in skill.template_files:
+            normalized_name = template_name.lower()
+            stem = Path(template_name).stem.lower()
+            if normalized_name in reference_text or stem in reference_text:
+                referenced.add(template_name)
+        return referenced
+
+    @staticmethod
+    def _referenced_resource_names(skill: RuntimeSkill, reference_text: str) -> set[str]:
+        if not reference_text or not skill.resource_files:
+            return set()
+        referenced: set[str] = set()
+        for resource_name in skill.resource_files:
+            normalized_name = resource_name.lower()
+            basename = Path(resource_name).name.lower()
+            stem = Path(resource_name).stem.lower()
+            if (
+                normalized_name in reference_text
+                or basename in reference_text
+                or stem in reference_text
+            ):
+                referenced.add(resource_name)
+        return referenced
+
+    @staticmethod
+    def _format_referenced_content(
+        content: str,
+        *,
+        prefix: str = "    ",
+        max_chars: int = _MAX_REFERENCED_CONTENT_CHARS,
+    ) -> list[str]:
+        text = (content or "").strip()
+        if not text:
+            return []
+        if len(text) > max_chars:
+            text = text[: max_chars - 3].rstrip() + "..."
+        return [f"{prefix}{line}".rstrip() for line in text.splitlines()]
 
     @staticmethod
     def _extract_extensions_from_attachments(attachments: Iterable[object] | None) -> set[str]:

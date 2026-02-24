@@ -189,7 +189,12 @@ def _detect_custom_runtime_skills(
         if not skill_root.exists():
             continue
         try:
-            loaded = load_skill_packs(skill_root)
+            loaded = load_skill_packs(
+                skill_root,
+                load_policy=False,
+                load_templates=False,
+                load_resources=False,
+            )
         except Exception:
             continue
         for skill in loaded.skills:

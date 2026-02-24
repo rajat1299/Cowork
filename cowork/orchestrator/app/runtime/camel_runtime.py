@@ -338,6 +338,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                 context=context_with_attachments,
                 active_skills=active_skills,
             )
+            active_skills = list(skill_run_state.active_skills)
             skills_context = build_runtime_skill_context(active_skills)
             context_with_skills = (
                 f"{context_with_attachments}{skills_context}" if skills_context else context_with_attachments

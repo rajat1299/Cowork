@@ -49,6 +49,108 @@ def test_load_skill_packs_rejects_invalid_toml(tmp_path: Path):
     assert loaded.errors
 
 
+def test_load_skill_packs_defaults_to_metadata_only():
+    root = Path(__file__).resolve().parents[1] / "app" / "runtime" / "skillpacks"
+    loaded = load_skill_packs(root)
+
+    assert loaded.skills
+    assert all(skill.policy_markdown == "" for skill in loaded.skills)
+    assert all(skill.templates == {} for skill in loaded.skills)
+    assert all(skill.resources == {} for skill in loaded.skills)
+    assert any(skill.policy_file for skill in loaded.skills)
+
+
+def test_prepare_plan_loads_policy_when_skill_is_triggered():
+    engine = RuntimeSkillEngine(mode="on")
+    skills = engine.detect("Create a markdown report summarizing this topic")
+    assert any(skill.id == "doc_markdown_v1" for skill in skills)
+    assert all(skill.policy_markdown == "" for skill in skills)
+
+    run_state = engine.prepare_plan(
+        task_id="task-policy-load",
+        project_id="proj-policy-load",
+        question="Create a markdown report summarizing this topic",
+        context="",
+        active_skills=skills,
+    )
+
+    markdown_skill = next(skill for skill in run_state.active_skills if skill.id == "doc_markdown_v1")
+    assert markdown_skill.policy_markdown.strip() != ""
+
+
+def test_prepare_plan_loads_template_only_when_referenced():
+    engine = RuntimeSkillEngine(mode="on")
+    skills = engine.detect("Create a markdown report summarizing this topic")
+    assert any(skill.id == "doc_markdown_v1" for skill in skills)
+
+    run_without_reference = engine.prepare_plan(
+        task_id="task-template-none",
+        project_id="proj-template-none",
+        question="Create a markdown report summarizing this topic",
+        context="",
+        active_skills=skills,
+    )
+    skill_without = next(skill for skill in run_without_reference.active_skills if skill.id == "doc_markdown_v1")
+    assert skill_without.templates == {}
+
+    run_with_reference = engine.prepare_plan(
+        task_id="task-template-load",
+        project_id="proj-template-load",
+        question="Create a markdown report and follow output_outline.md",
+        context="",
+        active_skills=skills,
+    )
+    skill_with = next(skill for skill in run_with_reference.active_skills if skill.id == "doc_markdown_v1")
+    assert "output_outline.md" in skill_with.templates
+
+
+def test_prepare_plan_loads_resource_only_when_referenced(tmp_path: Path):
+    pack_dir = tmp_path / "resource_skill_v1"
+    (pack_dir / "templates").mkdir(parents=True)
+    (pack_dir / "resources" / "reference").mkdir(parents=True)
+    (pack_dir / "skill.toml").write_text(
+        "\n".join(
+            [
+                'id = "resource_skill_v1"',
+                'name = "resource_skill"',
+                'version = "1.0.0"',
+                'description = "Skill with resource files"',
+                "",
+                "[triggers]",
+                'regex = ["\\\\bresource\\\\s+skill\\\\b"]',
+                "extensions = []",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (pack_dir / "resources" / "reference" / "guide.txt").write_text("resource guide", encoding="utf-8")
+
+    engine = RuntimeSkillEngine(skillpack_root=tmp_path, mode="on")
+    skills = engine.detect("Use resource skill for this task")
+    assert len(skills) == 1
+    assert skills[0].resources == {}
+
+    run_without_reference = engine.prepare_plan(
+        task_id="task-resource-none",
+        project_id="proj-resource-none",
+        question="Use resource skill for this task",
+        context="",
+        active_skills=skills,
+    )
+    assert run_without_reference.active_skills[0].resources == {}
+
+    run_with_reference = engine.prepare_plan(
+        task_id="task-resource-load",
+        project_id="proj-resource-load",
+        question="Use resource skill and consult guide.txt",
+        context="",
+        active_skills=skills,
+    )
+    loaded_resources = run_with_reference.active_skills[0].resources
+    assert "reference/guide.txt" in loaded_resources
+    assert loaded_resources["reference/guide.txt"] == "resource guide"
+
+
 def test_filename_normalization_respects_explicit_names():
     explicit = extract_explicit_filenames('Create "report_v1.md" and include citations')
     assert "report_v1.md" in explicit

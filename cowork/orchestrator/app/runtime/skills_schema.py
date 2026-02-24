@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Iterable
 
 try:
     import tomllib  # Python 3.11+
@@ -64,8 +64,13 @@ class RuntimeSkill:
     output_contract: SkillOutputContractConfig = field(default_factory=SkillOutputContractConfig)
     validation_rules: tuple[str, ...] = ()
     retry_policy: SkillRetryPolicyConfig = field(default_factory=SkillRetryPolicyConfig)
+    skill_root: str = ""
+    policy_file: str = ""
+    template_files: tuple[str, ...] = ()
+    resource_files: tuple[str, ...] = ()
     policy_markdown: str = ""
     templates: dict[str, str] = field(default_factory=dict)
+    resources: dict[str, str] = field(default_factory=dict)
     _compiled_patterns: tuple[re.Pattern[str], ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -86,6 +91,88 @@ class RuntimeSkill:
         normalized_extensions = {ext.lower() for ext in extensions if ext}
         return any(ext.lower() in normalized_extensions for ext in self.file_extensions)
 
+    def has_policy_reference(self) -> bool:
+        return bool(self.policy_file)
+
+    def with_loaded_policy(self, errors: list[str] | None = None) -> RuntimeSkill:
+        if self.policy_markdown or not self.policy_file:
+            return self
+        root = self._skill_root_path()
+        if root is None:
+            return self
+        policy_path = root / self.policy_file
+        if not policy_path.exists():
+            return self
+        try:
+            policy_markdown = policy_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            if errors is not None:
+                errors.append(f"{policy_path}: {exc}")
+            return self
+        return replace(self, policy_markdown=policy_markdown)
+
+    def with_loaded_templates(
+        self,
+        template_names: Iterable[str] | None = None,
+        errors: list[str] | None = None,
+    ) -> RuntimeSkill:
+        if not self.template_files:
+            return self
+        root = self._skill_root_path()
+        if root is None:
+            return self
+        requested = set(template_names or self.template_files)
+        available = set(self.template_files)
+        pending = sorted(name for name in requested if name in available and name not in self.templates)
+        if not pending:
+            return self
+
+        templates_dir = root / "templates"
+        templates = dict(self.templates)
+        for template_name in pending:
+            template_path = templates_dir / template_name
+            try:
+                templates[template_name] = template_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                if errors is not None:
+                    errors.append(f"{template_path}: {exc}")
+        return replace(self, templates=templates)
+
+    def with_loaded_resources(
+        self,
+        resource_names: Iterable[str] | None = None,
+        errors: list[str] | None = None,
+    ) -> RuntimeSkill:
+        if not self.resource_files:
+            return self
+        root = self._skill_root_path()
+        if root is None:
+            return self
+        requested = set(resource_names or self.resource_files)
+        available = set(self.resource_files)
+        pending = sorted(name for name in requested if name in available and name not in self.resources)
+        if not pending:
+            return self
+
+        resources_dir = root / "resources"
+        resources = dict(self.resources)
+        for resource_name in pending:
+            relative = Path(resource_name)
+            if relative.is_absolute() or ".." in relative.parts:
+                continue
+            resource_path = resources_dir / relative
+            try:
+                resources[resource_name] = resource_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                if errors is not None:
+                    errors.append(f"{resource_path}: {exc}")
+        return replace(self, resources=resources)
+
+    def _skill_root_path(self) -> Path | None:
+        if not self.skill_root:
+            return None
+        return Path(self.skill_root)
+
 
 @dataclass
 class SkillPackLoadResult:
@@ -93,7 +180,40 @@ class SkillPackLoadResult:
     errors: list[str]
 
 
-def load_skill_packs(skillpack_root: Path) -> SkillPackLoadResult:
+def _scan_template_files(pack_dir: Path) -> tuple[str, ...]:
+    templates_dir = pack_dir / "templates"
+    if not templates_dir.exists() or not templates_dir.is_dir():
+        return ()
+    names: list[str] = []
+    for template_file in sorted(templates_dir.glob("*.md")):
+        if template_file.is_file():
+            names.append(template_file.name)
+    return tuple(names)
+
+
+def _scan_resource_files(pack_dir: Path) -> tuple[str, ...]:
+    resources_dir = pack_dir / "resources"
+    if not resources_dir.exists() or not resources_dir.is_dir():
+        return ()
+    files: list[str] = []
+    for resource_file in sorted(resources_dir.rglob("*")):
+        if not resource_file.is_file():
+            continue
+        try:
+            relative = resource_file.relative_to(resources_dir)
+        except ValueError:
+            continue
+        files.append(str(relative).replace("\\", "/"))
+    return tuple(files)
+
+
+def load_skill_packs(
+    skillpack_root: Path,
+    *,
+    load_policy: bool = False,
+    load_templates: bool = False,
+    load_resources: bool = False,
+) -> SkillPackLoadResult:
     skills: list[RuntimeSkill] = []
     errors: list[str] = []
     if not skillpack_root.exists():
@@ -109,22 +229,9 @@ def load_skill_packs(skillpack_root: Path) -> SkillPackLoadResult:
             errors.append(f"{toml_path}: {exc}")
             continue
 
-        policy_path = pack_dir / "policy.md"
-        policy_markdown = ""
-        if policy_path.exists():
-            try:
-                policy_markdown = policy_path.read_text(encoding="utf-8")
-            except OSError as exc:
-                errors.append(f"{policy_path}: {exc}")
-
-        templates: dict[str, str] = {}
-        templates_dir = pack_dir / "templates"
-        if templates_dir.exists() and templates_dir.is_dir():
-            for template_file in sorted(templates_dir.glob("*.md")):
-                try:
-                    templates[template_file.name] = template_file.read_text(encoding="utf-8")
-                except OSError as exc:
-                    errors.append(f"{template_file}: {exc}")
+        policy_file = "policy.md" if (pack_dir / "policy.md").exists() else ""
+        template_files = _scan_template_files(pack_dir)
+        resource_files = _scan_resource_files(pack_dir)
 
         skill = RuntimeSkill(
             id=config.id,
@@ -140,9 +247,17 @@ def load_skill_packs(skillpack_root: Path) -> SkillPackLoadResult:
             output_contract=config.output_contract,
             validation_rules=tuple(config.validation_rules.rules),
             retry_policy=config.retry_policy,
-            policy_markdown=policy_markdown,
-            templates=templates,
+            skill_root=str(pack_dir),
+            policy_file=policy_file,
+            template_files=template_files,
+            resource_files=resource_files,
         )
+        if load_policy:
+            skill = skill.with_loaded_policy(errors=errors)
+        if load_templates:
+            skill = skill.with_loaded_templates(errors=errors)
+        if load_resources:
+            skill = skill.with_loaded_resources(errors=errors)
         skills.append(skill)
 
     return SkillPackLoadResult(skills=skills, errors=errors)
