@@ -8,6 +8,7 @@ from typing import Any, Literal, Protocol
 
 from app.runtime.events import StepEvent
 from app.runtime.task_lock import TaskLock
+from shared.schemas import INTERACTION_CONTRACT_VERSION
 
 
 _PERMISSION_APPROVE_VALUES = {
@@ -73,6 +74,41 @@ _GITHUB_READ_KEYWORDS = {"list", "get", "read", "search", "fetch", "view"}
 class _PermissionEventStream(Protocol):
     def emit(self, step: StepEvent, data: dict) -> None:
         pass
+
+
+def _emit_audit_log(
+    event_stream: _PermissionEventStream,
+    *,
+    event_name: str,
+    request_id: str,
+    channel: str,
+    outcome: str,
+    toolkit_name: str = "",
+    method_name: str = "",
+    tier: str = "",
+    message: str | None = None,
+    process_task_id: str = "",
+    actor: str = "assistant",
+) -> None:
+    # Keep audit payload compact and immutable so it can be persisted as a timeline record.
+    event_stream.emit(
+        StepEvent.audit_log,
+        {
+            "type": "audit_log",
+            "event_name": event_name,
+            "request_id": request_id,
+            "channel": channel,
+            "outcome": outcome,
+            "actor": actor,
+            "toolkit_name": toolkit_name,
+            "method_name": method_name,
+            "tier": tier,
+            "message": _summarize_permission_detail(message or ""),
+            "process_task_id": process_task_id,
+            "contract_version": INTERACTION_CONTRACT_VERSION,
+            "timestamp_ms": int(time.time() * 1000),
+        },
+    )
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -309,14 +345,17 @@ async def _request_tool_permission(
     request_id = uuid.uuid4().hex
     response_queue = task_lock.human_input.setdefault(request_id, asyncio.Queue(maxsize=1))
     task_lock.pending_approval_context[request_id] = {
+        "channel": "tool_approval",
         "tier": tier,
         "toolkit_key": toolkit_key,
         "memory_group": memory_group or "",
+        "contract_version": INTERACTION_CONTRACT_VERSION,
     }
     event_stream.emit(
         StepEvent.ask_user,
         {
             "type": "tool_approval",
+            "channel": "tool_approval",
             "question": human_question,
             "request_id": request_id,
             "human_question": human_question,
@@ -327,7 +366,20 @@ async def _request_tool_permission(
             "agent_name": agent_name,
             "process_task_id": process_task_id,
             "message": message,
+            "contract_version": INTERACTION_CONTRACT_VERSION,
         },
+    )
+    _emit_audit_log(
+        event_stream,
+        event_name="permission_request_emitted",
+        request_id=request_id,
+        channel="tool_approval",
+        outcome="requested",
+        toolkit_name=toolkit_name,
+        method_name=method_name,
+        tier=tier,
+        message=message,
+        process_task_id=process_task_id,
     )
 
     timeout = _tool_permission_timeout_seconds()
@@ -353,6 +405,18 @@ async def _request_tool_permission(
                         "method_name": method_name,
                     },
                 )
+                _emit_audit_log(
+                    event_stream,
+                    event_name="permission_request_timed_out",
+                    request_id=request_id,
+                    channel="tool_approval",
+                    outcome=outcome,
+                    toolkit_name=toolkit_name,
+                    method_name=method_name,
+                    tier=tier,
+                    message=message,
+                    process_task_id=process_task_id,
+                )
                 return approved
             try:
                 response = await asyncio.wait_for(response_queue.get(), timeout=min(1.0, remaining))
@@ -370,6 +434,19 @@ async def _request_tool_permission(
                         "method_name": method_name,
                     },
                 )
+            _emit_audit_log(
+                event_stream,
+                event_name="permission_response_recorded",
+                request_id=request_id,
+                channel="tool_approval",
+                outcome="approved" if approved else "denied",
+                toolkit_name=toolkit_name,
+                method_name=method_name,
+                tier=tier,
+                message=message,
+                process_task_id=process_task_id,
+                actor="user",
+            )
             return approved
     finally:
         task_lock.human_input.pop(request_id, None)
@@ -416,10 +493,16 @@ async def _request_user_decision(
     response_queue = task_lock.human_input.setdefault(
         request_id, asyncio.Queue(maxsize=1)
     )
+    task_lock.pending_approval_context[request_id] = {
+        "channel": "decision",
+        "contract_version": INTERACTION_CONTRACT_VERSION,
+        "mode": mode,
+    }
     event_stream.emit(
         StepEvent.ask_user,
         {
             "type": "decision",
+            "channel": "decision",
             "question": question,
             "request_id": request_id,
             "mode": mode,
@@ -427,7 +510,17 @@ async def _request_user_decision(
             "skippable": skippable,
             "timeout": int(timeout_seconds),
             "process_task_id": process_task_id,
+            "contract_version": INTERACTION_CONTRACT_VERSION,
         },
+    )
+    _emit_audit_log(
+        event_stream,
+        event_name="decision_request_emitted",
+        request_id=request_id,
+        channel="decision",
+        outcome="requested",
+        process_task_id=process_task_id,
+        message=question,
     )
 
     deadline = time.monotonic() + timeout_seconds
@@ -437,6 +530,15 @@ async def _request_user_decision(
                 return None
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                _emit_audit_log(
+                    event_stream,
+                    event_name="decision_request_timed_out",
+                    request_id=request_id,
+                    channel="decision",
+                    outcome="timed_out",
+                    process_task_id=process_task_id,
+                    message=question,
+                )
                 return None
             try:
                 response = await asyncio.wait_for(
@@ -444,9 +546,21 @@ async def _request_user_decision(
                 )
             except asyncio.TimeoutError:
                 continue
-            return str(response).strip() if response else None
+            parsed = str(response).strip() if response else None
+            _emit_audit_log(
+                event_stream,
+                event_name="decision_response_recorded",
+                request_id=request_id,
+                channel="decision",
+                outcome="provided" if parsed else "empty",
+                process_task_id=process_task_id,
+                message=question,
+                actor="user",
+            )
+            return parsed
     finally:
         task_lock.human_input.pop(request_id, None)
+        task_lock.pending_approval_context.pop(request_id, None)
 
 
 # ---- Compose message (display-only, no response queue) ----
@@ -486,8 +600,19 @@ def _emit_compose_message(
         StepEvent.compose_message,
         {
             "type": "compose_message",
+            "channel": "compose_message",
             "platform": platform,
             "variants": [v.to_dict() for v in variants],
             "metadata": metadata or {},
+            "contract_version": INTERACTION_CONTRACT_VERSION,
         },
+    )
+    _emit_audit_log(
+        event_stream,
+        event_name="compose_message_emitted",
+        request_id=uuid.uuid4().hex,
+        channel="compose_message",
+        outcome="emitted",
+        process_task_id="",
+        message=platform,
     )

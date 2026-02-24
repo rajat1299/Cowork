@@ -34,6 +34,7 @@ export type StepType =
   // User interaction
   | 'ask'                 // Agent asks user a question
   | 'ask_user'            // Agent asks user a question (normalized)
+  | 'audit_log'           // Immutable runtime audit signal
   | 'wait_confirm'        // Waiting for user confirmation
   | 'turn_cancelled'      // Turn cancelled
   // Compose
@@ -53,6 +54,9 @@ export interface SSEEvent<T = Record<string, unknown>> {
   step: StepType
   data: T & { agent_event?: AgentEvent }
   timestamp: number
+  event_id?: string
+  request_id?: string
+  contract_version?: string
 }
 
 export interface AgentEvent {
@@ -139,6 +143,8 @@ export interface EndData {
 export interface ErrorData {
   message: string
   code?: string
+  error_type?: 'runtime_error' | 'validation_error' | 'upstream_error' | 'policy_error'
+  recoverable?: boolean
 }
 
 export interface AskData {
@@ -152,6 +158,7 @@ export type ApprovalTier = 'always_ask' | 'ask_once' | 'never_ask'
 
 export interface ToolApprovalData {
   requestId: string
+  contractVersion?: string
   question: string        // Human-readable: "Allow Mycellium to create a file?"
   detail?: string         // Context: "report.md in /workspace"
   tier: ApprovalTier
@@ -173,6 +180,7 @@ export type DecisionMode = 'single_select' | 'multi_select' | 'rank'
 
 export interface DecisionData {
   requestId: string
+  contractVersion?: string
   question: string
   mode: DecisionMode
   options: DecisionOption[]
@@ -193,6 +201,7 @@ export interface ComposeVariant {
 }
 
 export interface ComposeData {
+  contractVersion?: string
   platform: ComposePlatform
   variants: ComposeVariant[]
   metadata?: Record<string, string>
@@ -411,6 +420,7 @@ export function getStepLabel(step: StepType): string {
     error: 'Error',
     ask: 'Asking question',
     ask_user: 'Asking question',
+    audit_log: 'Audit log',
     wait_confirm: 'Waiting for confirmation',
     turn_cancelled: 'Cancelled',
     compose_message: 'Composing message',

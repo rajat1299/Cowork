@@ -19,6 +19,7 @@ const _runtime = typeof window !== 'undefined' ? window.__COWORK_RUNTIME__ : und
 // API base URLs — desktop: preload injection, web: env vars, fallback: localhost defaults
 const CORE_API_URL = _runtime?.coreApiUrl || import.meta.env.VITE_CORE_API_URL || 'http://localhost:3001'
 const ORCHESTRATOR_URL = _runtime?.orchestratorUrl || import.meta.env.VITE_ORCHESTRATOR_URL || 'http://localhost:5001'
+const REQUEST_ID_HEADER = 'X-Request-Id'
 
 /** True when running inside the Electron desktop shell */
 export const isDesktop = _runtime?.isDesktop ?? false
@@ -47,6 +48,13 @@ class ApiError extends Error {
 }
 
 export { ApiError }
+
+function newRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
 
 async function refreshAccessToken(): Promise<boolean> {
   const { logout } = useAuthStore.getState()
@@ -101,6 +109,7 @@ async function _apiRequestInner<T>(
 
   const requestHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
+    [REQUEST_ID_HEADER]: newRequestId(),
     ...headers,
   }
 
@@ -142,10 +151,12 @@ export async function uploadRequest<T>(
   formData: FormData,
   auth: boolean = true
 ): Promise<T> {
+  const requestId = newRequestId()
   let response = await fetch(`${baseUrl}${endpoint}`, {
     method: 'POST',
     body: formData,
     credentials: 'include',
+    headers: { [REQUEST_ID_HEADER]: requestId },
   })
 
   if (response.status === 401 && auth) {
@@ -155,6 +166,7 @@ export async function uploadRequest<T>(
         method: 'POST',
         body: formData,
         credentials: 'include',
+        headers: { [REQUEST_ID_HEADER]: requestId },
       })
     }
   }

@@ -1,4 +1,5 @@
 from datetime import datetime
+import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -11,6 +12,8 @@ from app.models import ChatHistory, Step
 from shared.schemas import StepEvent
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+_idempotency_lock = threading.Lock()
+_idempotency_to_step_id: dict[str, int] = {}
 
 
 class StepOut(BaseModel):
@@ -24,15 +27,38 @@ class StepOut(BaseModel):
 
 @router.post("/steps", response_model=StepOut, dependencies=[Depends(require_internal_key)])
 def create_step(event: StepEvent, session: Session = Depends(get_session)) -> StepOut:
+    idem_key = event.idempotency_key or ""
+    if idem_key:
+        with _idempotency_lock:
+            existing_id = _idempotency_to_step_id.get(idem_key)
+        if existing_id is not None:
+            existing = session.exec(select(Step).where(Step.id == existing_id)).first()
+            if existing:
+                return StepOut(**existing.__dict__)
+
+    enriched_data = event.data if isinstance(event.data, dict) else {"value": event.data}
+    enriched_data = {
+        **enriched_data,
+        "_meta": {
+            "event_id": event.event_id,
+            "idempotency_key": event.idempotency_key,
+            "request_id": event.request_id,
+            "contract_version": event.contract_version,
+        },
+    }
+
     record = Step(
         task_id=event.task_id,
         step=event.step,
-        data=event.data,
+        data=enriched_data,
         timestamp=event.timestamp,
     )
     session.add(record)
     session.commit()
     session.refresh(record)
+    if idem_key:
+        with _idempotency_lock:
+            _idempotency_to_step_id[idem_key] = int(record.id)
     return StepOut(**record.__dict__)
 
 

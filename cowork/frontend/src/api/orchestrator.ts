@@ -1,5 +1,7 @@
 import { orchestratorApi, ORCHESTRATOR_URL } from './client'
 
+const INTERACTION_CONTRACT_VERSION = '2026-02-23'
+
 // ============ Types ============
 
 export interface StartChatRequest {
@@ -85,6 +87,8 @@ export const permission = {
     orchestratorApi.post(`/chat/${projectId}/permission`, {
       request_id: requestId,
       approved,
+      decision_kind: 'tool_approval',
+      contract_version: INTERACTION_CONTRACT_VERSION,
       ...(remember !== undefined && { remember }),
     }),
 
@@ -95,6 +99,8 @@ export const permission = {
     orchestratorApi.post(`/chat/${projectId}/permission`, {
       request_id: requestId,
       response,
+      decision_kind: 'decision',
+      contract_version: INTERACTION_CONTRACT_VERSION,
     }),
 }
 

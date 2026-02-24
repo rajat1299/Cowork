@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from typing import Any, Iterable
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
@@ -21,6 +22,7 @@ from app.runtime.research_pipeline import dedupe_sources, expand_queries
 from app.runtime.skill_validators import SkillValidationResult, validate_skill_contract
 from app.runtime.skills_schema import RuntimeSkill, load_skill_packs
 from app.runtime.sync import fire_and_forget_artifact
+from app.runtime.tool_context import current_request_id
 
 
 logger = logging.getLogger(__name__)
@@ -638,6 +640,9 @@ class RuntimeSkillEngine:
                     name=str(artifact.get("name") or "artifact"),
                     content_url=str(artifact.get("content_url") or artifact.get("path") or ""),
                     created_at=now,
+                    event_id=uuid.uuid4().hex,
+                    idempotency_key=f"{task_id}:{artifact.get('name') or 'artifact'}:{artifact.get('content_url') or artifact.get('path') or ''}",
+                    request_id=current_request_id.get(None),
                 )
             )
 

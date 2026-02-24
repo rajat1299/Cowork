@@ -70,7 +70,7 @@ from app.runtime.task_analysis import (
     _merge_agent_specs,
 )
 from app.runtime.task_lock import TaskLock
-from app.runtime.tool_context import current_auth_token, current_project_id
+from app.runtime.tool_context import current_auth_token, current_project_id, current_request_id
 from app.runtime.toolkits.camel_tools import build_agent_tools
 from app.runtime.tracing import _trace_log
 from app.runtime.workforce import build_default_agents, parse_subtasks
@@ -93,10 +93,12 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
         if action.type == ActionType.improve:
             current_auth_token.set(action.auth_token)
             current_project_id.set(action.project_id)
+            current_request_id.set(action.request_id)
             _trace_log(
                 "action_received",
                 {
                     "task_id": action.task_id,
+                    "request_id": action.request_id,
                     "project_id": action.project_id,
                     "question_preview": action.question[:200],
                     "search_enabled": action.search_enabled,

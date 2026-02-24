@@ -1,4 +1,5 @@
 from datetime import datetime
+import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -11,6 +12,8 @@ from app.models import Artifact, ChatHistory
 from shared.schemas import ArtifactEvent
 
 router = APIRouter(prefix="/chat", tags=["artifacts"])
+_idempotency_lock = threading.Lock()
+_idempotency_to_artifact_id: dict[str, int] = {}
 
 
 class ArtifactOut(BaseModel):
@@ -24,6 +27,15 @@ class ArtifactOut(BaseModel):
 
 @router.post("/artifacts", response_model=ArtifactOut, dependencies=[Depends(require_internal_key)])
 def create_artifact(event: ArtifactEvent, session: Session = Depends(get_session)) -> ArtifactOut:
+    idem_key = event.idempotency_key or ""
+    if idem_key:
+        with _idempotency_lock:
+            existing_id = _idempotency_to_artifact_id.get(idem_key)
+        if existing_id is not None:
+            existing = session.exec(select(Artifact).where(Artifact.id == existing_id)).first()
+            if existing:
+                return ArtifactOut(**existing.__dict__)
+
     record = Artifact(
         task_id=event.task_id,
         artifact_type=event.artifact_type,
@@ -33,6 +45,9 @@ def create_artifact(event: ArtifactEvent, session: Session = Depends(get_session
     session.add(record)
     session.commit()
     session.refresh(record)
+    if idem_key:
+        with _idempotency_lock:
+            _idempotency_to_artifact_id[idem_key] = int(record.id)
     return ArtifactOut(**record.__dict__)
 
 

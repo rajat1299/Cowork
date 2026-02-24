@@ -50,6 +50,7 @@ export const DecisionWidget = memo(function DecisionWidget({ decision }: Decisio
   )
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [freeformValue, setFreeformValue] = useState('')
+  const [secondsLeft, setSecondsLeft] = useState(decision.timeout)
 
   const optionMap = useMemo(() => {
     return new Map(decision.options.map((option) => [option.id, option]))
@@ -89,6 +90,14 @@ export const DecisionWidget = memo(function DecisionWidget({ decision }: Decisio
     }, decision.timeout * 1000)
 
     return () => clearTimeout(timeoutId)
+  }, [decision.requestId, decision.timeout])
+
+  useEffect(() => {
+    setSecondsLeft(decision.timeout)
+    const ticker = setInterval(() => {
+      setSecondsLeft((prev) => (prev > 0 ? prev - 1 : 0))
+    }, 1000)
+    return () => clearInterval(ticker)
   }, [decision.requestId, decision.timeout])
 
   const submit = useCallback(
@@ -312,20 +321,30 @@ export const DecisionWidget = memo(function DecisionWidget({ decision }: Decisio
           <h3 className="text-[15px] leading-tight font-medium text-foreground">
             {decision.question}
           </h3>
-          <button
-            type="button"
-            onClick={() => void handleSkip()}
-            disabled={isSubmitting || !decision.skippable}
-            className={cn(
-              'mt-0.5 rounded-md p-1 text-muted-foreground transition-colors',
-              'hover:bg-secondary hover:text-foreground',
-              'disabled:opacity-50 disabled:cursor-not-allowed'
-            )}
-            aria-label={decision.skippable ? 'Skip decision' : 'Dismiss decision'}
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground">
+              {secondsLeft}s
+            </span>
+            <button
+              type="button"
+              onClick={() => void handleSkip()}
+              disabled={isSubmitting || !decision.skippable}
+              className={cn(
+                'mt-0.5 rounded-md p-1 text-muted-foreground transition-colors',
+                'hover:bg-secondary hover:text-foreground',
+                'disabled:opacity-50 disabled:cursor-not-allowed'
+              )}
+              aria-label={decision.skippable ? 'Skip decision' : 'Dismiss decision'}
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
+        {!decision.contractVersion ? (
+          <div className="px-5 pb-2 text-[11px] text-amber-500">
+            Legacy decision contract detected; response remains compatible.
+          </div>
+        ) : null}
 
         <div className="px-3 pb-2">
           <div className="overflow-hidden rounded-xl border border-border/60 bg-background/30">

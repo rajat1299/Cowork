@@ -15,13 +15,16 @@ class OrchestratorSettings(BaseSettings):
     workforce_failure_strategies: str = "retry,replan"
     workforce_max_retries: int = 2
     workforce_halt_on_max_retries: bool = True
+    slo_chat_availability_target: float = 99.9
+    slo_chat_p95_latency_ms: int = 6000
+    error_budget_monthly_percent: float = 0.1
 
     @field_validator("core_api_internal_key")
     @classmethod
     def validate_core_api_internal_key(cls, value: str, info):
         app_env = info.data.get("app_env")
-        if app_env == "production" and not value:
-            raise ValueError("CORE_API_INTERNAL_KEY is required in production")
+        if app_env not in {"development", "test", "desktop"} and not value:
+            raise ValueError("CORE_API_INTERNAL_KEY is required outside development/test/desktop")
         return value
 
 

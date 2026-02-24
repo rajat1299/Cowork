@@ -3,6 +3,9 @@ from typing import Any
 from pydantic import BaseModel
 
 
+INTERACTION_CONTRACT_VERSION = "2026-02-23"
+
+
 class HealthResponse(BaseModel):
     status: str
     service: str
@@ -14,6 +17,10 @@ class StepEvent(BaseModel):
     step: str
     data: Any
     timestamp: float | None = None
+    event_id: str | None = None
+    idempotency_key: str | None = None
+    request_id: str | None = None
+    contract_version: str = INTERACTION_CONTRACT_VERSION
 
 
 class ArtifactEvent(BaseModel):
@@ -22,6 +29,10 @@ class ArtifactEvent(BaseModel):
     name: str
     content_url: str | None = None
     created_at: float | None = None
+    event_id: str | None = None
+    idempotency_key: str | None = None
+    request_id: str | None = None
+    contract_version: str = INTERACTION_CONTRACT_VERSION
 
 
 class AgentEvent(BaseModel):

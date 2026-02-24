@@ -54,7 +54,7 @@ def test_stop_chat_requires_authorization_header():
 def test_improve_chat_with_invalid_token_returns_401(monkeypatch):
     from app import auth as auth_module
 
-    async def fake_verify(_authorization: str) -> None:
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
         raise HTTPException(status_code=401, detail="Invalid access token")
 
     monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
@@ -75,7 +75,7 @@ def test_improve_chat_with_valid_token_queues_action(monkeypatch):
 
     project_id = "proj-auth-valid"
 
-    async def fake_verify(_authorization: str) -> None:
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
@@ -102,7 +102,7 @@ def test_start_chat_with_valid_token_streams_events(monkeypatch):
 
     project_id = "proj-auth-start"
 
-    async def fake_verify(_authorization: str) -> None:
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
         return None
 
     async def fake_run_task_loop(task_lock):
@@ -128,7 +128,7 @@ def test_improve_chat_accepts_access_token_cookie(monkeypatch):
 
     project_id = "proj-auth-cookie"
 
-    async def fake_verify(_authorization: str) -> None:
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
@@ -156,7 +156,7 @@ def test_submit_permission_decision_records_response(monkeypatch):
     project_id = "proj-auth-permission"
     request_id = "req-1"
 
-    async def fake_verify(_authorization: str) -> None:
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
@@ -185,7 +185,7 @@ def test_submit_permission_decision_remembers_memory_group_when_requested(monkey
     request_id = "req-remember"
     memory_group = "terminal_command"
 
-    async def fake_verify(_authorization: str) -> None:
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
@@ -219,7 +219,7 @@ def test_submit_permission_decision_does_not_remember_when_disabled(monkeypatch)
     request_id = "req-no-remember"
     toolkit_key = "filetoolkitwithevents"
 
-    async def fake_verify(_authorization: str) -> None:
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
@@ -254,7 +254,7 @@ def test_submit_permission_decision_uses_toolkit_key_fallback_when_memory_group_
     request_id = "req-toolkit-fallback"
     toolkit_key = "filetoolkitwithevents"
 
-    async def fake_verify(_authorization: str) -> None:
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
@@ -286,7 +286,7 @@ def test_submit_permission_decision_accepts_free_text_response(monkeypatch):
     project_id = "proj-auth-permission-free-text"
     request_id = "req-free-text"
 
-    async def fake_verify(_authorization: str) -> None:
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
@@ -307,13 +307,42 @@ def test_submit_permission_decision_accepts_free_text_response(monkeypatch):
     remove(project_id)
 
 
+def test_submit_permission_decision_rejects_contract_version_mismatch(monkeypatch):
+    from app import auth as auth_module
+
+    project_id = "proj-auth-permission-contract"
+    request_id = "req-contract"
+
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
+        return None
+
+    monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)
+
+    task_lock = get_or_create(project_id)
+    task_lock.human_input[request_id] = asyncio.Queue(maxsize=1)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/chat/{project_id}/permission",
+            json={
+                "request_id": request_id,
+                "approved": True,
+                "contract_version": "legacy-1",
+            },
+            headers={"Authorization": "Bearer valid-token"},
+        )
+
+    assert response.status_code == 409
+    remove(project_id)
+
+
 def test_submit_permission_decision_rejects_duplicate_submission(monkeypatch):
     from app import auth as auth_module
 
     project_id = "proj-auth-permission-duplicate"
     request_id = "req-duplicate"
 
-    async def fake_verify(_authorization: str) -> None:
+    async def fake_verify(_authorization: str, request_id: str | None = None) -> None:
         return None
 
     monkeypatch.setattr(auth_module, "_verify_with_core_api", fake_verify)

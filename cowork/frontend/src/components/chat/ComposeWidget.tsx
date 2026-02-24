@@ -171,6 +171,9 @@ export const ComposeWidget = memo(function ComposeWidget({ composeData }: Compos
   return (
     <div className="w-full rounded-2xl border border-border/70 bg-card/85 shadow-sm overflow-hidden animate-fade-in">
       <div className="flex items-center gap-2 border-b border-border/55 px-3 py-2">
+        <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground">
+          {composeData.contractVersion ? `contract ${composeData.contractVersion}` : 'legacy contract'}
+        </span>
         {composeData.variants.map((variant, index) => {
           const active = selectedVariant.id === variant.id
           return (
@@ -203,6 +206,15 @@ export const ComposeWidget = memo(function ComposeWidget({ composeData }: Compos
         <div className="border-b border-border/45 px-4 py-2 text-[13px] text-foreground">
           <span className="text-muted-foreground mr-2">Subject:</span>
           <span className="font-medium">{selectedVariant.subject}</span>
+        </div>
+      ) : null}
+
+      {composeData.metadata && Object.keys(composeData.metadata).length > 0 ? (
+        <div className="border-b border-border/45 px-4 py-2 text-[11px] text-muted-foreground">
+          {Object.entries(composeData.metadata)
+            .slice(0, 4)
+            .map(([key, value]) => `${key}: ${value}`)
+            .join(' · ')}
         </div>
       ) : null}
 

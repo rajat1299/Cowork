@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from app.clients.core_api import (
     ProviderConfig,
@@ -24,6 +25,11 @@ GLOBAL_MEMORY_CATEGORIES = {
     "tech_stack",
     "preferences",
 }
+_MAX_SECTION_CHARS = 1200
+_MAX_NOTE_COUNT_PER_SECTION = 20
+_MAX_HISTORY_TURNS = 24
+_MIN_COMPACTION_SECTION_HITS = 3
+_COMPACTION_REQUIRED_HEADERS = ("goal", "decisions", "outputs", "open questions", "next steps")
 
 
 def _usage_total(usage: dict | None) -> int:
@@ -38,12 +44,59 @@ def _append_memory_notes(lines: list[str], title: str, notes: list[dict[str, obj
     lines.append(title)
     pinned = [note for note in notes if note.get("pinned")]
     other = [note for note in notes if not note.get("pinned")]
+    budget = _MAX_SECTION_CHARS
+    rendered = 0
     for note in pinned + other:
+        if rendered >= _MAX_NOTE_COUNT_PER_SECTION or budget <= 0:
+            break
         content = note.get("content", "")
         category = note.get("category", "note")
         label = "pinned" if note.get("pinned") else category
-        lines.append(f"- ({label}) {content}")
+        text = str(content)
+        if len(text) > budget:
+            text = text[: max(0, budget - 3)].rstrip() + "..."
+        budget -= len(text)
+        rendered += 1
+        lines.append(f"- ({label}) {text}")
     lines.append("")
+
+
+def _trim_text(value: str, limit: int = _MAX_SECTION_CHARS) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _history_window_size() -> int:
+    raw = os.environ.get("CONTEXT_HISTORY_TURNS")
+    if not raw:
+        return _MAX_HISTORY_TURNS
+    try:
+        return max(8, int(raw))
+    except (TypeError, ValueError):
+        return _MAX_HISTORY_TURNS
+
+
+def _select_history_window(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    if len(history) <= _history_window_size():
+        return history
+    # Keep strong recency while preserving user intent density.
+    recent = history[-_history_window_size():]
+    users = [item for item in history if item.get("role") == "user"][-4:]
+    merged = users + recent
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for entry in merged:
+        key = (
+            str(entry.get("role") or ""),
+            str(entry.get("content") or ""),
+            str(entry.get("timestamp") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(entry)
+    return deduped
 
 
 def _build_context(task_lock: TaskLock) -> str:
@@ -60,7 +113,7 @@ def _build_context(task_lock: TaskLock) -> str:
         lines.extend(
             [
                 "=== Thread Summary ===",
-                task_lock.thread_summary,
+                _trim_text(task_lock.thread_summary),
                 "",
             ]
         )
@@ -68,7 +121,7 @@ def _build_context(task_lock: TaskLock) -> str:
         lines.extend(
             [
                 "=== Task Summary ===",
-                task_lock.last_task_summary,
+                _trim_text(task_lock.last_task_summary),
                 "",
             ]
         )
@@ -77,9 +130,9 @@ def _build_context(task_lock: TaskLock) -> str:
     if not task_lock.conversation_history:
         return "\n".join(lines).strip() + "\n"
     lines.append("=== Previous Conversation ===")
-    for entry in task_lock.conversation_history:
+    for entry in _select_history_window(task_lock.conversation_history):
         role = entry.get("role") or "assistant"
-        content = entry.get("content") or ""
+        content = _trim_text(str(entry.get("content") or ""), limit=1000)
         if role == "assistant":
             lines.append(f"Assistant: {content}")
         else:
@@ -202,6 +255,11 @@ Return a concise summary with sections:
     )
     summary_text = summary_text.strip()
     if not summary_text:
+        return False
+    summary_lc = summary_text.lower()
+    section_hits = sum(1 for marker in _COMPACTION_REQUIRED_HEADERS if marker in summary_lc)
+    if section_hits < _MIN_COMPACTION_SECTION_HITS:
+        # Avoid replacing existing context with low-fidelity compaction output.
         return False
     task_lock.thread_summary = summary_text
     await upsert_thread_summary(auth_token, project_id, summary_text)

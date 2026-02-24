@@ -20,6 +20,8 @@ export const ToolApprovalCard = memo(function ToolApprovalCard({ approval }: Too
 
   const resolveApproval = useChatStore((s) => s.resolveApproval)
   const removeApproval = useChatStore((s) => s.removeApproval)
+  const tierLabel = approval.tier === 'always_ask' ? 'High impact' : 'Session approval'
+  const contractHealthy = Boolean(approval.contractVersion)
 
   // Countdown timer for pending approvals
   useEffect(() => {
@@ -95,6 +97,9 @@ export const ToolApprovalCard = memo(function ToolApprovalCard({ approval }: Too
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/50">
         <Shield size={16} className="text-amber-400 flex-shrink-0" />
         <span className="text-[13px] font-medium text-foreground">Permission Required</span>
+        <span className="ml-1 rounded-full bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground">
+          {tierLabel}
+        </span>
         {secondsLeft > 0 && secondsLeft < 60 && (
           <span className="text-[11px] text-muted-foreground ml-auto">
             Auto-deciding in {secondsLeft}s
@@ -107,6 +112,11 @@ export const ToolApprovalCard = memo(function ToolApprovalCard({ approval }: Too
         <p className="text-[13px] text-foreground">{approval.question}</p>
         {approval.detail && (
           <p className="text-[12px] text-muted-foreground mt-1">{approval.detail}</p>
+        )}
+        {!contractHealthy && (
+          <p className="text-[11px] text-amber-500 mt-2">
+            Legacy request format detected; decision will still be sent safely.
+          </p>
         )}
       </div>
 

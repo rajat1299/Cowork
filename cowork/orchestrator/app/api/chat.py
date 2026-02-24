@@ -1,7 +1,9 @@
 import asyncio
 import json
+import uuid
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -11,7 +13,9 @@ from app.runtime.actions import ActionImprove, ActionStop, AgentSpec, TaskStatus
 from app.runtime.config_helpers import _is_permission_approved
 from app.runtime.engine import run_task_loop
 from app.runtime.manager import get, get_or_create, remove
-from shared.schemas import StepEvent as StepEventModel
+from app.runtime.tool_context import current_request_id
+from shared.observability import REQUEST_ID_HEADER
+from shared.schemas import INTERACTION_CONTRACT_VERSION, StepEvent as StepEventModel
 from shared.ratelimit import SlidingWindowLimiter, ip_key, rate_limit
 
 router = APIRouter(tags=["chat"])
@@ -52,24 +56,39 @@ def format_sse(event: StepEventModel) -> str:
         "step": event.step,
         "data": event.data,
         "timestamp": event.timestamp,
+        "event_id": event.event_id,
+        "request_id": event.request_id,
+        "contract_version": event.contract_version,
     }
     return f"data: {json.dumps(payload)}\n\n"
 
 
+def _request_id_from_headers(request: Request) -> str:
+    incoming = request.headers.get(REQUEST_ID_HEADER)
+    if incoming and incoming.strip():
+        return incoming.strip()
+    return uuid.uuid4().hex
+
+
 @router.post("/chat", dependencies=[Depends(_chat_rate_limit)])
 async def start_chat(
+    raw_request: Request,
     request: ChatRequest,
     authorization: str = Depends(require_auth),
 ):
     if request.project_id == GLOBAL_USER_CONTEXT:
         raise HTTPException(status_code=400, detail="Reserved project id")
+    request_id = _request_id_from_headers(raw_request)
+
     async def event_stream():
+        current_request_id.set(request_id)
         task_lock = get_or_create(request.project_id)
         await task_lock.put(
             ActionImprove(
                 project_id=request.project_id,
                 task_id=request.task_id,
                 question=request.question,
+                request_id=request_id,
                 search_enabled=request.search_enabled,
                 attachments=request.attachments,
                 auth_token=authorization,
@@ -108,17 +127,22 @@ class PermissionDecisionRequest(BaseModel):
     request_id: str
     approved: bool | None = None
     response: str | None = None
+    decision_kind: Literal["tool_approval", "decision"] | None = None
+    contract_version: str | None = None
     remember: bool = True
 
 
 @router.post("/chat/{project_id}/improve", dependencies=[Depends(_chat_rate_limit)])
 async def improve_chat(
+    raw_request: Request,
     project_id: str,
     request: ImproveRequest,
     authorization: str = Depends(require_auth),
 ):
     if project_id == GLOBAL_USER_CONTEXT:
         raise HTTPException(status_code=400, detail="Reserved project id")
+    request_id = _request_id_from_headers(raw_request)
+    current_request_id.set(request_id)
     task_lock = get(project_id)
     if not task_lock:
         task_lock = get_or_create(project_id)
@@ -127,6 +151,7 @@ async def improve_chat(
             project_id=project_id,
             task_id=request.task_id,
             question=request.question,
+            request_id=request_id,
             search_enabled=request.search_enabled,
             attachments=request.attachments,
             auth_token=authorization,
@@ -147,12 +172,19 @@ async def submit_permission_decision(
     request: PermissionDecisionRequest,
     _authorization: str = Depends(require_auth),
 ):
+    if request.contract_version and request.contract_version != INTERACTION_CONTRACT_VERSION:
+        raise HTTPException(status_code=409, detail="Unsupported interaction contract version")
     task_lock = get(project_id)
     if not task_lock:
         raise HTTPException(status_code=404, detail="Project not found")
     response_queue = task_lock.human_input.get(request.request_id)
     if response_queue is None:
         raise HTTPException(status_code=404, detail="Permission request not found")
+    pending_context = task_lock.pending_approval_context.get(request.request_id) or {}
+    expected_channel = pending_context.get("channel")
+    if request.decision_kind and expected_channel and request.decision_kind != expected_channel:
+        raise HTTPException(status_code=400, detail="Decision kind does not match pending request type")
+
     if request.response and request.response.strip():
         decision = request.response.strip()
     elif request.approved is not None:
@@ -164,7 +196,6 @@ async def submit_permission_decision(
     except asyncio.QueueFull:
         raise HTTPException(status_code=409, detail="Permission request already resolved")
 
-    pending_context = task_lock.pending_approval_context.get(request.request_id) or {}
     if request.remember and _is_permission_approved(decision):
         remembered_key = pending_context.get("memory_group") or pending_context.get("toolkit_key")
         if remembered_key:

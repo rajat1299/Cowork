@@ -34,6 +34,15 @@ import type {
 import { createMessage, generateId } from '../types/chat'
 import { isBlockedArtifact, normalizeArtifactUrl } from './artifacts'
 
+const REQUEST_ID_HEADER = 'X-Request-Id'
+
+function requestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 // ============ Type Guards ============
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -221,6 +230,10 @@ function handleSSEEvent(taskId: string, event: SSEEvent): void {
     case 'ask':
     case 'ask_user':
       handleAsk(taskId, data as Record<string, unknown>)
+      break
+
+    case 'audit_log':
+      addProgressStepFromEvent(taskId, 'audit_log', 'completed', data as Record<string, unknown>)
       break
 
     case 'notice':
@@ -487,11 +500,23 @@ function handleError(taskId: string, data: ErrorData): void {
   const store = useChatStore.getState()
 
   const errorMessage = data.message || 'An error occurred'
+  const recoverable = data.recoverable === true
+  const detail = data.error_type ? ` (${data.error_type})` : ''
 
-  store.setTaskError(taskId, errorMessage)
-  store.addMessage(taskId, createMessage('system', `Error: ${errorMessage}`))
+  store.setTaskError(taskId, `${errorMessage}${detail}`)
+  store.addMessage(
+    taskId,
+    createMessage(
+      'system',
+      `${recoverable ? 'Temporary error' : 'Error'}: ${errorMessage}${detail}`
+    )
+  )
 
-  addProgressStepFromEvent(taskId, 'error', 'failed', { message: errorMessage })
+  addProgressStepFromEvent(taskId, 'error', recoverable ? 'active' : 'failed', {
+    message: errorMessage,
+    error_type: data.error_type,
+    recoverable,
+  })
 
   // Cleanup SSE controller
   removeSSEController(taskId)
@@ -658,6 +683,7 @@ function handleAsk(taskId: string, data: Record<string, unknown>): void {
   const store = useChatStore.getState()
   const eventType = data.type as string | undefined
   const requestId = data.request_id as string | undefined
+  const contractVersion = data.contract_version as string | undefined
   const question = (data.human_question as string) || (data.question as string) || 'The assistant has a question for you.'
 
   const hasToolkitMetadata = typeof data.toolkit_name === 'string'
@@ -669,6 +695,7 @@ function handleAsk(taskId: string, data: Record<string, unknown>): void {
 
     store.addApproval({
       requestId,
+      contractVersion,
       question,
       detail: data.detail as string | undefined,
       tier: (data.tier as 'always_ask' | 'ask_once') || 'always_ask',
@@ -689,6 +716,7 @@ function handleAsk(taskId: string, data: Record<string, unknown>): void {
 
     store.setDecision({
       requestId,
+      contractVersion,
       question,
       mode: (data.mode as 'single_select' | 'multi_select' | 'rank') || 'single_select',
       options: (rawOptions || []).map((opt) => ({
@@ -721,6 +749,7 @@ function handleCompose(taskId: string, data: Record<string, unknown>): void {
 
   // Store compose data as a structured progress step so ComposeWidget can render it inline
   const composePayload = {
+    contractVersion: data.contract_version as string | undefined,
     platform,
     variants: rawVariants.map((v) => ({
       id: v.id || '',
@@ -824,6 +853,7 @@ export async function startSSEConnection(options: SSEConnectionOptions): Promise
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        [REQUEST_ID_HEADER]: requestId(),
       },
       body: JSON.stringify(requestBody),
       signal: abortController.signal,
@@ -929,6 +959,7 @@ export async function sendImproveMessage(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        [REQUEST_ID_HEADER]: requestId(),
       },
       credentials: 'include',
       body: JSON.stringify({
@@ -953,6 +984,9 @@ async function requestStop(projectId: string): Promise<void> {
   try {
     await fetch(`${ORCHESTRATOR_URL}/chat/${projectId}`, {
       method: 'DELETE',
+      headers: {
+        [REQUEST_ID_HEADER]: requestId(),
+      },
       credentials: 'include',
     })
   } catch (error) {

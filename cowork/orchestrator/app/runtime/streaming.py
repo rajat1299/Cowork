@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable
 
@@ -10,25 +11,45 @@ from app.runtime.artifacts import _collect_tool_artifacts
 from app.runtime.events import StepEvent
 from app.runtime.memory import _usage_total
 from app.runtime.sync import fire_and_forget
-from app.runtime.tool_context import current_project_id
+from app.runtime.tool_context import current_project_id, current_request_id
 from app.runtime.tracing import _trace_step
-from shared.schemas import AgentEvent, StepEvent as StepEventModel
+from shared.schemas import INTERACTION_CONTRACT_VERSION, AgentEvent, StepEvent as StepEventModel
 
 
 logger = logging.getLogger(__name__)
 
 
 def _emit(task_id: str, step: StepEvent, data: dict) -> StepEventModel:
+    if step == StepEvent.error and isinstance(data, dict):
+        if "error_type" not in data:
+            data = {**data, "error_type": "runtime_error"}
+        if "recoverable" not in data:
+            data = {**data, "recoverable": False}
     artifact_payloads: list[dict[str, Any]] = []
     if step == StepEvent.deactivate_toolkit:
         artifact_payloads = _collect_tool_artifacts(task_id, data)
     _trace_step(task_id, step, data)
+    event_id = uuid.uuid4().hex
+    request_id = current_request_id.get(None)
     payload = _attach_agent_event(task_id, step, data)
+    if isinstance(payload, dict):
+        payload = {
+            **payload,
+            "_contract": {
+                "version": INTERACTION_CONTRACT_VERSION,
+                "step": step.value,
+            },
+            "_event_id": event_id,
+        }
     event = StepEventModel(
         task_id=task_id,
         step=step,
         data=payload,
         timestamp=time.time(),
+        event_id=event_id,
+        idempotency_key=event_id,
+        request_id=request_id,
+        contract_version=INTERACTION_CONTRACT_VERSION,
     )
     fire_and_forget(event)
     for artifact_payload in artifact_payloads:

@@ -33,6 +33,9 @@ class CoreApiSettings(BaseSettings):
     rate_limit_auth_per_minute: int = 20
     rate_limit_proxy_per_minute: int = 30
     rate_limit_oauth_per_minute: int = 20
+    slo_api_availability_target: float = 99.9
+    slo_api_p95_latency_ms: int = 500
+    error_budget_monthly_percent: float = 0.1
 
     @field_validator("database_url")
     @classmethod

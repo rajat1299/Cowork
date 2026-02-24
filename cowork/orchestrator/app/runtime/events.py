@@ -16,6 +16,7 @@ class StepEvent(StrEnum):
     artifact = "artifact"
     notice = "notice"
     ask_user = "ask_user"
+    audit_log = "audit_log"
     turn_cancelled = "turn_cancelled"
     compose_message = "compose_message"
     end = "end"

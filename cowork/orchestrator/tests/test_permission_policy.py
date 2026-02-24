@@ -13,6 +13,7 @@ from app.runtime.config_helpers import (
 )
 from app.runtime.events import StepEvent
 from app.runtime.task_lock import TaskLock
+from shared.schemas import INTERACTION_CONTRACT_VERSION
 
 
 class _EventStreamStub:
@@ -92,7 +93,7 @@ async def test_request_tool_permission_emits_enriched_payload_and_tracks_ask_onc
     await asyncio.sleep(0)
 
     assert stream.events
-    step, payload = stream.events[0]
+    step, payload = next((item for item in stream.events if item[0] == StepEvent.ask_user))
     assert step == StepEvent.ask_user
     assert payload["tier"] == "ask_once"
     assert payload["human_question"]
@@ -109,6 +110,12 @@ async def test_request_tool_permission_emits_enriched_payload_and_tracks_ask_onc
     assert approved is True
     assert task_lock.remembered_approvals == set()
     assert request_id not in task_lock.pending_approval_context
+
+    audit_payloads = [payload for step, payload in stream.events if step == StepEvent.audit_log]
+    assert audit_payloads
+    assert any(payload.get("event_name") == "permission_request_emitted" for payload in audit_payloads)
+    assert any(payload.get("event_name") == "permission_response_recorded" for payload in audit_payloads)
+    assert payload["contract_version"] == INTERACTION_CONTRACT_VERSION
 
 
 @pytest.mark.asyncio
@@ -155,7 +162,7 @@ async def test_request_tool_permission_remembered_file_write_does_not_skip_file_
 
     await asyncio.sleep(0)
     assert stream.events
-    step, payload = stream.events[0]
+    step, payload = next((item for item in stream.events if item[0] == StepEvent.ask_user))
     assert step == StepEvent.ask_user
     assert payload["tier"] == "always_ask"
 
@@ -187,9 +194,8 @@ async def test_request_tool_permission_timeout_emits_notice_and_uses_default_pol
     )
 
     assert approved is False
-    assert len(stream.events) >= 2
-    ask_step, ask_payload = stream.events[0]
-    notice_step, notice_payload = stream.events[-1]
+    ask_step, ask_payload = next((item for item in stream.events if item[0] == StepEvent.ask_user))
+    notice_step, notice_payload = next((item for item in stream.events if item[0] == StepEvent.notice))
     assert ask_step == StepEvent.ask_user
     assert notice_step == StepEvent.notice
     assert notice_payload["request_id"] == ask_payload["request_id"]
@@ -264,10 +270,11 @@ async def test_request_user_decision_emits_contract_and_returns_response() -> No
 
     await asyncio.sleep(0)
     assert stream.events
-    step, payload = stream.events[0]
+    step, payload = next((item for item in stream.events if item[0] == StepEvent.ask_user))
     assert step == StepEvent.ask_user
     assert payload["type"] == "decision"
     assert payload["mode"] == "single_select"
+    assert payload["contract_version"] == INTERACTION_CONTRACT_VERSION
     assert len(payload["options"]) == 2
 
     request_id = str(payload["request_id"])
@@ -276,6 +283,7 @@ async def test_request_user_decision_emits_contract_and_returns_response() -> No
 
     assert response == "2"
     assert request_id not in task_lock.human_input
+    assert request_id not in task_lock.pending_approval_context
 
 
 @pytest.mark.asyncio

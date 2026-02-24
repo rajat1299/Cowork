@@ -43,4 +43,6 @@ def _maybe_install_deps() -> None:
 @app.on_event("shutdown")
 async def _close_http_clients() -> None:
     from app.clients.core_api import close_client
+    from app.runtime.sync import close_client as close_sync_client
     await close_client()
+    await close_sync_client()

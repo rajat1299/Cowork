@@ -4,13 +4,14 @@ import os
 import re
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from app.runtime.context import _resolve_workdir
 from app.runtime.sync import fire_and_forget_artifact
-from app.runtime.tool_context import current_project_id
+from app.runtime.tool_context import current_project_id, current_request_id
 from shared.schemas import ArtifactEvent
 
 
@@ -153,6 +154,9 @@ def _extract_file_artifacts(task_id: str, data: dict) -> list[dict[str, Any]]:
                 name=resolved.name,
                 content_url=content_url or str(resolved),
                 created_at=now,
+                event_id=uuid.uuid4().hex,
+                idempotency_key=f"{task_id}:{path_key}",
+                request_id=current_request_id.get(None),
             )
         )
         artifact_payloads.append(
