@@ -41,6 +41,7 @@ app.add_middleware(
         "Accept-Language",
         "Content-Language",
         "X-Requested-With",
+        "X-Request-Id",
         "Sec-Fetch-Dest",
         "Sec-Fetch-Mode",
         "Sec-Fetch-Site",
