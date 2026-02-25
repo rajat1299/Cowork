@@ -51,7 +51,7 @@ from app.runtime.skill_catalog_matching import (
     extensions_for_skill_detection,
     filter_enabled_runtime_skills,
 )
-from app.runtime.skill_engine import get_runtime_skill_engine
+from app.runtime.skill_engine import get_runtime_skill_engine, resolve_validation_failure_reason
 from app.runtime.skills import (
     RuntimeSkill,
     apply_runtime_skills,  # noqa: F401 - kept for test/module compatibility
@@ -539,7 +539,7 @@ async def run_task_loop(task_lock: TaskLock) -> AsyncIterator[StepEventModel]:
                             yield _emit(action.task_id, StepEvent.artifact, artifact)
                             skill_engine.on_step_event(skill_run_state, StepEvent.artifact.value, artifact)
                         if not repair.success:
-                            reason = "Skill output contract validation failed"
+                            reason = resolve_validation_failure_reason(validation)
                             yield _emit(
                                 action.task_id,
                                 StepEvent.error,

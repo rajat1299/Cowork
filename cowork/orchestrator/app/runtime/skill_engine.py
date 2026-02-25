@@ -137,6 +137,13 @@ _BLOCKED_ARTIFACT_METADATA_NAMES = {
     "sources.txt",
     "api_tests.txt",
 }
+_SEARCH_UNAVAILABLE_HINTS = (
+    "missing or empty required api keys",
+    "missing required modules",
+    "exa key is not configured",
+    "exa server key is not configured",
+    "search connector",
+)
 
 
 @dataclass
@@ -328,9 +335,15 @@ class RuntimeSkillEngine:
             return False
         return bool(_FILE_DELIVERABLE_INTENT.search(question))
 
-    def inject_agent_policy(self, agent_specs: list[Any], active_skills: list[RuntimeSkill]) -> None:
+    def inject_agent_policy(
+        self,
+        agent_specs: list[Any],
+        active_skills: list[RuntimeSkill],
+        blocked_tools: set[str] | None = None,
+    ) -> None:
         if not active_skills or not agent_specs:
             return
+        restricted_tools = {item.strip().lower() for item in (blocked_tools or set()) if item}
         document_agent = self._find_agent(agent_specs, "document_agent")
         developer_agent = self._find_agent(agent_specs, "developer_agent")
         search_agent = self._find_agent(agent_specs, "search_agent")
@@ -342,6 +355,8 @@ class RuntimeSkillEngine:
                     target = search_agent
                 if target is not None:
                     for tool in skill.required_tools:
+                        if tool.lower() in restricted_tools:
+                            continue
                         if tool not in target.tools:
                             target.tools.append(tool)
 
@@ -365,6 +380,7 @@ class RuntimeSkillEngine:
                 "toolkit": data.get("toolkit_name") or data.get("toolkit"),
                 "method": data.get("method_name") or data.get("method"),
                 "message": data.get("message"),
+                "success": data.get("success"),
                 "timestamp": time.time(),
             }
             toolkit_name = str(event.get("toolkit") or "").lower()
@@ -426,6 +442,7 @@ class RuntimeSkillEngine:
         transcript_text = transcript or run_state.transcript()
         if transcript and transcript not in run_state.transcript_chunks:
             run_state.transcript_chunks.append(transcript)
+        search_backend_available = self._is_search_backend_available(run_state)
 
         for skill in run_state.active_skills:
             result = validate_skill_contract(
@@ -433,6 +450,7 @@ class RuntimeSkillEngine:
                 artifacts=artifacts,
                 transcript=transcript_text,
                 explicit_filenames=run_state.explicit_filenames,
+                search_backend_available=search_backend_available,
             )
             by_skill[skill.id] = result
             expected_contracts[skill.id] = result.expected_contract
@@ -680,6 +698,24 @@ class RuntimeSkillEngine:
         return extensions
 
     @staticmethod
+    def _is_search_backend_available(run_state: SkillRunState) -> bool:
+        for event in run_state.tool_events:
+            if str(event.get("step") or "") != "deactivate_toolkit":
+                continue
+            toolkit = str(event.get("toolkit") or "").lower()
+            method = str(event.get("method") or "").lower()
+            if "search" not in toolkit and "search" not in method:
+                continue
+            message = str(event.get("message") or "").lower()
+            if any(hint in message for hint in _SEARCH_UNAVAILABLE_HINTS):
+                return False
+            if "'error'" in message and ("not configured" in message or "missing" in message):
+                return False
+            if bool(event.get("success")) is False and "tool execution failed" in message:
+                return False
+        return True
+
+    @staticmethod
     def _find_agent(agent_specs: list[Any], name: str) -> Any | None:
         for spec in agent_specs:
             if getattr(spec, "name", "") == name:
@@ -892,6 +928,15 @@ class RuntimeSkillEngine:
                     request_id=current_request_id.get(None),
                 )
             )
+
+
+def resolve_validation_failure_reason(summary: SkillValidationSummary) -> str:
+    for issue in summary.issues:
+        if issue.get("code") == "search_backend_unavailable":
+            message = str(issue.get("message") or "").strip()
+            if message:
+                return message
+    return "Skill output contract validation failed"
 
 
 def _make_engine() -> RuntimeSkillEngine:

@@ -22,7 +22,11 @@ from app.runtime.context import _load_tool_env, _parse_summary, _resolve_workdir
 from app.runtime.events import StepEvent
 from app.runtime.memory import _generate_global_memory_notes, _persist_message
 from app.runtime.mcp_config import _load_mcp_tools
-from app.runtime.skill_engine import SkillRunState, get_runtime_skill_engine
+from app.runtime.skill_engine import (
+    SkillRunState,
+    get_runtime_skill_engine,
+    resolve_validation_failure_reason,
+)
 from app.runtime.skills import RuntimeSkill, apply_runtime_skills, build_runtime_skill_context
 from app.runtime.streaming import EventStream, TokenTracker
 from app.runtime.task_analysis import _ensure_tool, _merge_agent_specs, _strip_search_tools
@@ -257,8 +261,17 @@ async def _run_camel_complex(
                 spec.tools = _strip_search_tools(spec.tools, include_browser=False)
         if memory_search_enabled:
             _ensure_tool(agent_specs, "memory_search")
+        blocked_skill_tools: set[str] = set()
+        if not search_enabled:
+            blocked_skill_tools.update({"search", "browser"})
+        elif native_search_enabled:
+            blocked_skill_tools.add("search")
         if not skill_engine.is_shadow():
-            apply_runtime_skills(agent_specs, active_skills)
+            apply_runtime_skills(
+                agent_specs,
+                active_skills,
+                blocked_tools=blocked_skill_tools,
+            )
         global_base_context = _build_global_base_context(str(workdir), action.project_id)
         skill_context = build_runtime_skill_context(active_skills)
         if skill_context:
@@ -489,7 +502,7 @@ async def _run_camel_complex(
                     },
                 )
                 if not repair.success:
-                    reason = "Skill output contract validation failed"
+                    reason = resolve_validation_failure_reason(validation)
                     event_stream.emit(
                         StepEvent.error,
                         build_error_event(

@@ -12,6 +12,7 @@ from app.runtime import mcp_config as runtime_mcp_config
 from app.runtime import streaming as runtime_streaming
 from app.runtime.actions import ActionImprove
 from app.runtime.events import StepEvent
+from app.runtime.task_analysis import _strip_search_tools
 from app.runtime.task_lock import TaskLock
 from app.runtime.tool_context import current_project_id
 
@@ -468,6 +469,21 @@ def test_runtime_skills_force_complex_and_upgrade_tools():
 
     assert "excel" in document_agent.tools
     assert "terminal" in document_agent.tools
+
+
+def test_runtime_skills_respect_blocked_search_tools():
+    question = "Research latest Python web frameworks and compare their benchmarks"
+    active_skills = cr.detect_runtime_skills(question, attachments=None)
+    assert any(skill.id == "research_web_v1" for skill in active_skills)
+
+    agent_specs = cr._merge_agent_specs(cr.build_default_agents(), None)
+    for spec in agent_specs:
+        spec.tools = _strip_search_tools(spec.tools, include_browser=False)
+    cr.apply_runtime_skills(agent_specs, active_skills, blocked_tools={"search"})
+    search_agent = next(agent for agent in agent_specs if agent.name == "search_agent")
+
+    assert "search" not in search_agent.tools
+    assert "browser" in search_agent.tools
 
 
 @pytest.mark.asyncio

@@ -23,8 +23,16 @@ def build_runtime_skill_context(active_skills: Sequence[RuntimeSkill]) -> str:
     return _engine().build_runtime_skill_context(list(active_skills))
 
 
-def apply_runtime_skills(agent_specs: list[AgentProfile], active_skills: Sequence[RuntimeSkill]) -> None:
-    _engine().inject_agent_policy(agent_specs, list(active_skills))
+def apply_runtime_skills(
+    agent_specs: list[AgentProfile],
+    active_skills: Sequence[RuntimeSkill],
+    blocked_tools: set[str] | None = None,
+) -> None:
+    _engine().inject_agent_policy(
+        agent_specs,
+        list(active_skills),
+        blocked_tools=blocked_tools,
+    )
 
 
 def skill_names(active_skills: Sequence[RuntimeSkill]) -> list[str]:

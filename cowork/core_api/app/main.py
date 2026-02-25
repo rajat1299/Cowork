@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import router as api_router
 from app.config import settings
-from app.db import engine
+from app.db import engine, ensure_sqlite_schema_compatibility
 from sqlmodel import SQLModel
 from shared.observability import attach_request_logging
 
@@ -56,3 +56,4 @@ attach_request_logging(app, "core_api")
 def on_startup():
     if settings.auto_create_tables:
         SQLModel.metadata.create_all(engine)
+    ensure_sqlite_schema_compatibility(engine)

@@ -12,7 +12,7 @@ from app.runtime.file_naming import (
     normalize_filename_for_output,
 )
 from app.runtime.research_pipeline import should_retry_search
-from app.runtime.skill_engine import RuntimeSkillEngine
+from app.runtime.skill_engine import RuntimeSkillEngine, resolve_validation_failure_reason
 from app.runtime.skills_schema import load_skill_packs
 
 
@@ -199,6 +199,38 @@ def test_markdown_contract_validation_and_repair(tmp_path: Path):
     assert repair.success is True
     assert any(artifact["name"].endswith(".md") for artifact in run_state.artifacts)
     assert all(".initial_env" not in str(artifact.get("path") or "") for artifact in run_state.artifacts)
+
+
+def test_research_validation_reports_search_backend_unavailable(tmp_path: Path):
+    engine = RuntimeSkillEngine(mode="on")
+    skills = engine.detect("Research the latest Python web frameworks and benchmark performance")
+    run_state = engine.prepare_plan(
+        task_id="task-research-unavailable",
+        project_id="proj-research-unavailable",
+        question="Research the latest Python web frameworks and benchmark performance",
+        context="",
+        active_skills=skills,
+    )
+    run_state.tool_events.append(
+        {
+            "step": "deactivate_toolkit",
+            "toolkit": "search",
+            "method": "search_google",
+            "message": "Missing or empty required API keys in environment variables: GOOGLE_API_KEY.",
+        }
+    )
+
+    validation = engine.validate_outputs(
+        run_state=run_state,
+        workdir=tmp_path,
+        transcript="I could not retrieve web sources in this run.",
+    )
+
+    assert validation.success is False
+    issue_codes = [issue["code"] for issue in validation.issues]
+    assert "search_backend_unavailable" in issue_codes
+    assert "citations_insufficient" not in issue_codes
+    assert "search backend" in resolve_validation_failure_reason(validation).lower()
 
 
 def test_validate_outputs_filters_blocked_system_artifacts(tmp_path: Path):

@@ -57,6 +57,7 @@ def validate_skill_contract(
     artifacts: list[dict[str, Any]],
     transcript: str,
     explicit_filenames: set[str],
+    search_backend_available: bool = True,
 ) -> SkillValidationResult:
     issues: list[ValidationIssue] = []
     matched_artifacts = [artifact for artifact in artifacts if _matches_output_contract(skill, artifact)]
@@ -88,15 +89,29 @@ def validate_skill_contract(
         if rule == "require_two_citations":
             citations = extract_citations(transcript)
             if len(citations) < 2:
-                issues.append(
-                    ValidationIssue(
-                        code="citations_insufficient",
-                        message="Research output must contain at least two citations.",
-                        severity="error",
-                        skill_id=skill.id,
-                        details={"citation_count": len(citations)},
+                if search_backend_available:
+                    issues.append(
+                        ValidationIssue(
+                            code="citations_insufficient",
+                            message="Research output must contain at least two citations.",
+                            severity="error",
+                            skill_id=skill.id,
+                            details={"citation_count": len(citations)},
+                        )
                     )
-                )
+                else:
+                    issues.append(
+                        ValidationIssue(
+                            code="search_backend_unavailable",
+                            message=(
+                                "Search backend is unavailable or misconfigured. Configure search connector API keys "
+                                "(for example EXA_API_KEY) and rerun the task."
+                            ),
+                            severity="error",
+                            skill_id=skill.id,
+                            details={"citation_count": len(citations)},
+                        )
+                    )
 
         if rule == "markdown_structure" and matched_artifacts:
             markdown_artifact = next(
